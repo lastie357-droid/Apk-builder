@@ -203,7 +203,37 @@
         }
 
         function loadData() {
-            // Load users from localStorage
+            // Fetch users from API
+            fetch('/api/admin/users')
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        allUsers = data.users.map(u => ({
+                            email: u.email,
+                            fullName: u.name || 'N/A',
+                            license: {
+                                plan: u.license?.plan || 'Free Trial',
+                                daysRemaining: u.license?.daysRemaining || 0,
+                                maxDevices: u.license?.devices || 1,
+                                status: u.license?.active ? 'active' : 'expired',
+                                expiryDate: u.license?.validUntil || null
+                            },
+                            createdAt: u.createdAt
+                        }));
+                    }
+                })
+                .catch(() => {
+                    // Fallback to localStorage
+                    loadDataLocalStorage();
+                });
+            
+            updateStats();
+            renderUsers();
+            renderPayments();
+            renderLicenses();
+        }
+        
+        function loadDataLocalStorage() {
             const users = [];
             for (let i = 0; i < localStorage.length; i++) {
                 const key = localStorage.key(i);
@@ -214,18 +244,11 @@
                     } catch(e) {}
                 }
             }
-            
-            // Check for current user
             const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
             if (currentUser.email && !users.find(u => u.email === currentUser.email)) {
                 users.push(currentUser);
             }
-
             allUsers = users;
-            updateStats();
-            renderUsers();
-            renderPayments();
-            renderLicenses();
         }
 
         function updateStats() {

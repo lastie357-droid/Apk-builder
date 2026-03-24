@@ -9,14 +9,30 @@ require('dotenv').config();
 const app = express();
 const server = http.createServer(app);
 
-app.use(cors());
-app.use(express.json());
-app.use(express.static(path.join(__dirname, '../frontend')));
-
 const Device = require('./models/Device');
 const User = require('./models/User');
 const Command = require('./models/Command');
 const ActivityLog = require('./models/ActivityLog');
+
+const authRoutes = require('./routes/auth');
+const devicesRoutes = require('./routes/devices');
+
+app.use(cors());
+app.use(express.json());
+app.use(express.static(path.join(__dirname, '../frontend')));
+
+app.use('/api/auth', authRoutes);
+app.use('/api/user', devicesRoutes);
+
+// Admin routes
+app.get('/api/admin/users', async (req, res) => {
+    try {
+        const users = await User.find({}, '-password').sort({ createdAt: -1 });
+        res.json({ success: true, users });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
 
 const connections = new Map();
 const commands = new Map();
@@ -243,8 +259,15 @@ app.get('/api/health', async (req, res) => {
     });
 });
 
+const fs = require('fs');
+
 app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '../frontend/index.html'));
+    const filePath = path.join(__dirname, '../frontend', req.path);
+    if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+        res.sendFile(filePath);
+    } else {
+        res.sendFile(path.join(__dirname, '../frontend/index.html'));
+    }
 });
 
 const HTTP_PORT = process.env.PORT || 5000;
