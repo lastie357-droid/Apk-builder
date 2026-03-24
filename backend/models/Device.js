@@ -8,17 +8,17 @@ const deviceSchema = new mongoose.Schema({
   },
   userId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
+    ref: 'User'
   },
-  deviceName: {
-    type: String,
-    required: true
+  userIdString: {
+    type: String
   },
+  deviceName: String,
   model: String,
   manufacturer: String,
   androidVersion: String,
   appVersion: String,
+  deviceInfo: mongoose.Schema.Types.Mixed,
   permissions: [{
     name: String,
     granted: Boolean
@@ -43,7 +43,6 @@ const deviceSchema = new mongoose.Schema({
   },
   consentGiven: {
     type: Boolean,
-    required: true,
     default: false
   },
   consentTimestamp: Date
