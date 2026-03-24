@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Login - CraxsRAT</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+        .container { background: white; padding: 40px; border-radius: 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); max-width: 400px; width: 90%; }
+        h1 { color: #f5576c; margin-bottom: 30px; text-align: center; }
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; margin-bottom: 8px; color: #333; font-weight: 500; }
+        .form-group input { width: 100%; padding: 12px 15px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px; }
+        .form-group input:focus { outline: none; border-color: #f5576c; }
+        .btn { width: 100%; padding: 14px; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; transition: all 0.3s; }
+        .btn:hover { transform: translateY(-2px); box-shadow: 0 10px 20px rgba(245, 87, 108, 0.4); }
+        .link { text-align: center; margin-top: 20px; color: #666; }
+        .link a { color: #f5576c; text-decoration: none; font-weight: bold; }
+        .link a:hover { text-decoration: underline; }
+        .alert { padding: 12px; border-radius: 8px; margin-bottom: 20px; display: none; }
+        .alert.success { background: #d4edda; color: #155724; }
+        .alert.error { background: #f8d7da; color: #721c24; }
+        .alert.show { display: block; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>👨‍💼 Admin Login</h1>
+        <div id="alert" class="alert"></div>
+        <form id="adminLoginForm">
+            <div class="form-group">
+                <label>Username</label>
+                <input type="text" id="username" required placeholder="Enter admin username">
+            </div>
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" id="password" required placeholder="Enter admin password">
+            </div>
+            <button type="submit" class="btn">Login as Admin</button>
+        </form>
+        <div class="link">
+            <a href="login.html">← Back to User Login</a>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('adminLoginForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            
+            // Default admin credentials
+            if (username === 'admin' && password === 'admin123') {
+                const admin = {
+                    username: username,
+                    role: 'admin',
+                    loginAt: new Date().toISOString()
+                };
+                
+                localStorage.setItem('admin', JSON.stringify(admin));
+                
+                showAlert('Login successful! Redirecting...', 'success');
+                
+                setTimeout(() => {
+                    window.location.href = 'admin-dashboard.html';
+                }, 1500);
+            } else {
+                showAlert('Invalid admin credentials!', 'error');
+            }
+        });
+
+        function showAlert(message, type) {
+            const alert = document.getElementById('alert');
+            alert.textContent = message;
+            alert.className = `alert ${type} show`;
+            
+            setTimeout(() => {
+                alert.classList.remove('show');
+            }, 5000);
+        }
+    </script>
+</body>
+</html>

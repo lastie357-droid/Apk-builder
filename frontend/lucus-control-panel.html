@@ -1,0 +1,1011 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LUCUS RAT - Professional Control Panel</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        body {
+            background: #000000;
+            color: #ffffff;
+            overflow: hidden;
+        }
+
+        /* Animated Background */
+        .bg-animation {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle at 20% 50%, rgba(138, 43, 226, 0.1) 0%, transparent 50%),
+                        radial-gradient(circle at 80% 80%, rgba(0, 191, 255, 0.1) 0%, transparent 50%),
+                        #000000;
+            z-index: -1;
+        }
+
+        .bg-animation::before {
+            content: '';
+            position: absolute;
+            width: 200%;
+            height: 200%;
+            background: linear-gradient(45deg, transparent 30%, rgba(138, 43, 226, 0.05) 50%, transparent 70%);
+            animation: rotate 20s linear infinite;
+        }
+
+        @keyframes rotate {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Top Bar */
+        .top-bar {
+            height: 70px;
+            background: linear-gradient(135deg, #8a2be2 0%, #4169e1 100%);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 30px;
+            box-shadow: 0 5px 30px rgba(138, 43, 226, 0.5);
+            border-bottom: 2px solid #00bfff;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .logo-icon {
+            width: 50px;
+            height: 50px;
+            background: linear-gradient(135deg, #00bfff, #8a2be2);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.8em;
+            font-weight: bold;
+            box-shadow: 0 5px 20px rgba(0, 191, 255, 0.5);
+        }
+
+        .logo-text {
+            font-size: 2em;
+            font-weight: bold;
+            letter-spacing: 3px;
+            background: linear-gradient(135deg, #00bfff, #ffffff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: 0 0 30px rgba(0, 191, 255, 0.5);
+        }
+
+        .top-stats {
+            display: flex;
+            gap: 30px;
+        }
+
+        .top-stat {
+            text-align: center;
+            padding: 5px 15px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            border: 1px solid rgba(0, 191, 255, 0.3);
+        }
+
+        .top-stat-value {
+            font-size: 1.8em;
+            color: #00bfff;
+            font-weight: bold;
+        }
+
+        .top-stat-label {
+            font-size: 0.9em;
+            color: #ffffff;
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 10px 20px;
+            border-radius: 25px;
+            border: 1px solid rgba(0, 191, 255, 0.3);
+        }
+
+        .user-avatar {
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #8a2be2, #00bfff);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 1.2em;
+        }
+
+        /* Main Container */
+        .main-container {
+            display: flex;
+            height: calc(100vh - 70px);
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 90px;
+            background: rgba(10, 10, 10, 0.95);
+            border-right: 2px solid #8a2be2;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px 0;
+            gap: 15px;
+        }
+
+        .sidebar-icon {
+            width: 60px;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(138, 43, 226, 0.1);
+            border: 2px solid transparent;
+            border-radius: 15px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 1.8em;
+            position: relative;
+        }
+
+        .sidebar-icon:hover,
+        .sidebar-icon.active {
+            background: linear-gradient(135deg, rgba(138, 43, 226, 0.3), rgba(0, 191, 255, 0.3));
+            border-color: #00bfff;
+            transform: scale(1.1);
+            box-shadow: 0 5px 20px rgba(0, 191, 255, 0.5);
+        }
+
+        .sidebar-icon::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            left: 100%;
+            margin-left: 15px;
+            background: rgba(0, 0, 0, 0.9);
+            color: #00bfff;
+            padding: 8px 15px;
+            border-radius: 8px;
+            white-space: nowrap;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s;
+            border: 1px solid #00bfff;
+        }
+
+        .sidebar-icon:hover::after {
+            opacity: 1;
+        }
+
+        /* Content Area */
+        .content-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Tab Bar */
+        .tab-bar {
+            height: 55px;
+            background: rgba(26, 26, 26, 0.95);
+            border-bottom: 2px solid #333;
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            gap: 10px;
+        }
+
+        .tab {
+            padding: 12px 30px;
+            background: rgba(138, 43, 226, 0.1);
+            border: 1px solid rgba(138, 43, 226, 0.3);
+            border-bottom: none;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border-radius: 10px 10px 0 0;
+            position: relative;
+        }
+
+        .tab:hover {
+            background: rgba(138, 43, 226, 0.2);
+            transform: translateY(-2px);
+        }
+
+        .tab.active {
+            background: linear-gradient(135deg, #8a2be2, #4169e1);
+            border-color: #00bfff;
+            box-shadow: 0 -5px 20px rgba(138, 43, 226, 0.5);
+        }
+
+        .tab-icon {
+            font-size: 1.3em;
+        }
+
+        /* Search Bar */
+        .search-bar {
+            height: 50px;
+            background: rgba(10, 10, 10, 0.95);
+            border-bottom: 1px solid #333;
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            gap: 15px;
+        }
+
+        .search-input {
+            flex: 1;
+            background: rgba(138, 43, 226, 0.1);
+            border: 1px solid rgba(138, 43, 226, 0.3);
+            color: #ffffff;
+            padding: 10px 20px;
+            border-radius: 25px;
+            outline: none;
+            transition: all 0.3s ease;
+        }
+
+        .search-input:focus {
+            border-color: #00bfff;
+            box-shadow: 0 0 20px rgba(0, 191, 255, 0.3);
+        }
+
+        .action-btn {
+            padding: 10px 25px;
+            background: linear-gradient(135deg, #8a2be2, #4169e1);
+            color: #ffffff;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            box-shadow: 0 5px 15px rgba(138, 43, 226, 0.3);
+        }
+
+        .action-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(138, 43, 226, 0.5);
+        }
+
+        /* Client Grid */
+        .client-grid {
+            flex: 1;
+            background: #000000;
+            padding: 25px;
+            overflow-y: auto;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 25px;
+            align-content: start;
+        }
+
+        .client-card {
+            background: linear-gradient(135deg, rgba(26, 26, 26, 0.95), rgba(10, 10, 10, 0.95));
+            border: 2px solid #8a2be2;
+            border-radius: 15px;
+            padding: 20px;
+            cursor: pointer;
+            transition: all 0.4s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .client-card::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: linear-gradient(45deg, transparent, rgba(0, 191, 255, 0.1), transparent);
+            transform: rotate(45deg);
+            transition: all 0.6s;
+        }
+
+        .client-card:hover::before {
+            left: 100%;
+        }
+
+        .client-card:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 15px 40px rgba(138, 43, 226, 0.6);
+            border-color: #00bfff;
+        }
+
+        .client-card.selected {
+            border-color: #00ff00;
+            box-shadow: 0 0 30px rgba(0, 255, 0, 0.5);
+        }
+
+        .client-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid rgba(138, 43, 226, 0.3);
+        }
+
+        .client-id {
+            font-size: 1.3em;
+            font-weight: bold;
+            background: linear-gradient(135deg, #8a2be2, #00bfff);
+            padding: 8px 15px;
+            border-radius: 8px;
+            border: 1px solid #00bfff;
+        }
+
+        .client-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            background: rgba(0, 255, 0, 0.1);
+            border-radius: 20px;
+            border: 1px solid #00ff00;
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #00ff00;
+            box-shadow: 0 0 15px #00ff00;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.6; transform: scale(1.2); }
+        }
+
+        .status-text {
+            color: #00ff00;
+            font-weight: bold;
+            font-size: 0.9em;
+        }
+
+        .client-info {
+            margin: 15px 0;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(138, 43, 226, 0.2);
+        }
+
+        .info-label {
+            color: #888;
+            font-size: 0.9em;
+        }
+
+        .info-value {
+            color: #00bfff;
+            font-weight: bold;
+            font-size: 0.9em;
+        }
+
+        .client-actions {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin-top: 15px;
+        }
+
+        .client-action-btn {
+            padding: 10px;
+            background: linear-gradient(135deg, rgba(138, 43, 226, 0.3), rgba(65, 105, 225, 0.3));
+            border: 1px solid rgba(138, 43, 226, 0.5);
+            color: #ffffff;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.85em;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .client-action-btn:hover {
+            background: linear-gradient(135deg, #8a2be2, #4169e1);
+            transform: scale(1.05);
+            box-shadow: 0 5px 15px rgba(138, 43, 226, 0.5);
+        }
+
+        .action-icon {
+            font-size: 1.3em;
+        }
+
+        /* Bottom Bar */
+        .bottom-bar {
+            height: 40px;
+            background: rgba(10, 10, 10, 0.95);
+            border-top: 1px solid #333;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            font-size: 0.9em;
+        }
+
+        .bottom-info {
+            display: flex;
+            gap: 30px;
+        }
+
+        .info-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .info-label {
+            color: #888;
+        }
+
+        .info-value {
+            color: #00bfff;
+            font-weight: bold;
+        }
+
+        /* Context Menu */
+        .context-menu {
+            position: fixed;
+            background: rgba(10, 10, 10, 0.98);
+            border: 2px solid #8a2be2;
+            border-radius: 12px;
+            padding: 8px;
+            display: none;
+            z-index: 1000;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.9);
+            backdrop-filter: blur(10px);
+        }
+
+        .context-menu.show {
+            display: block;
+        }
+
+        .context-item {
+            padding: 12px 25px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: #ffffff;
+        }
+
+        .context-item:hover {
+            background: linear-gradient(135deg, rgba(138, 43, 226, 0.3), rgba(0, 191, 255, 0.3));
+            transform: translateX(5px);
+        }
+
+        .context-icon {
+            width: 25px;
+            text-align: center;
+            font-size: 1.2em;
+        }
+
+        /* Notification */
+        .notification {
+            position: fixed;
+            top: 90px;
+            right: 20px;
+            background: linear-gradient(135deg, rgba(138, 43, 226, 0.95), rgba(65, 105, 225, 0.95));
+            border: 2px solid #00bfff;
+            border-radius: 12px;
+            padding: 20px 25px;
+            display: none;
+            z-index: 1000;
+            box-shadow: 0 10px 40px rgba(138, 43, 226, 0.6);
+            animation: slideIn 0.4s ease;
+            min-width: 300px;
+        }
+
+        .notification.show {
+            display: block;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        .notification-title {
+            font-weight: bold;
+            color: #00bfff;
+            margin-bottom: 8px;
+            font-size: 1.1em;
+        }
+
+        .notification-message {
+            color: #ffffff;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 12px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #0a0a0a;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: linear-gradient(180deg, #8a2be2, #00bfff);
+            border-radius: 6px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: linear-gradient(180deg, #00bfff, #8a2be2);
+        }
+
+        /* Loading */
+        .loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            display: none;
+            z-index: 2000;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .spinner {
+            width: 60px;
+            height: 60px;
+            border: 5px solid rgba(138, 43, 226, 0.3);
+            border-top-color: #00bfff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <!-- Animated Background -->
+    <div class="bg-animation"></div>
+
+    <!-- Top Bar -->
+    <div class="top-bar">
+        <div class="logo">
+            <div class="logo-icon">L</div>
+            <div class="logo-text">LUCUS RAT</div>
+        </div>
+        
+        <div class="top-stats">
+            <div class="top-stat">
+                <div class="top-stat-value" id="totalDevices">0</div>
+                <div class="top-stat-label">Total</div>
+            </div>
+            <div class="top-stat">
+                <div class="top-stat-value" id="onlineDevices">0</div>
+                <div class="top-stat-label">Online</div>
+            </div>
+            <div class="top-stat">
+                <div class="top-stat-value" id="selectedDevices">0</div>
+                <div class="top-stat-label">Selected</div>
+            </div>
+        </div>
+
+        <div class="user-info">
+            <div class="user-avatar">KM</div>
+            <div>
+                <div style="font-weight: bold;">Kishan Mishra</div>
+                <div style="font-size: 0.85em; color: #00bfff;">Administrator</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Container -->
+    <div class="main-container">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-icon active" data-tooltip="Clients">👥</div>
+            <div class="sidebar-icon" data-tooltip="Terminal">💻</div>
+            <div class="sidebar-icon" data-tooltip="Files">📁</div>
+            <div class="sidebar-icon" data-tooltip="Camera">📷</div>
+            <div class="sidebar-icon" data-tooltip="Keylogger">⌨️</div>
+            <div class="sidebar-icon" data-tooltip="Location">📍</div>
+            <div class="sidebar-icon" data-tooltip="Analytics">📊</div>
+            <div class="sidebar-icon" data-tooltip="Settings">⚙️</div>
+        </div>
+
+        <!-- Content Area -->
+        <div class="content-area">
+            <!-- Tab Bar -->
+            <div class="tab-bar">
+                <div class="tab active">
+                    <span class="tab-icon">📡</span>
+                    <span>Broadcast</span>
+                </div>
+                <div class="tab">
+                    <span class="tab-icon">🎯</span>
+                    <span>Commands</span>
+                </div>
+                <div class="tab">
+                    <span class="tab-icon">🔄</span>
+                    <span>Updates</span>
+                </div>
+                <div class="tab">
+                    <span class="tab-icon">🤖</span>
+                    <span>Automation</span>
+                </div>
+            </div>
+
+            <!-- Search Bar -->
+            <div class="search-bar">
+                <input type="text" class="search-input" placeholder="🔍 Search clients by ID, model, or location..." id="searchInput" onkeyup="searchClients()">
+                <button class="action-btn" onclick="selectAll()">Select All</button>
+                <button class="action-btn" onclick="deselectAll()">Clear</button>
+                <button class="action-btn" onclick="refreshClients()">🔄 Refresh</button>
+            </div>
+
+            <!-- Client Grid -->
+            <div class="client-grid" id="clientGrid">
+                <!-- Clients will be loaded here -->
+            </div>
+
+            <!-- Bottom Bar -->
+            <div class="bottom-bar">
+                <div class="bottom-info">
+                    <div class="info-item">
+                        <span class="info-label">Server:</span>
+                        <span class="info-value">localhost:5000</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Version:</span>
+                        <span class="info-value">1.0.0</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Status:</span>
+                        <span class="info-value">🟢 Connected</span>
+                    </div>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">© 2026 LUCUS RAT - Professional Edition</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Context Menu -->
+    <div class="context-menu" id="contextMenu">
+        <div class="context-item" onclick="executeCommand('screenshot')">
+            <span class="context-icon">📷</span>
+            <span>Screenshot</span>
+        </div>
+        <div class="context-item" onclick="executeCommand('screen_record')">
+            <span class="context-icon">🎥</span>
+            <span>Screen Record</span>
+        </div>
+        <div class="context-item" onclick="executeCommand('camera')">
+            <span class="context-icon">📸</span>
+            <span>Camera</span>
+        </div>
+        <div class="context-item" onclick="executeCommand('location')">
+            <span class="context-icon">📍</span>
+            <span>Location</span>
+        </div>
+        <div class="context-item" onclick="executeCommand('sms')">
+            <span class="context-icon">💬</span>
+            <span>SMS</span>
+        </div>
+        <div class="context-item" onclick="executeCommand('calls')">
+            <span class="context-icon">📞</span>
+            <span>Calls</span>
+        </div>
+        <div class="context-item" onclick="executeCommand('files')">
+            <span class="context-icon">📁</span>
+            <span>Files</span>
+        </div>
+        <div class="context-item" onclick="executeCommand('keylogger')">
+            <span class="context-icon">⌨️</span>
+            <span>Keylogger</span>
+        </div>
+        <div class="context-item" onclick="executeCommand('apps')">
+            <span class="context-icon">📱</span>
+            <span>Apps</span>
+        </div>
+        <div class="context-item" onclick="executeCommand('uninstall')">
+            <span class="context-icon">🗑️</span>
+            <span>Uninstall</span>
+        </div>
+    </div>
+
+    <!-- Loading -->
+    <div class="loading" id="loading">
+        <div class="spinner"></div>
+    </div>
+
+    <!-- Notification -->
+    <div class="notification" id="notification">
+        <div class="notification-title" id="notificationTitle"></div>
+        <div class="notification-message" id="notificationMessage"></div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        // Configuration
+        const API_URL = 'http://localhost:5000';
+        let socket = null;
+        let clients = [];
+        let selectedClientIds = [];
+
+        // Sample data for demo
+        const sampleClients = [
+            { id: 'LC001', model: 'Samsung Galaxy S21', android: '13', battery: '85%', location: 'New Delhi', online: true },
+            { id: 'LC002', model: 'Xiaomi Redmi Note 10', android: '12', battery: '92%', location: 'Mumbai', online: true },
+            { id: 'LC003', model: 'OnePlus 9 Pro', android: '13', battery: '78%', location: 'Bangalore', online: true },
+            { id: 'LC004', model: 'Realme GT', android: '12', battery: '65%', location: 'Pune', online: false },
+            { id: 'LC005', model: 'Vivo V21', android: '11', battery: '88%', location: 'Chennai', online: true },
+            { id: 'LC006', model: 'Oppo Reno 6', android: '12', battery: '73%', location: 'Hyderabad', online: true },
+            { id: 'LC007', model: 'Poco X3', android: '11', battery: '91%', location: 'Kolkata', online: true },
+            { id: 'LC008', model: 'Motorola Edge', android: '12', battery: '82%', location: 'Ahmedabad', online: false },
+        ];
+
+        // Initialize
+        function init() {
+            loadClients();
+            updateStats();
+            console.log('🔥 LUCUS RAT Control Panel Loaded');
+            console.log('Version: 1.0.0 - Final Complete Edition');
+        }
+
+        // Load clients
+        function loadClients() {
+            clients = sampleClients;
+            renderClients();
+        }
+
+        // Render clients
+        function renderClients() {
+            const grid = document.getElementById('clientGrid');
+            grid.innerHTML = '';
+
+            clients.forEach(client => {
+                const card = document.createElement('div');
+                card.className = 'client-card';
+                card.id = `client-${client.id}`;
+                card.onclick = () => toggleSelect(client.id);
+                card.oncontextmenu = (e) => showContextMenu(e, client.id);
+
+                card.innerHTML = `
+                    <div class="client-header">
+                        <div class="client-id">${client.id}</div>
+                        <div class="client-status">
+                            <div class="status-dot"></div>
+                            <div class="status-text">${client.online ? 'Online' : 'Offline'}</div>
+                        </div>
+                    </div>
+                    
+                    <div class="client-info">
+                        <div class="info-row">
+                            <span class="info-label">📱 Model:</span>
+                            <span class="info-value">${client.model}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">🤖 Android:</span>
+                            <span class="info-value">${client.android}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">🔋 Battery:</span>
+                            <span class="info-value">${client.battery}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">📍 Location:</span>
+                            <span class="info-value">${client.location}</span>
+                        </div>
+                    </div>
+                    
+                    <div class="client-actions">
+                        <button class="client-action-btn" onclick="event.stopPropagation(); sendCommand('${client.id}', 'screenshot')">
+                            <span class="action-icon">📷</span>
+                            <span>Screen</span>
+                        </button>
+                        <button class="client-action-btn" onclick="event.stopPropagation(); sendCommand('${client.id}', 'camera')">
+                            <span class="action-icon">📸</span>
+                            <span>Camera</span>
+                        </button>
+                        <button class="client-action-btn" onclick="event.stopPropagation(); sendCommand('${client.id}', 'location')">
+                            <span class="action-icon">📍</span>
+                            <span>Location</span>
+                        </button>
+                        <button class="client-action-btn" onclick="event.stopPropagation(); sendCommand('${client.id}', 'sms')">
+                            <span class="action-icon">💬</span>
+                            <span>SMS</span>
+                        </button>
+                        <button class="client-action-btn" onclick="event.stopPropagation(); sendCommand('${client.id}', 'calls')">
+                            <span class="action-icon">📞</span>
+                            <span>Calls</span>
+                        </button>
+                        <button class="client-action-btn" onclick="event.stopPropagation(); sendCommand('${client.id}', 'files')">
+                            <span class="action-icon">📁</span>
+                            <span>Files</span>
+                        </button>
+                    </div>
+                `;
+
+                if (!client.online) {
+                    card.style.opacity = '0.6';
+                    card.querySelector('.status-dot').style.background = '#ff0000';
+                    card.querySelector('.status-dot').style.boxShadow = '0 0 15px #ff0000';
+                    card.querySelector('.status-text').style.color = '#ff0000';
+                }
+
+                grid.appendChild(card);
+            });
+
+            updateStats();
+        }
+
+        // Toggle select
+        function toggleSelect(clientId) {
+            const card = document.getElementById(`client-${clientId}`);
+            const index = selectedClientIds.indexOf(clientId);
+
+            if (index > -1) {
+                selectedClientIds.splice(index, 1);
+                card.classList.remove('selected');
+            } else {
+                selectedClientIds.push(clientId);
+                card.classList.add('selected');
+            }
+
+            updateStats();
+        }
+
+        // Select all
+        function selectAll() {
+            selectedClientIds = clients.map(c => c.id);
+            clients.forEach(client => {
+                document.getElementById(`client-${client.id}`).classList.add('selected');
+            });
+            updateStats();
+            showNotification('Selection', 'All clients selected');
+        }
+
+        // Deselect all
+        function deselectAll() {
+            selectedClientIds = [];
+            clients.forEach(client => {
+                document.getElementById(`client-${client.id}`).classList.remove('selected');
+            });
+            updateStats();
+            showNotification('Selection', 'All clients deselected');
+        }
+
+        // Update stats
+        function updateStats() {
+            document.getElementById('totalDevices').textContent = clients.length;
+            document.getElementById('onlineDevices').textContent = clients.filter(c => c.online).length;
+            document.getElementById('selectedDevices').textContent = selectedClientIds.length;
+        }
+
+        // Search clients
+        function searchClients() {
+            const query = document.getElementById('searchInput').value.toLowerCase();
+            clients.forEach(client => {
+                const card = document.getElementById(`client-${client.id}`);
+                const matches = client.id.toLowerCase().includes(query) ||
+                              client.model.toLowerCase().includes(query) ||
+                              client.location.toLowerCase().includes(query);
+                card.style.display = matches ? 'block' : 'none';
+            });
+        }
+
+        // Show context menu
+        function showContextMenu(e, clientId) {
+            e.preventDefault();
+            const menu = document.getElementById('contextMenu');
+            menu.style.left = e.pageX + 'px';
+            menu.style.top = e.pageY + 'px';
+            menu.classList.add('show');
+            menu.dataset.clientId = clientId;
+        }
+
+        // Hide context menu
+        document.addEventListener('click', () => {
+            document.getElementById('contextMenu').classList.remove('show');
+        });
+
+        // Execute command
+        function executeCommand(command) {
+            const clientId = document.getElementById('contextMenu').dataset.clientId;
+            const client = clients.find(c => c.id === clientId);
+            showNotification('Command Sent', `${command} command sent to ${client.id} (${client.model})`);
+        }
+
+        // Send command
+        function sendCommand(clientId, command) {
+            const client = clients.find(c => c.id === clientId);
+            showNotification('Command Sent', `${command} command sent to ${client.id}`);
+        }
+
+        // Refresh clients
+        function refreshClients() {
+            showLoading();
+            setTimeout(() => {
+                hideLoading();
+                loadClients();
+                showNotification('Success', 'Clients refreshed successfully');
+            }, 1000);
+        }
+
+        // Show loading
+        function showLoading() {
+            document.getElementById('loading').classList.add('show');
+        }
+
+        // Hide loading
+        function hideLoading() {
+            document.getElementById('loading').classList.remove('show');
+        }
+
+        // Show notification
+        function showNotification(title, message) {
+            const notification = document.getElementById('notification');
+            document.getElementById('notificationTitle').textContent = title;
+            document.getElementById('notificationMessage').textContent = message;
+            notification.classList.add('show');
+
+            setTimeout(() => {
+                notification.classList.remove('show');
+            }, 3000);
+        }
+
+        // Tab switching
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', function() {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                this.classList.add('active');
+            });
+        });
+
+        // Sidebar switching
+        document.querySelectorAll('.sidebar-icon').forEach(icon => {
+            icon.addEventListener('click', function() {
+                document.querySelectorAll('.sidebar-icon').forEach(i => i.classList.remove('active'));
+                this.classList.add('active');
+            });
+        });
+
+        // Initialize on load
+        init();
+    </script>
+</body>
+</html>

@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CraxsRAT - Remote Access Tool</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; color: white; }
+        .container { text-align: center; max-width: 600px; padding: 40px; }
+        h1 { font-size: 48px; margin-bottom: 20px; }
+        p { font-size: 20px; margin-bottom: 40px; opacity: 0.9; }
+        .btn { display: inline-block; padding: 15px 40px; background: white; color: #667eea; border-radius: 30px; text-decoration: none; font-weight: bold; font-size: 18px; margin: 10px; transition: all 0.3s; }
+        .btn:hover { transform: translateY(-3px); box-shadow: 0 10px 30px rgba(0,0,0,0.3); }
+        .btn-secondary { background: transparent; border: 2px solid white; color: white; }
+        .features { margin-top: 60px; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 20px; }
+        .feature { background: rgba(255,255,255,0.1); padding: 20px; border-radius: 10px; }
+        .feature h3 { font-size: 16px; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🦅 CraxsRAT</h1>
+        <p>Complete Remote Access Tool Platform</p>
+        
+        <div>
+            <a href="register.html" class="btn">Get Started</a>
+            <a href="login.html" class="btn btn-secondary">Login</a>
+        </div>
+
+        <div class="features">
+            <div class="feature">
+                <div style="font-size: 40px;">📱</div>
+                <h3>Multi-Device</h3>
+            </div>
+            <div class="feature">
+                <div style="font-size: 40px;">🔐</div>
+                <h3>Secure</h3>
+            </div>
+            <div class="feature">
+                <div style="font-size: 40px;">⚡</div>
+                <h3>Real-time</h3>
+            </div>
+            <div class="feature">
+                <div style="font-size: 40px;">💳</div>
+                <h3>License Plans</h3>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Auto redirect to register after 3 seconds
+        setTimeout(() => {
+            window.location.href = 'register.html';
+        }, 3000);
+    </script>
+</body>
+</html>

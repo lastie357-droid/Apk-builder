@@ -1,0 +1,1173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🔥 ULTIMATE RAT - Full Control Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #000000;
+            color: #00ff00;
+            overflow-x: hidden;
+        }
+
+        /* Animated Background */
+        .bg-animation {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #000000 0%, #1a0000 50%, #000a00 100%);
+            z-index: -1;
+        }
+
+        .bg-animation::before {
+            content: '';
+            position: absolute;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(255,0,0,0.1) 1px, transparent 1px);
+            background-size: 50px 50px;
+            animation: moveGrid 20s linear infinite;
+        }
+
+        @keyframes moveGrid {
+            0% { transform: translate(0, 0); }
+            100% { transform: translate(50px, 50px); }
+        }
+
+        /* Top Bar */
+        .top-bar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 70px;
+            background: linear-gradient(135deg, #ff0000 0%, #cc0000 100%);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 30px;
+            box-shadow: 0 5px 30px rgba(255, 0, 0, 0.7);
+            z-index: 1000;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .logo h1 {
+            color: #ffffff;
+            font-size: 1.8em;
+            text-shadow: 0 0 20px rgba(255, 255, 255, 0.8);
+        }
+
+        .logo .badge {
+            background: #00ff00;
+            color: #000000;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-weight: bold;
+            font-size: 0.8em;
+        }
+
+        .top-stats {
+            display: flex;
+            gap: 30px;
+        }
+
+        .top-stat {
+            text-align: center;
+        }
+
+        .top-stat-value {
+            font-size: 1.8em;
+            color: #ffff00;
+            font-weight: bold;
+        }
+
+        .top-stat-label {
+            font-size: 0.9em;
+            color: #ffffff;
+        }
+
+        .user-menu {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 10px 20px;
+            border-radius: 25px;
+        }
+
+        .user-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #00ff00;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            color: #000000;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            position: fixed;
+            left: 0;
+            top: 70px;
+            width: 280px;
+            height: calc(100vh - 70px);
+            background: rgba(10, 10, 10, 0.95);
+            border-right: 2px solid #ff0000;
+            padding: 20px;
+            overflow-y: auto;
+            backdrop-filter: blur(10px);
+        }
+
+        .menu-section {
+            margin-bottom: 30px;
+        }
+
+        .menu-section-title {
+            color: #ff0000;
+            font-size: 0.9em;
+            font-weight: bold;
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .menu-item {
+            padding: 15px 20px;
+            margin: 8px 0;
+            background: rgba(255, 0, 0, 0.1);
+            border-left: 4px solid #ff0000;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .menu-item:hover {
+            background: rgba(255, 0, 0, 0.3);
+            padding-left: 30px;
+            border-left-color: #00ff00;
+        }
+
+        .menu-item.active {
+            background: rgba(0, 255, 0, 0.2);
+            border-left-color: #00ff00;
+            color: #00ff00;
+        }
+
+        .menu-icon {
+            font-size: 1.5em;
+            width: 30px;
+            text-align: center;
+        }
+
+        /* Main Content */
+        .main-content {
+            margin-left: 280px;
+            margin-top: 70px;
+            padding: 30px;
+            min-height: calc(100vh - 70px);
+        }
+
+        /* Dashboard Grid */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 25px;
+            margin-bottom: 40px;
+        }
+
+        .dashboard-card {
+            background: linear-gradient(135deg, rgba(26, 26, 26, 0.9) 0%, rgba(10, 10, 10, 0.9) 100%);
+            padding: 30px;
+            border-radius: 20px;
+            border: 2px solid #ff0000;
+            transition: all 0.4s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .dashboard-card::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: linear-gradient(45deg, transparent, rgba(0, 255, 0, 0.1), transparent);
+            transform: rotate(45deg);
+            transition: all 0.5s;
+        }
+
+        .dashboard-card:hover::before {
+            left: 100%;
+        }
+
+        .dashboard-card:hover {
+            transform: translateY(-10px) scale(1.02);
+            box-shadow: 0 20px 60px rgba(255, 0, 0, 0.6);
+            border-color: #00ff00;
+        }
+
+        .card-icon {
+            font-size: 3em;
+            margin-bottom: 15px;
+            display: block;
+        }
+
+        .card-value {
+            font-size: 3em;
+            color: #00ff00;
+            font-weight: bold;
+            text-shadow: 0 0 20px rgba(0, 255, 0, 0.8);
+        }
+
+        .card-label {
+            font-size: 1.2em;
+            color: #ffffff;
+            margin-top: 10px;
+        }
+
+        .card-change {
+            font-size: 0.9em;
+            color: #ffff00;
+            margin-top: 5px;
+        }
+
+        /* Device Section */
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 25px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #ff0000;
+        }
+
+        .section-title {
+            font-size: 2em;
+            color: #ff0000;
+            text-shadow: 0 0 20px rgba(255, 0, 0, 0.8);
+        }
+
+        .section-actions {
+            display: flex;
+            gap: 15px;
+        }
+
+        .btn {
+            padding: 12px 25px;
+            background: linear-gradient(135deg, #ff0000 0%, #cc0000 100%);
+            color: #ffffff;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 1em;
+            transition: all 0.3s ease;
+            box-shadow: 0 5px 20px rgba(255, 0, 0, 0.4);
+        }
+
+        .btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 30px rgba(255, 0, 0, 0.6);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #00ff00 0%, #00cc00 100%);
+            color: #000000;
+            box-shadow: 0 5px 20px rgba(0, 255, 0, 0.4);
+        }
+
+        .btn-success:hover {
+            box-shadow: 0 10px 30px rgba(0, 255, 0, 0.6);
+        }
+
+        /* Device Grid */
+        .device-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+            gap: 25px;
+            margin-bottom: 40px;
+        }
+
+        .device-card {
+            background: linear-gradient(135deg, rgba(26, 26, 26, 0.95) 0%, rgba(10, 10, 10, 0.95) 100%);
+            padding: 25px;
+            border-radius: 20px;
+            border: 2px solid #ff0000;
+            transition: all 0.4s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .device-card.online {
+            border-color: #00ff00;
+            box-shadow: 0 0 30px rgba(0, 255, 0, 0.3);
+        }
+
+        .device-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 50px rgba(255, 0, 0, 0.5);
+        }
+
+        .device-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #333;
+        }
+
+        .device-name {
+            font-size: 1.5em;
+            color: #ff0000;
+            font-weight: bold;
+        }
+
+        .device-status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 15px;
+            background: rgba(255, 0, 0, 0.2);
+            border-radius: 20px;
+        }
+
+        .device-status.online {
+            background: rgba(0, 255, 0, 0.2);
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #ff0000;
+        }
+
+        .status-dot.online {
+            background: #00ff00;
+            box-shadow: 0 0 15px #00ff00;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.2); opacity: 0.7; }
+        }
+
+        .device-info {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin: 20px 0;
+        }
+
+        .info-item {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 12px;
+            border-radius: 10px;
+            border-left: 3px solid #ff0000;
+        }
+
+        .info-label {
+            font-size: 0.85em;
+            color: #888;
+            margin-bottom: 5px;
+        }
+
+        .info-value {
+            font-size: 1.1em;
+            color: #00ff00;
+            font-weight: bold;
+        }
+
+        .device-actions {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .action-btn {
+            padding: 12px;
+            background: linear-gradient(135deg, #ff0000 0%, #cc0000 100%);
+            color: #ffffff;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            font-size: 0.9em;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .action-btn:hover {
+            background: linear-gradient(135deg, #00ff00 0%, #00cc00 100%);
+            color: #000000;
+            transform: scale(1.05);
+        }
+
+        .action-icon {
+            font-size: 1.5em;
+        }
+
+        /* Terminal */
+        .terminal-container {
+            background: #000000;
+            padding: 25px;
+            border-radius: 20px;
+            border: 2px solid #00ff00;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 40px rgba(0, 255, 0, 0.3);
+        }
+
+        .terminal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #00ff00;
+        }
+
+        .terminal-title {
+            color: #00ff00;
+            font-size: 1.3em;
+            font-weight: bold;
+        }
+
+        .terminal-controls {
+            display: flex;
+            gap: 10px;
+        }
+
+        .terminal-btn {
+            width: 15px;
+            height: 15px;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        .terminal-btn.close { background: #ff0000; }
+        .terminal-btn.minimize { background: #ffff00; }
+        .terminal-btn.maximize { background: #00ff00; }
+
+        .terminal-output {
+            min-height: 400px;
+            max-height: 600px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.95em;
+            line-height: 1.6;
+        }
+
+        .terminal-line {
+            color: #00ff00;
+            margin: 5px 0;
+            padding: 5px 0;
+        }
+
+        .terminal-line.error { color: #ff0000; }
+        .terminal-line.warning { color: #ffff00; }
+        .terminal-line.success { color: #00ff00; }
+        .terminal-line.info { color: #00aaff; }
+
+        .terminal-input-container {
+            display: flex;
+            margin-top: 20px;
+            gap: 15px;
+        }
+
+        .terminal-input {
+            flex: 1;
+            background: rgba(0, 255, 0, 0.1);
+            border: 2px solid #00ff00;
+            color: #00ff00;
+            padding: 15px;
+            border-radius: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 1em;
+        }
+
+        .terminal-input:focus {
+            outline: none;
+            box-shadow: 0 0 20px rgba(0, 255, 0, 0.5);
+        }
+
+        /* Activity Feed */
+        .activity-feed {
+            background: linear-gradient(135deg, rgba(26, 26, 26, 0.95) 0%, rgba(10, 10, 10, 0.95) 100%);
+            padding: 25px;
+            border-radius: 20px;
+            border: 2px solid #ff0000;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+
+        .activity-item {
+            display: flex;
+            gap: 15px;
+            padding: 15px;
+            margin: 10px 0;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            border-left: 4px solid #00ff00;
+            transition: all 0.3s ease;
+        }
+
+        .activity-item:hover {
+            background: rgba(0, 255, 0, 0.1);
+            transform: translateX(5px);
+        }
+
+        .activity-icon {
+            font-size: 2em;
+            width: 50px;
+            height: 50px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 255, 0, 0.2);
+            border-radius: 50%;
+        }
+
+        .activity-content {
+            flex: 1;
+        }
+
+        .activity-title {
+            color: #00ff00;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .activity-desc {
+            color: #888;
+            font-size: 0.9em;
+        }
+
+        .activity-time {
+            color: #ffff00;
+            font-size: 0.85em;
+        }
+
+        /* Charts */
+        .chart-container {
+            background: linear-gradient(135deg, rgba(26, 26, 26, 0.95) 0%, rgba(10, 10, 10, 0.95) 100%);
+            padding: 25px;
+            border-radius: 20px;
+            border: 2px solid #ff0000;
+            margin-bottom: 30px;
+        }
+
+        .chart-header {
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #333;
+        }
+
+        .chart-title {
+            color: #ff0000;
+            font-size: 1.5em;
+            font-weight: bold;
+        }
+
+        .chart-placeholder {
+            height: 300px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 15px;
+            color: #888;
+            font-size: 1.2em;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 12px;
+            height: 12px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #0a0a0a;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: linear-gradient(180deg, #ff0000, #00ff00);
+            border-radius: 6px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: linear-gradient(180deg, #00ff00, #ff0000);
+        }
+
+        /* Responsive */
+        @media (max-width: 1200px) {
+            .sidebar { width: 250px; }
+            .main-content { margin-left: 250px; }
+            .device-grid { grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); }
+        }
+
+        @media (max-width: 768px) {
+            .sidebar { 
+                width: 100%;
+                height: auto;
+                position: relative;
+                top: 0;
+            }
+            .main-content { 
+                margin-left: 0;
+                margin-top: 0;
+            }
+            .top-bar {
+                flex-direction: column;
+                height: auto;
+                padding: 15px;
+            }
+            .device-grid { grid-template-columns: 1fr; }
+            .dashboard-grid { grid-template-columns: 1fr; }
+        }
+
+        /* Loading Animation */
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(0, 255, 0, 0.3);
+            border-radius: 50%;
+            border-top-color: #00ff00;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <!-- Animated Background -->
+    <div class="bg-animation"></div>
+
+    <!-- Top Bar -->
+    <div class="top-bar">
+        <div class="logo">
+            <h1>🔥 ULTIMATE RAT</h1>
+            <span class="badge">v3.0.0 ULTIMATE</span>
+        </div>
+        
+        <div class="top-stats">
+            <div class="top-stat">
+                <div class="top-stat-value">5</div>
+                <div class="top-stat-label">Devices</div>
+            </div>
+            <div class="top-stat">
+                <div class="top-stat-value">3</div>
+                <div class="top-stat-label">Online</div>
+            </div>
+            <div class="top-stat">
+                <div class="top-stat-value">247</div>
+                <div class="top-stat-label">Commands</div>
+            </div>
+        </div>
+
+        <div class="user-menu">
+            <div class="user-avatar">KM</div>
+            <div>
+                <div style="color: #ffffff; font-weight: bold;">Kishan Mishra</div>
+                <div style="color: #ffff00; font-size: 0.85em;">Admin</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sidebar -->
+    <div class="sidebar">
+        <div class="menu-section">
+            <div class="menu-section-title">Main</div>
+            <div class="menu-item active">
+                <span class="menu-icon">📊</span>
+                <span>Dashboard</span>
+            </div>
+            <div class="menu-item">
+                <span class="menu-icon">📱</span>
+                <span>Devices</span>
+            </div>
+            <div class="menu-item">
+                <span class="menu-icon">💻</span>
+                <span>Terminal</span>
+            </div>
+        </div>
+
+        <div class="menu-section">
+            <div class="menu-section-title">Monitoring</div>
+            <div class="menu-item">
+                <span class="menu-icon">⌨️</span>
+                <span>Keylogger</span>
+            </div>
+            <div class="menu-item">
+                <span class="menu-icon">📷</span>
+                <span>Screenshots</span>
+            </div>
+            <div class="menu-item">
+                <span class="menu-icon">🎥</span>
+                <span>Screen Records</span>
+            </div>
+            <div class="menu-item">
+                <span class="menu-icon">📍</span>
+                <span>Location</span>
+            </div>
+            <div class="menu-item">
+                <span class="menu-icon">💬</span>
+                <span>SMS</span>
+            </div>
+            <div class="menu-item">
+                <span class="menu-icon">📞</span>
+                <span>Calls</span>
+            </div>
+        </div>
+
+        <div class="menu-section">
+            <div class="menu-section-title">Data</div>
+            <div class="menu-item">
+                <span class="menu-icon">📁</span>
+                <span>Files</span>
+            </div>
+            <div class="menu-item">
+                <span class="menu-icon">📊</span>
+                <span>Logs</span>
+            </div>
+            <div class="menu-item">
+                <span class="menu-icon">📈</span>
+                <span>Analytics</span>
+            </div>
+        </div>
+
+        <div class="menu-section">
+            <div class="menu-section-title">Settings</div>
+            <div class="menu-item">
+                <span class="menu-icon">⚙️</span>
+                <span>Settings</span>
+            </div>
+            <div class="menu-item">
+                <span class="menu-icon">🚪</span>
+                <span>Logout</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content">
+        <!-- Dashboard Cards -->
+        <div class="dashboard-grid">
+            <div class="dashboard-card">
+                <span class="card-icon">📱</span>
+                <div class="card-value">5</div>
+                <div class="card-label">Total Devices</div>
+                <div class="card-change">↑ 2 new today</div>
+            </div>
+
+            <div class="dashboard-card">
+                <span class="card-icon">🟢</span>
+                <div class="card-value">3</div>
+                <div class="card-label">Online Now</div>
+                <div class="card-change">60% uptime</div>
+            </div>
+
+            <div class="dashboard-card">
+                <span class="card-icon">⌨️</span>
+                <div class="card-value">1.2K</div>
+                <div class="card-label">Keystrokes</div>
+                <div class="card-change">↑ 15% today</div>
+            </div>
+
+            <div class="dashboard-card">
+                <span class="card-icon">📁</span>
+                <div class="card-value">247</div>
+                <div class="card-label">Files Captured</div>
+                <div class="card-change">2.3 GB total</div>
+            </div>
+        </div>
+
+        <!-- Devices Section -->
+        <div class="section-header">
+            <h2 class="section-title">📱 Connected Devices</h2>
+            <div class="section-actions">
+                <button class="btn">🔄 Refresh</button>
+                <button class="btn btn-success">➕ Add Device</button>
+            </div>
+        </div>
+
+        <div class="device-grid">
+            <!-- Device 1 - Online -->
+            <div class="device-card online">
+                <div class="device-header">
+                    <div class="device-name">Samsung Galaxy S21</div>
+                    <div class="device-status online">
+                        <span class="status-dot online"></span>
+                        <span>Online</span>
+                    </div>
+                </div>
+
+                <div class="device-info">
+                    <div class="info-item">
+                        <div class="info-label">Manufacturer</div>
+                        <div class="info-value">Samsung</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Android</div>
+                        <div class="info-value">13</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Battery</div>
+                        <div class="info-value">85%</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Network</div>
+                        <div class="info-value">WiFi</div>
+                    </div>
+                </div>
+
+                <div class="device-actions">
+                    <button class="action-btn">
+                        <span class="action-icon">📷</span>
+                        <span>Screenshot</span>
+                    </button>
+                    <button class="action-btn">
+                        <span class="action-icon">🎥</span>
+                        <span>Record</span>
+                    </button>
+                    <button class="action-btn">
+                        <span class="action-icon">📍</span>
+                        <span>Location</span>
+                    </button>
+                    <button class="action-btn">
+                        <span class="action-icon">💬</span>
+                        <span>SMS</span>
+                    </button>
+                    <button class="action-btn">
+                        <span class="action-icon">📞</span>
+                        <span>Calls</span>
+                    </button>
+                    <button class="action-btn">
+                        <span class="action-icon">📁</span>
+                        <span>Files</span>
+                    </button>
+                    <button class="action-btn">
+                        <span class="action-icon">📱</span>
+                        <span>Apps</span>
+                    </button>
+                    <button class="action-btn">
+                        <span class="action-icon">⚙️</span>
+                        <span>Settings</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Device 2 - Online -->
+            <div class="device-card online">
+                <div class="device-header">
+                    <div class="device-name">Xiaomi Redmi Note 10</div>
+                    <div class="device-status online">
+                        <span class="status-dot online"></span>
+                        <span>Online</span>
+                    </div>
+                </div>
+
+                <div class="device-info">
+                    <div class="info-item">
+                        <div class="info-label">Manufacturer</div>
+                        <div class="info-value">Xiaomi</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Android</div>
+                        <div class="info-value">12</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Battery</div>
+                        <div class="info-value">92%</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Network</div>
+                        <div class="info-value">4G</div>
+                    </div>
+                </div>
+
+                <div class="device-actions">
+                    <button class="action-btn">
+                        <span class="action-icon">📷</span>
+                        <span>Screenshot</span>
+                    </button>
+                    <button class="action-btn">
+                        <span class="action-icon">🎥</span>
+                        <span>Record</span>
+                    </button>
+                    <button class="action-btn">
+                        <span class="action-icon">📍</span>
+                        <span>Location</span>
+                    </button>
+                    <button class="action-btn">
+                        <span class="action-icon">💬</span>
+                        <span>SMS</span>
+                    </button>
+                    <button class="action-btn">
+                        <span class="action-icon">📞</span>
+                        <span>Calls</span>
+                    </button>
+                    <button class="action-btn">
+                        <span class="action-icon">📁</span>
+                        <span>Files</span>
+                    </button>
+                    <button class="action-btn">
+                        <span class="action-icon">📱</span>
+                        <span>Apps</span>
+                    </button>
+                    <button class="action-btn">
+                        <span class="action-icon">⚙️</span>
+                        <span>Settings</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Device 3 - Offline -->
+            <div class="device-card">
+                <div class="device-header">
+                    <div class="device-name">OnePlus 9 Pro</div>
+                    <div class="device-status">
+                        <span class="status-dot"></span>
+                        <span>Offline</span>
+                    </div>
+                </div>
+
+                <div class="device-info">
+                    <div class="info-item">
+                        <div class="info-label">Manufacturer</div>
+                        <div class="info-value">OnePlus</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Android</div>
+                        <div class="info-value">13</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Last Seen</div>
+                        <div class="info-value">2h ago</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Network</div>
+                        <div class="info-value">-</div>
+                    </div>
+                </div>
+
+                <div class="device-actions">
+                    <button class="action-btn" disabled style="opacity: 0.5;">
+                        <span class="action-icon">📷</span>
+                        <span>Screenshot</span>
+                    </button>
+                    <button class="action-btn" disabled style="opacity: 0.5;">
+                        <span class="action-icon">🎥</span>
+                        <span>Record</span>
+                    </button>
+                    <button class="action-btn" disabled style="opacity: 0.5;">
+                        <span class="action-icon">📍</span>
+                        <span>Location</span>
+                    </button>
+                    <button class="action-btn" disabled style="opacity: 0.5;">
+                        <span class="action-icon">💬</span>
+                        <span>SMS</span>
+                    </button>
+                    <button class="action-btn">
+                        <span class="action-icon">📊</span>
+                        <span>History</span>
+                    </button>
+                    <button class="action-btn">
+                        <span class="action-icon">📁</span>
+                        <span>Files</span>
+                    </button>
+                    <button class="action-btn">
+                        <span class="action-icon">🗑️</span>
+                        <span>Remove</span>
+                    </button>
+                    <button class="action-btn">
+                        <span class="action-icon">⚙️</span>
+                        <span>Settings</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Terminal Section -->
+        <div class="section-header">
+            <h2 class="section-title">💻 Live Terminal</h2>
+            <div class="section-actions">
+                <button class="btn">🗑️ Clear</button>
+                <button class="btn btn-success">📥 Export</button>
+            </div>
+        </div>
+
+        <div class="terminal-container">
+            <div class="terminal-header">
+                <div class="terminal-title">ULTIMATE RAT Terminal v3.0.0</div>
+                <div class="terminal-controls">
+                    <div class="terminal-btn close"></div>
+                    <div class="terminal-btn minimize"></div>
+                    <div class="terminal-btn maximize"></div>
+                </div>
+            </div>
+
+            <div class="terminal-output">
+                <div class="terminal-line success">[12:30:45] System initialized successfully</div>
+                <div class="terminal-line info">[12:30:46] Connected to MongoDB</div>
+                <div class="terminal-line info">[12:30:46] Connected to Redis</div>
+                <div class="terminal-line success">[12:30:47] Socket.IO server started on port 5000</div>
+                <div class="terminal-line">[12:31:15] Device connected: Samsung Galaxy S21 (device_001)</div>
+                <div class="terminal-line">[12:31:20] Device connected: Xiaomi Redmi Note 10 (device_002)</div>
+                <div class="terminal-line success">[12:32:05] Command executed: screenshot on device_001</div>
+                <div class="terminal-line info">[12:32:10] File received: screenshot_1234567890.jpg (2.3 MB)</div>
+                <div class="terminal-line">[12:33:22] Keylogger data received from device_001</div>
+                <div class="terminal-line success">[12:34:15] Command executed: location on device_002</div>
+                <div class="terminal-line info">[12:34:18] Location: 28.6139° N, 77.2090° E (New Delhi, India)</div>
+                <div class="terminal-line warning">[12:35:30] Device disconnected: OnePlus 9 Pro (device_003)</div>
+                <div class="terminal-line">[12:36:45] SMS intercepted from device_001: "Hey, are you free tonight?"</div>
+                <div class="terminal-line success">[12:37:20] Screen recording started on device_002</div>
+                <div class="terminal-line">[12:38:10] Call log received from device_001: 5 new calls</div>
+                <div class="terminal-line info">[12:39:05] File uploaded: contacts.vcf (125 KB)</div>
+                <div class="terminal-line">[12:40:00] Heartbeat received from all online devices</div>
+                <div class="terminal-line success">Ready for commands...</div>
+            </div>
+
+            <div class="terminal-input-container">
+                <input type="text" class="terminal-input" placeholder="Enter command... (type 'help' for available commands)">
+                <button class="btn btn-success">Execute</button>
+            </div>
+        </div>
+
+        <!-- Activity Feed -->
+        <div class="section-header">
+            <h2 class="section-title">📊 Recent Activity</h2>
+            <div class="section-actions">
+                <button class="btn">🔄 Refresh</button>
+            </div>
+        </div>
+
+        <div class="activity-feed">
+            <div class="activity-item">
+                <div class="activity-icon">📷</div>
+                <div class="activity-content">
+                    <div class="activity-title">Screenshot Captured</div>
+                    <div class="activity-desc">Samsung Galaxy S21 - screenshot_1234567890.jpg (2.3 MB)</div>
+                    <div class="activity-time">2 minutes ago</div>
+                </div>
+            </div>
+
+            <div class="activity-item">
+                <div class="activity-icon">⌨️</div>
+                <div class="activity-content">
+                    <div class="activity-title">Keylogger Data</div>
+                    <div class="activity-desc">Xiaomi Redmi Note 10 - 247 keystrokes captured</div>
+                    <div class="activity-time">5 minutes ago</div>
+                </div>
+            </div>
+
+            <div class="activity-item">
+                <div class="activity-icon">📍</div>
+                <div class="activity-content">
+                    <div class="activity-title">Location Updated</div>
+                    <div class="activity-desc">Samsung Galaxy S21 - New Delhi, India</div>
+                    <div class="activity-time">8 minutes ago</div>
+                </div>
+            </div>
+
+            <div class="activity-item">
+                <div class="activity-icon">💬</div>
+                <div class="activity-content">
+                    <div class="activity-title">SMS Intercepted</div>
+                    <div class="activity-desc">Samsung Galaxy S21 - "Hey, are you free tonight?"</div>
+                    <div class="activity-time">12 minutes ago</div>
+                </div>
+            </div>
+
+            <div class="activity-item">
+                <div class="activity-icon">🎥</div>
+                <div class="activity-content">
+                    <div class="activity-title">Screen Recording</div>
+                    <div class="activity-desc">Xiaomi Redmi Note 10 - recording_1234567890.mp4 (45.2 MB)</div>
+                    <div class="activity-time">15 minutes ago</div>
+                </div>
+            </div>
+
+            <div class="activity-item">
+                <div class="activity-icon">📞</div>
+                <div class="activity-content">
+                    <div class="activity-title">Call Logs Received</div>
+                    <div class="activity-desc">Samsung Galaxy S21 - 5 new call records</div>
+                    <div class="activity-time">20 minutes ago</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        console.log('🔥 ULTIMATE RAT Dashboard Loaded');
+        console.log('Version: 3.0.0 - ULTIMATE EDITION');
+        console.log('CraxRAT + G700 BTMOB Level Features');
+        
+        // Add click handlers for menu items
+        document.querySelectorAll('.menu-item').forEach(item => {
+            item.addEventListener('click', function() {
+                document.querySelectorAll('.menu-item').forEach(i => i.classList.remove('active'));
+                this.classList.add('active');
+            });
+        });
+
+        // Add click handlers for action buttons
+        document.querySelectorAll('.action-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                if (!this.disabled) {
+                    const action = this.textContent.trim();
+                    console.log('Action clicked:', action);
+                    alert('Action: ' + action + '\nThis will execute the command on the selected device.');
+                }
+            });
+        });
+
+        // Terminal input handler
+        document.querySelector('.terminal-input').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                const command = this.value;
+                if (command) {
+                    const output = document.querySelector('.terminal-output');
+                    const line = document.createElement('div');
+                    line.className = 'terminal-line info';
+                    line.textContent = `[${new Date().toLocaleTimeString()}] > ${command}`;
+                    output.appendChild(line);
+                    output.scrollTop = output.scrollHeight;
+                    this.value = '';
+                }
+            }
+        });
+    </script>
+</body>
+</html>

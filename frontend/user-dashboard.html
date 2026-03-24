@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Dashboard - CraxsRAT</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; }
+        .header { background: rgba(255,255,255,0.1); backdrop-filter: blur(10px); padding: 20px; color: white; }
+        .header h1 { display: inline-block; font-size: 24px; }
+        .user-info { float: right; }
+        .logout-btn { background: rgba(255,255,255,0.2); padding: 8px 20px; border-radius: 5px; cursor: pointer; border: none; color: white; margin-left: 10px; }
+        .container { max-width: 1200px; margin: 30px auto; padding: 0 20px; }
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 30px; }
+        .stat-card { background: white; padding: 25px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
+        .stat-card h3 { color: #666; font-size: 14px; margin-bottom: 10px; }
+        .stat-card .value { font-size: 32px; font-weight: bold; color: #667eea; }
+        .card { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); margin-bottom: 20px; }
+        .card h2 { margin-bottom: 20px; color: #333; }
+        .device-list { display: grid; gap: 15px; }
+        .device-item { background: #f9f9f9; padding: 20px; border-radius: 10px; border-left: 4px solid #667eea; }
+        .device-item h3 { color: #333; margin-bottom: 10px; }
+        .device-item p { color: #666; font-size: 14px; margin: 5px 0; }
+        .btn { padding: 10px 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; margin: 5px; }
+        .btn:hover { opacity: 0.9; }
+        .btn-secondary { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); }
+        .badge { padding: 5px 12px; border-radius: 20px; font-size: 12px; font-weight: bold; }
+        .badge.online { background: #4caf50; color: white; }
+        .badge.offline { background: #f44336; color: white; }
+        .badge.active { background: #4caf50; color: white; }
+        .badge.expired { background: #f44336; color: white; }
+        .empty-state { text-align: center; padding: 60px 20px; color: #999; }
+        .license-info { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
+        .license-info h3 { margin-bottom: 15px; }
+        .license-info p { margin: 8px 0; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🦅 My Dashboard</h1>
+        <div class="user-info">
+            <span id="userName">User</span>
+            <button class="logout-btn" onclick="logout()">Logout</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="license-info">
+            <h3>📜 Your License</h3>
+            <p><strong>Plan:</strong> <span id="licensePlan">Free Trial</span></p>
+            <p><strong>Days Remaining:</strong> <span id="licenseDays">7</span> days</p>
+            <p><strong>Max Devices:</strong> <span id="maxDevices">1</span></p>
+            <p><strong>Status:</strong> <span class="badge active" id="licenseStatus">Active</span></p>
+            <button class="btn" onclick="window.location.href='license.html'" style="margin-top: 15px;">💳 Upgrade License</button>
+        </div>
+
+        <div class="stats">
+            <div class="stat-card">
+                <h3>My Devices</h3>
+                <div class="value" id="totalDevices">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>Online Devices</h3>
+                <div class="value" id="onlineDevices">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>Commands Sent</h3>
+                <div class="value" id="commandsSent">0</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>📱 My Connected Devices</h2>
+            <div id="deviceList" class="device-list">
+                <div class="empty-state">
+                    <h3>No devices connected yet</h3>
+                    <p>Install the APK on your device to get started</p>
+                    <button class="btn" onclick="window.location.href='apk-builder.html'" style="margin-top: 20px;">📱 Build APK</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>🎯 Quick Actions</h2>
+            <button class="btn" onclick="window.location.href='apk-builder.html'">📱 Build New APK</button>
+            <button class="btn btn-secondary" onclick="window.location.href='license.html'">💳 Upgrade License</button>
+            <button class="btn" onclick="refreshDevices()">🔄 Refresh Devices</button>
+        </div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script>
+        const user = JSON.parse(localStorage.getItem('user') || '{}');
+        
+        if (!user.email) {
+            window.location.href = 'login.html';
+        }
+
+        document.getElementById('userName').textContent = user.fullName || user.email;
+
+        const socket = io('http://localhost:5000');
+
+        function updateLicenseInfo() {
+            const license = user.license || {};
+            document.getElementById('licensePlan').textContent = license.plan || 'Free Trial';
+            document.getElementById('licenseDays').textContent = license.daysRemaining || 7;
+            document.getElementById('maxDevices').textContent = license.maxDevices || 1;
+            
+            const statusBadge = document.getElementById('licenseStatus');
+            statusBadge.textContent = license.status || 'Active';
+            statusBadge.className = 'badge ' + (license.status || 'active');
+        }
+
+        function loadDevices() {
+            socket.emit('device:refresh', { userId: user.email });
+        }
+
+        socket.on('device:list', (devices) => {
+            const userDevices = devices.filter(d => d.userId === user.email);
+            
+            document.getElementById('totalDevices').textContent = userDevices.length;
+            document.getElementById('onlineDevices').textContent = userDevices.filter(d => d.online).length;
+
+            const deviceList = document.getElementById('deviceList');
+            
+            if (userDevices.length === 0) {
+                deviceList.innerHTML = `
+                    <div class="empty-state">
+                        <h3>No devices connected yet</h3>
+                        <p>Install the APK on your device to get started</p>
+                        <button class="btn" onclick="window.location.href='apk-builder.html'" style="margin-top: 20px;">📱 Build APK</button>
+                    </div>
+                `;
+                return;
+            }
+
+            deviceList.innerHTML = userDevices.map(device => `
+                <div class="device-item">
+                    <h3>📱 ${device.deviceInfo?.model || 'Unknown Device'}</h3>
+                    <p><strong>Status:</strong> <span class="badge ${device.online ? 'online' : 'offline'}">${device.online ? 'Online' : 'Offline'}</span></p>
+                    <p><strong>Android:</strong> ${device.deviceInfo?.androidVersion || 'N/A'}</p>
+                    <p><strong>Connected:</strong> ${new Date(device.connectedAt).toLocaleString()}</p>
+                    <div style="margin-top: 15px;">
+                        <button class="btn" onclick="controlDevice('${device.deviceId}')">🎮 Control Device</button>
+                        <button class="btn btn-secondary" onclick="disconnectDevice('${device.deviceId}')">🔌 Disconnect</button>
+                    </div>
+                </div>
+            `).join('');
+        });
+
+        function controlDevice(deviceId) {
+            localStorage.setItem('selectedDevice', deviceId);
+            window.location.href = 'device-control.html';
+        }
+
+        function disconnectDevice(deviceId) {
+            if (confirm('Are you sure you want to disconnect this device?')) {
+                socket.emit('device:disconnect', { deviceId });
+                alert('Device disconnected');
+                refreshDevices();
+            }
+        }
+
+        function refreshDevices() {
+            loadDevices();
+        }
+
+        function logout() {
+            if (confirm('Are you sure you want to logout?')) {
+                localStorage.removeItem('user');
+                window.location.href = 'login.html';
+            }
+        }
+
+        updateLicenseInfo();
+        loadDevices();
+
+        setInterval(loadDevices, 5000);
+    </script>
+</body>
+</html>

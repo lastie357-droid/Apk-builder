@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BT MOB - Professional RAT Control Panel</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #000000;
+            color: #ffffff;
+            overflow: hidden;
+        }
+
+        /* Top Bar */
+        .top-bar {
+            height: 60px;
+            background: linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 100%);
+            border-bottom: 2px solid #ff0000;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 30px;
+            box-shadow: 0 5px 20px rgba(255, 0, 0, 0.5);
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: #ff0000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5em;
+            font-weight: bold;
+            border-radius: 5px;
+        }
+
+        .logo-text {
+            font-size: 1.8em;
+            font-weight: bold;
+            letter-spacing: 3px;
+            color: #ffffff;
+            text-shadow: 0 0 10px rgba(255, 0, 0, 0.8);
+        }
+
+        .top-controls {
+            display: flex;
+            gap: 15px;
+        }
+
+        .top-btn {
+            padding: 8px 20px;
+            background: rgba(255, 0, 0, 0.2);
+            border: 1px solid #ff0000;
+            color: #ffffff;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: bold;
+        }
+
+        .top-btn:hover {
+            background: #ff0000;
+            transform: scale(1.05);
+        }
+
+        .top-btn.active {
+            background: #ff0000;
+        }
+
+        .window-controls {
+            display: flex;
+            gap: 10px;
+        }
+
+        .window-btn {
+            width: 35px;
+            height: 35px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(255, 255, 255, 0.1);
+            border: none;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 1.2em;
+        }
+
+        .window-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .window-btn.close:hover {
+            background: #ff0000;
+        }
+
+        /* Main Container */
+        .main-container {
+            display: flex;
+            height: calc(100vh - 60px);
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 80px;
+            background: #0a0a0a;
+            border-right: 2px solid #ff0000;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px 0;
+            gap: 20px;
+        }
+
+        .sidebar-icon {
+            width: 50px;
+            height: 50px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(255, 0, 0, 0.1);
+            border: 2px solid transparent;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 1.5em;
+        }
+
+        .sidebar-icon:hover,
+        .sidebar-icon.active {
+            background: rgba(255, 0, 0, 0.3);
+            border-color: #ff0000;
+            transform: scale(1.1);
+        }
+
+        /* Content Area */
+        .content-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Tab Bar */
+        .tab-bar {
+            height: 50px;
+            background: #1a1a1a;
+            border-bottom: 2px solid #333;
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            gap: 5px;
+        }
+
+        .tab {
+            padding: 10px 25px;
+            background: rgba(255, 0, 0, 0.1);
+            border: 1px solid #333;
+            border-bottom: none;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border-radius: 5px 5px 0 0;
+        }
+
+        .tab:hover {
+            background: rgba(255, 0, 0, 0.2);
+        }
+
+        .tab.active {
+            background: #ff0000;
+            border-color: #ff0000;
+        }
+
+        .tab-icon {
+            font-size: 1.2em;
+        }
+
+        /* Search Bar */
+        .search-bar {
+            height: 45px;
+            background: #0a0a0a;
+            border-bottom: 1px solid #333;
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            gap: 15px;
+        }
+
+        .search-input {
+            flex: 1;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid #333;
+            color: #ffffff;
+            padding: 8px 15px;
+            border-radius: 5px;
+            outline: none;
+        }
+
+        .search-input:focus {
+            border-color: #ff0000;
+        }
+
+        /* Client Grid */
+        .client-grid {
+            flex: 1;
+            background: #000000;
+            padding: 20px;
+            overflow-y: auto;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 20px;
+            align-content: start;
+        }
+
+        .client-card {
+            background: linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 100%);
+            border: 2px solid #ff0000;
+            border-radius: 10px;
+            padding: 15px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .client-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 0, 0, 0.2), transparent);
+            transition: left 0.5s;
+        }
+
+        .client-card:hover::before {
+            left: 100%;
+        }
+
+        .client-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(255, 0, 0, 0.5);
+        }
+
+        .client-card.selected {
+            border-color: #00ff00;
+            box-shadow: 0 0 20px rgba(0, 255, 0, 0.5);
+        }
+
+        .client-username {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #ff0000;
+            margin-bottom: 10px;
+            text-align: center;
+            border: 2px solid #ff0000;
+            padding: 8px;
+            border-radius: 5px;
+            background: rgba(255, 0, 0, 0.1);
+        }
+
+        .client-info {
+            font-size: 0.85em;
+            color: #888;
+            margin: 5px 0;
+        }
+
+        .client-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #333;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #00ff00;
+            box-shadow: 0 0 10px #00ff00;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .status-text {
+            color: #00ff00;
+            font-weight: bold;
+        }
+
+        /* Bottom Bar */
+        .bottom-bar {
+            height: 35px;
+            background: #0a0a0a;
+            border-top: 1px solid #333;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            font-size: 0.85em;
+        }
+
+        .bottom-info {
+            display: flex;
+            gap: 30px;
+        }
+
+        .info-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .info-label {
+            color: #888;
+        }
+
+        .info-value {
+            color: #00ff00;
+            font-weight: bold;
+        }
+
+        /* Context Menu */
+        .context-menu {
+            position: fixed;
+            background: #1a1a1a;
+            border: 2px solid #ff0000;
+            border-radius: 8px;
+            padding: 5px;
+            display: none;
+            z-index: 1000;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
+        }
+
+        .context-menu.show {
+            display: block;
+        }
+
+        .context-item {
+            padding: 10px 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border-radius: 5px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .context-item:hover {
+            background: rgba(255, 0, 0, 0.3);
+        }
+
+        .context-icon {
+            width: 20px;
+            text-align: center;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 10px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #0a0a0a;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #ff0000;
+            border-radius: 5px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #cc0000;
+        }
+
+        /* Loading Animation */
+        .loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            display: none;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 5px solid rgba(255, 0, 0, 0.3);
+            border-top-color: #ff0000;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Notification */
+        .notification {
+            position: fixed;
+            top: 80px;
+            right: 20px;
+            background: #1a1a1a;
+            border: 2px solid #ff0000;
+            border-radius: 10px;
+            padding: 15px 20px;
+            display: none;
+            z-index: 1000;
+            box-shadow: 0 10px 30px rgba(255, 0, 0, 0.5);
+            animation: slideIn 0.3s ease;
+        }
+
+        .notification.show {
+            display: block;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        .notification-title {
+            font-weight: bold;
+            color: #ff0000;
+            margin-bottom: 5px;
+        }
+
+        .notification-message {
+            color: #ffffff;
+        }
+    </style>
+</head>
+<body>
+    <!-- Top Bar -->
+    <div class="top-bar">
+        <div class="logo">
+            <div class="logo-icon">🔥</div>
+            <div class="logo-text">BT MOB</div>
+        </div>
+        
+        <div class="top-controls">
+            <button class="top-btn" onclick="showNotification('Info', 'Server running on port 5000')">
+                ℹ️ Info
+            </button>
+            <button class="top-btn" onclick="refreshClients()">
+                🔄 Refresh
+            </button>
+            <button class="top-btn active">
+                @dwmaz
+            </button>
+        </div>
+
+        <div class="window-controls">
+            <button class="window-btn">─</button>
+            <button class="window-btn">□</button>
+            <button class="window-btn close">✕</button>
+        </div>
+    </div>
+
+    <!-- Main Container -->
+    <div class="main-container">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-icon active" title="Clients">
+                👥
+            </div>
+            <div class="sidebar-icon" title="Messages">
+                💬
+            </div>
+            <div class="sidebar-icon" title="Statistics">
+                📊
+            </div>
+            <div class="sidebar-icon" title="Files">
+                📁
+            </div>
+            <div class="sidebar-icon" title="Camera">
+                📷
+            </div>
+            <div class="sidebar-icon" title="Settings">
+                ⚙️
+            </div>
+        </div>
+
+        <!-- Content Area -->
+        <div class="content-area">
+            <!-- Tab Bar -->
+            <div class="tab-bar">
+                <div class="tab active">
+                    <span class="tab-icon">📡</span>
+                    <span>Broadcast</span>
+                </div>
+                <div class="tab">
+                    <span class="tab-icon">🔀</span>
+                    <span>Redirect</span>
+                </div>
+                <div class="tab">
+                    <span class="tab-icon">🔄</span>
+                    <span>Updates</span>
+                </div>
+                <div class="tab">
+                    <span class="tab-icon">🤖</span>
+                    <span>BOTS</span>
+                </div>
+            </div>
+
+            <!-- Search Bar -->
+            <div class="search-bar">
+                <input type="text" class="search-input" placeholder="🔍 Search clients..." id="searchInput" onkeyup="searchClients()">
+                <button class="top-btn" onclick="selectAll()">Select All</button>
+                <button class="top-btn" onclick="deselectAll()">Deselect All</button>
+            </div>
+
+            <!-- Client Grid -->
+            <div class="client-grid" id="clientGrid">
+                <!-- Clients will be loaded here -->
+            </div>
+
+            <!-- Bottom Bar -->
+            <div class="bottom-bar">
+                <div class="bottom-info">
+                    <div class="info-item">
+                        <span class="info-label">Total Clients:</span>
+                        <span class="info-value" id="totalClients">0</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Online:</span>
+                        <span class="info-value" id="onlineClients">0</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Selected:</span>
+                        <span class="info-value" id="selectedClients">0</span>
+                    </div>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Server:</span>
+                    <span class="info-value">localhost:5000</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Context Menu -->
+    <div class="context-menu" id="contextMenu">
+        <div class="context-item" onclick="executeCommand('screenshot')">
+            <span class="context-icon">📷</span>
+            <span>Screenshot</span>
+        </div>
+        <div class="context-item" onclick="executeCommand('screen_record')">
+            <span class="context-icon">🎥</span>
+            <span>Screen Record</span>
+        </div>
+        <div class="context-item" onclick="executeCommand('camera')">
+            <span class="context-icon">📸</span>
+            <span>Camera</span>
+        </div>
+        <div class="context-item" onclick="executeCommand('location')">
+            <span class="context-icon">📍</span>
+            <span>Location</span>
+        </div>
+        <div class="context-item" onclick="executeCommand('sms')">
+            <span class="context-icon">💬</span>
+            <span>SMS</span>
+        </div>
+        <div class="context-item" onclick="executeCommand('calls')">
+            <span class="context-icon">📞</span>
+            <span>Calls</span>
+        </div>
+        <div class="context-item" onclick="executeCommand('files')">
+            <span class="context-icon">📁</span>
+            <span>Files</span>
+        </div>
+        <div class="context-item" onclick="executeCommand('keylogger')">
+            <span class="context-icon">⌨️</span>
+            <span>Keylogger</span>
+        </div>
+        <div class="context-item" onclick="executeCommand('uninstall')">
+            <span class="context-icon">🗑️</span>
+            <span>Uninstall</span>
+        </div>
+    </div>
+
+    <!-- Loading -->
+    <div class="loading" id="loading">
+        <div class="spinner"></div>
+    </div>
+
+    <!-- Notification -->
+    <div class="notification" id="notification">
+        <div class="notification-title" id="notificationTitle"></div>
+        <div class="notification-message" id="notificationMessage"></div>
+    </div>
+
+    <script>
+        // Sample client data
+        const clients = [
+            { id: 1, username: '@dwmaz', model: 'Samsung Galaxy S21', android: '13', battery: '85%', online: true },
+            { id: 2, username: '@dwmaz', model: 'Xiaomi Redmi Note 10', android: '12', battery: '92%', online: true },
+            { id: 3, username: '@dwmaz', model: 'OnePlus 9 Pro', android: '13', battery: '78%', online: true },
+            { id: 4, username: '@dwmaz', model: 'Realme GT', android: '12', battery: '65%', online: true },
+            { id: 5, username: '@dwmaz', model: 'Vivo V21', android: '11', battery: '88%', online: true },
+            { id: 6, username: '@dwmaz', model: 'Oppo Reno 6', android: '12', battery: '73%', online: false },
+            { id: 7, username: '@dwmaz', model: 'Poco X3', android: '11', battery: '91%', online: true },
+            { id: 8, username: '@dwmaz', model: 'Motorola Edge', android: '12', battery: '82%', online: true },
+        ];
+
+        let selectedClientIds = [];
+
+        // Load clients
+        function loadClients() {
+            const grid = document.getElementById('clientGrid');
+            grid.innerHTML = '';
+
+            clients.forEach(client => {
+                const card = document.createElement('div');
+                card.className = 'client-card';
+                card.id = `client-${client.id}`;
+                card.onclick = () => toggleSelect(client.id);
+                card.oncontextmenu = (e) => showContextMenu(e, client.id);
+
+                card.innerHTML = `
+                    <div class="client-username">${client.username}</div>
+                    <div class="client-info">📱 ${client.model}</div>
+                    <div class="client-info">🤖 Android ${client.android}</div>
+                    <div class="client-info">🔋 ${client.battery}</div>
+                    <div class="client-status">
+                        <div class="status-dot"></div>
+                        <div class="status-text">${client.online ? 'Online' : 'Offline'}</div>
+                    </div>
+                `;
+
+                grid.appendChild(card);
+            });
+
+            updateStats();
+        }
+
+        // Toggle select
+        function toggleSelect(clientId) {
+            const card = document.getElementById(`client-${clientId}`);
+            const index = selectedClientIds.indexOf(clientId);
+
+            if (index > -1) {
+                selectedClientIds.splice(index, 1);
+                card.classList.remove('selected');
+            } else {
+                selectedClientIds.push(clientId);
+                card.classList.add('selected');
+            }
+
+            updateStats();
+        }
+
+        // Select all
+        function selectAll() {
+            selectedClientIds = clients.map(c => c.id);
+            clients.forEach(client => {
+                document.getElementById(`client-${client.id}`).classList.add('selected');
+            });
+            updateStats();
+        }
+
+        // Deselect all
+        function deselectAll() {
+            selectedClientIds = [];
+            clients.forEach(client => {
+                document.getElementById(`client-${client.id}`).classList.remove('selected');
+            });
+            updateStats();
+        }
+
+        // Update stats
+        function updateStats() {
+            document.getElementById('totalClients').textContent = clients.length;
+            document.getElementById('onlineClients').textContent = clients.filter(c => c.online).length;
+            document.getElementById('selectedClients').textContent = selectedClientIds.length;
+        }
+
+        // Search clients
+        function searchClients() {
+            const query = document.getElementById('searchInput').value.toLowerCase();
+            clients.forEach(client => {
+                const card = document.getElementById(`client-${client.id}`);
+                const matches = client.username.toLowerCase().includes(query) ||
+                              client.model.toLowerCase().includes(query);
+                card.style.display = matches ? 'block' : 'none';
+            });
+        }
+
+        // Show context menu
+        function showContextMenu(e, clientId) {
+            e.preventDefault();
+            const menu = document.getElementById('contextMenu');
+            menu.style.left = e.pageX + 'px';
+            menu.style.top = e.pageY + 'px';
+            menu.classList.add('show');
+            menu.dataset.clientId = clientId;
+        }
+
+        // Hide context menu
+        document.addEventListener('click', () => {
+            document.getElementById('contextMenu').classList.remove('show');
+        });
+
+        // Execute command
+        function executeCommand(command) {
+            const clientId = document.getElementById('contextMenu').dataset.clientId;
+            const client = clients.find(c => c.id == clientId);
+            showNotification('Command Sent', `${command} command sent to ${client.username} (${client.model})`);
+        }
+
+        // Refresh clients
+        function refreshClients() {
+            showLoading();
+            setTimeout(() => {
+                hideLoading();
+                showNotification('Success', 'Clients refreshed successfully');
+            }, 1000);
+        }
+
+        // Show loading
+        function showLoading() {
+            document.getElementById('loading').classList.add('show');
+        }
+
+        // Hide loading
+        function hideLoading() {
+            document.getElementById('loading').classList.remove('show');
+        }
+
+        // Show notification
+        function showNotification(title, message) {
+            const notification = document.getElementById('notification');
+            document.getElementById('notificationTitle').textContent = title;
+            document.getElementById('notificationMessage').textContent = message;
+            notification.classList.add('show');
+
+            setTimeout(() => {
+                notification.classList.remove('show');
+            }, 3000);
+        }
+
+        // Tab switching
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', function() {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                this.classList.add('active');
+            });
+        });
+
+        // Sidebar switching
+        document.querySelectorAll('.sidebar-icon').forEach(icon => {
+            icon.addEventListener('click', function() {
+                document.querySelectorAll('.sidebar-icon').forEach(i => i.classList.remove('active'));
+                this.classList.add('active');
+            });
+        });
+
+        // Initialize
+        loadClients();
+        console.log('🔥 BT MOB Control Panel Loaded');
+        console.log('Version: 3.6');
+        console.log('Total Clients:', clients.length);
+    </script>
+</body>
+</html>

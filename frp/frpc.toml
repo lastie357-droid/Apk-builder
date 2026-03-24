@@ -1,0 +1,14 @@
+serverAddr = "sjc1.clusters.zeabur.com"
+serverPort = 20073
+
+auth.method = "token"
+auth.token = "{{ .Envs.FRP_TOKEN }}"
+
+loginFailExit = false
+
+[[proxies]]
+name = "tester"
+type = "tcp"
+localIP = "0.0.0.0"
+localPort = 8080
+remotePort = 6000
