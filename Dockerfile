@@ -24,8 +24,3 @@ EXPOSE 8080
 CMD frpc -c /etc/frp/frpc.toml & \
     npx http-server /app/frontend -p 3000 & \
     cd /app/backend && npm start
-```
-
-**Full picture:**
-```
-Office PC → sjc1.clusters.zeabur.com:27436 → frps(6000) → frpc → app:8080
