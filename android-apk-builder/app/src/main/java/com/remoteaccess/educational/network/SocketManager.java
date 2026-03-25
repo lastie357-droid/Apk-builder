@@ -67,6 +67,10 @@ public class SocketManager {
     // ── Connection lifecycle ────────────────────────────────────────────────
 
     public void connect() {
+        if (running) {
+            Log.d(TAG, "connect() called but already running — skipping");
+            return;
+        }
         running = true;
         executor.execute(() -> {
             while (running) {

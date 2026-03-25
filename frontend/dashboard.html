@@ -90,10 +90,9 @@
         </div>
     </div>
 
-    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <script>
         const user = JSON.parse(localStorage.getItem('user') || '{}');
-        
+
         if (!user.email) {
             window.location.href = 'login.html';
         }
@@ -101,52 +100,74 @@
         document.getElementById('userName').textContent = user.fullName || user.email;
         document.getElementById('licensePlan').textContent = user.license?.plan || 'Free Trial';
         document.getElementById('daysRemaining').textContent = user.license?.daysRemaining || 7;
-        
+
         if (user.createdAt) {
-            const date = new Date(user.createdAt);
-            document.getElementById('createdDate').textContent = date.toLocaleDateString();
+            document.getElementById('createdDate').textContent = new Date(user.createdAt).toLocaleDateString();
         }
 
-        // Socket.IO connection
-        const socket = io('http://localhost:5000');
-        
-        socket.on('connect', () => {
-            console.log('Connected to server');
+        // Native WebSocket — server speaks plain WS on /ws, not Socket.IO
+        const wsProtocol = location.protocol === 'https:' ? 'wss' : 'ws';
+        const ws = new WebSocket(`${wsProtocol}://${location.host}/ws`);
+
+        ws.addEventListener('open', () => {
+            console.log('WebSocket connected');
         });
 
-        socket.on('device:list', (devices) => {
-            updateDeviceList(devices);
+        ws.addEventListener('message', (event) => {
+            try {
+                const msg = JSON.parse(event.data);
+                if (msg.event === 'device:list') {
+                    updateDeviceList(msg.data || []);
+                } else if (msg.event === 'device:connected' || msg.event === 'device:disconnected') {
+                    // Server will broadcast a fresh device:list after connect/disconnect
+                    // but request one ourselves just in case
+                    ws.send(JSON.stringify({ event: 'device:get-list', data: {} }));
+                }
+            } catch (e) {
+                console.error('WS message parse error', e);
+            }
         });
+
+        ws.addEventListener('close', () => console.log('WebSocket closed'));
+        ws.addEventListener('error', (e) => console.error('WebSocket error', e));
 
         function updateDeviceList(devices) {
             const deviceList = document.getElementById('deviceList');
-            
-            if (devices.length === 0) {
+
+            if (!devices || devices.length === 0) {
                 deviceList.innerHTML = '<li style="text-align: center; color: #999; padding: 40px;">No devices connected yet.</li>';
+                document.getElementById('totalDevices').textContent = 0;
+                document.getElementById('onlineDevices').textContent = 0;
                 return;
             }
 
+            // Server fields: deviceId, deviceName, model, androidVersion, isOnline, lastSeen
             deviceList.innerHTML = devices.map(device => `
-                <li class="device-item ${device.online ? 'online' : 'offline'}">
+                <li class="device-item ${device.isOnline ? 'online' : 'offline'}">
                     <div>
-                        <strong>${device.name || 'Unknown Device'}</strong><br>
-                        <small>${device.model || 'Unknown Model'} - ${device.androidVersion || 'Unknown OS'}</small>
+                        <strong>${device.deviceName || 'Unknown Device'}</strong><br>
+                        <small>${device.model || 'Unknown Model'} · Android ${device.androidVersion || 'N/A'}</small><br>
+                        <small style="color:#999">${device.lastSeen ? new Date(device.lastSeen).toLocaleString() : ''}</small>
                     </div>
                     <div>
-                        <span class="status ${device.online ? 'online' : 'offline'}">
-                            ${device.online ? 'Online' : 'Offline'}
+                        <span class="status ${device.isOnline ? 'online' : 'offline'}">
+                            ${device.isOnline ? 'Online' : 'Offline'}
                         </span>
-                        ${device.online ? '<button class="btn" onclick="controlDevice(\'' + device.id + '\')">Control</button>' : ''}
+                        ${device.isOnline
+                            ? `<button class="btn" onclick="controlDevice('${device.deviceId}')">Control</button>`
+                            : ''}
                     </div>
                 </li>
             `).join('');
 
             document.getElementById('totalDevices').textContent = devices.length;
-            document.getElementById('onlineDevices').textContent = devices.filter(d => d.online).length;
+            document.getElementById('onlineDevices').textContent = devices.filter(d => d.isOnline).length;
         }
 
         function refreshDevices() {
-            socket.emit('device:refresh', { userId: user.email });
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ event: 'device:get-list', data: {} }));
+            }
         }
 
         function controlDevice(deviceId) {
@@ -159,9 +180,6 @@
                 window.location.href = 'login.html';
             }
         }
-
-        // Initial device refresh
-        refreshDevices();
     </script>
 </body>
 </html>
