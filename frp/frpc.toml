@@ -9,6 +9,6 @@ loginFailExit = false
 [[proxies]]
 name = "tester"
 type = "tcp"
-localIP = "0.0.0.0"
+localIP = "127.0.0.1"
 localPort = 9000
 remotePort = 6000
