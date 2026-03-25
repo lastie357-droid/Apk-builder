@@ -5,6 +5,7 @@ const cors = require('cors');
 const path = require('path');
 const mongoose = require('mongoose');
 const socketIO = require('socket.io');
+const Redis = require('ioredis');
 require('dotenv').config();
 
 const app = express();
@@ -16,6 +17,19 @@ const io = socketIO(server, {
         methods: ["GET", "POST"]
     }
 });
+
+// ============================================
+// REDIS SETUP (Valkey)
+// ============================================
+const redisClient = process.env.REDIS_URL 
+    ? new Redis(process.env.REDIS_URL)
+    : new Redis({
+        host: process.env.REDIS_HOST || 'localhost',
+        port: process.env.REDIS_PORT || 6379
+    });
+
+redisClient.on('error', (err) => console.error('Redis error:', err.message));
+redisClient.on('connect', () => console.log('Redis connected'));
 
 const Device = require('./models/Device');
 const User = require('./models/User');
