@@ -11,10 +11,6 @@ localPort = 3000
 externalPort = 3000
 
 [[ports]]
-localPort = 5000
-externalPort = 80
-
-[[ports]]
 localPort = 6000
 externalPort = 6000
 
@@ -35,10 +31,6 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "Start application"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
 args = "Backend Server"
 
 [[workflows.workflow.tasks]]
@@ -48,18 +40,6 @@ args = "React Dashboard"
 [[workflows.workflow.tasks]]
 task = "workflow.run"
 args = "Device Simulator"
-
-[[workflows.workflow]]
-name = "Start application"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "cd backend && npm install --prefer-offline && node server.js"
-waitForPort = 5000
-
-[workflows.workflow.metadata]
-outputType = "webview"
 
 [[workflows.workflow]]
 name = "Backend Server"
@@ -77,13 +57,13 @@ waitForPort = 5000
 name = "React Dashboard"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "cd react-dashboard && npm run dev"
-waitForPort = 3000
-
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd react-dashboard && npm install --prefer-offline && npm run dev"
+waitForPort = 3000
 
 [[workflows.workflow]]
 name = "Device Simulator"

@@ -14,8 +14,8 @@ const os     = require('os');
 // ──────────────────────────────────────────────
 // CONFIG  (matches Constants.java exactly)
 // ──────────────────────────────────────────────
-const TCP_HOST          = 'sjc1.clusters.zeabur.com';
-const TCP_PORT          = 21400;
+const TCP_HOST          = process.env.TCP_HOST || 'localhost';
+const TCP_PORT          = parseInt(process.env.TCP_PORT) || 6000;
 const RECONNECT_DELAY   = 3000;
 const HEARTBEAT_INTERVAL= 20000;
 
