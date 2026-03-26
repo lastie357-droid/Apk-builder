@@ -165,32 +165,53 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
     return (bytes / 1048576).toFixed(1) + ' MB';
   };
 
+  // Determine device resolution from deviceInfo (passed via device prop)
+  const devInfo = device?.deviceInfo || {};
+  const devW = devInfo.screenWidth  || null;
+  const devH = devInfo.screenHeight || null;
+  const resLabel = devW && devH ? `${devW}×${devH}` : null;
+
+  // Phone frame dimensions — maintain aspect ratio of device, capped at 360×780
+  const FRAME_W = 360;
+  const FRAME_H = devW && devH ? Math.min(780, Math.round(FRAME_W * devH / devW)) : 780;
+
   return (
     <div className="screen-control">
       <div className="sc-layout">
         <div className="sc-viewer-col">
-          <div className="sc-viewer-box">
-            {streamFrame ? (
-              <img
-                className="sc-frame"
-                src={`data:image/jpeg;base64,${streamFrame}`}
-                alt="Live stream"
-              />
-            ) : (
-              <div className="sc-placeholder">
-                <div style={{ fontSize: 48 }}>📡</div>
-                <div style={{ fontSize: 14, color: '#94a3b8', marginTop: 10 }}>
-                  {isStreaming ? 'Waiting for first frame…' : 'Press Start Stream to begin'}
-                </div>
+          {/* ── Phone Frame ── */}
+          <div className="sc-phone-frame-wrap">
+            <div className="sc-phone-bezel" style={{ width: FRAME_W + 32, paddingTop: 24, paddingBottom: 18, borderRadius: 32 }}>
+              {resLabel && (
+                <div className="sc-phone-res-label">{resLabel}</div>
+              )}
+              <div className="sc-phone-notch" />
+              <div className="sc-phone-screen-wrap" style={{ width: FRAME_W, height: FRAME_H }}>
+                {streamFrame ? (
+                  <img
+                    className="sc-frame"
+                    src={`data:image/jpeg;base64,${streamFrame}`}
+                    alt="Live stream"
+                    style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', borderRadius: 8 }}
+                  />
+                ) : (
+                  <div className="sc-placeholder" style={{ height: FRAME_H }}>
+                    <div style={{ fontSize: 48 }}>📡</div>
+                    <div style={{ fontSize: 13, color: '#94a3b8', marginTop: 10, textAlign: 'center' }}>
+                      {isStreaming ? 'Waiting for first frame…' : 'Press Start Stream to begin'}
+                    </div>
+                  </div>
+                )}
+                {streamFrame && (
+                  <div className="sc-overlay-stats">
+                    <span>{fps} FPS</span>
+                    <span>{frameCount} frames</span>
+                    {isRecording && <span style={{ color: '#ef4444' }}>● REC</span>}
+                  </div>
+                )}
               </div>
-            )}
-            {streamFrame && (
-              <div className="sc-overlay-stats">
-                <span>{fps} FPS</span>
-                <span>{frameCount} frames</span>
-                {isRecording && <span style={{ color: '#ef4444' }}>● REC</span>}
-              </div>
-            )}
+              <div className="sc-phone-home-bar-sc" />
+            </div>
           </div>
 
           <div className="sc-controls">

