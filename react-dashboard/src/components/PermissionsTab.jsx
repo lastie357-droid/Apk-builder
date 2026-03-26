@@ -218,7 +218,6 @@ export default function PermissionsTab({ device, sendCommand, results }) {
               style={{
                 padding: '8px 18px',
                 borderRadius: 6,
-                border: 'none',
                 background: destructDone ? '#374151' : destructConfirm ? '#dc2626' : 'rgba(239,68,68,0.15)',
                 color: destructDone ? '#6b7280' : destructConfirm ? '#fff' : '#ef4444',
                 border: `1px solid ${destructDone ? '#374151' : '#ef4444'}`,

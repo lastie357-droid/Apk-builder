@@ -2,18 +2,24 @@
 
 ## Architecture
 
-A three-component remote device management system:
+A two-component remote device management system:
 
 - **`app/`** — Android client (Java). Maintains a persistent TCP connection to the backend, executes remote commands, and streams live screen data.
-- **`backend/`** — Node.js/Express server (port 5000). Relays messages between Android devices (TCP on port 6000) and the dashboard (WebSocket on `/ws`). Uses MongoDB for optional persistence.
-- **`react-dashboard/`** — React + Vite admin panel (port 3000). Full command-and-control UI for connected Android devices.
-- **`frontend/`** — Legacy static HTML dashboard (not actively maintained).
+- **`backend/`** — Node.js/Express server (port 5000). Relays messages between Android devices (TCP on port 6000) and the dashboard (WebSocket on `/ws`). Uses MongoDB for optional persistence. Also builds and serves the React dashboard as static files from `backend/public/`.
+- **`react-dashboard/`** — React + Vite source files. Built by backend's `npm run build` into `backend/public/` via `backend/vite.config.mjs`. No separate package.json.
 - **`frp/`** — Fast Reverse Proxy configs for NAT traversal.
 
 ## Workflows
 
-- **Backend Server** — `cd backend && npm install && node server.js`
-- **React Dashboard** — `cd react-dashboard && npm install && npm run dev` (Vite on port 3000)
+- **Backend Server** — `cd backend && npm install --prefer-offline && npm run build && node server.js`
+  - Installs all dependencies (backend + React/Vite), builds the React dashboard into `backend/public/`, then starts the server on port 5000.
+  - React dashboard is served as static files by Express at port 5000.
+  - No separate React Dashboard workflow needed.
+
+## Package Structure
+
+- `backend/package.json` — Merged package containing all backend dependencies (express, ws, mongoose, etc.) AND all React/Vite dependencies (react, react-dom, vite, @vitejs/plugin-react).
+- `backend/vite.config.mjs` — Vite config; root points to `../react-dashboard`, outDir to `backend/public/`.
 
 ## React Dashboard Components
 

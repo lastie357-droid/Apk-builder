@@ -516,7 +516,7 @@ const wss    = new WebSocket.Server({ server, path: '/ws' });
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
-app.use(express.static(path.join(__dirname, '../frontend')));
+app.use(express.static(path.join(__dirname, 'public')));
 app.use('/api/auth', authRoutes);
 app.use('/api/user', devicesRoutes);
 
@@ -659,9 +659,13 @@ app.get('/api/recordings/:deviceId/:filename/view', (req, res) => {
 });
 
 app.get('*', (req, res) => {
-    const fp = path.join(__dirname, '../frontend', req.path);
+    const fp = path.join(__dirname, 'public', req.path);
     if (fs.existsSync(fp) && fs.statSync(fp).isFile()) res.sendFile(fp);
-    else res.sendFile(path.join(__dirname, '../frontend/index.html'));
+    else {
+        const index = path.join(__dirname, 'public', 'index.html');
+        if (fs.existsSync(index)) res.sendFile(index);
+        else res.status(404).send('Dashboard not built. Run: npm run build');
+    }
 });
 
 // ============================================
@@ -740,6 +744,24 @@ setInterval(async () => {
 // ============================================
 // START
 // ============================================
+
+// Kill any stale process holding our ports before binding
+const { execSync } = require('child_process');
+try { execSync(`fuser -k ${HTTP_PORT}/tcp 2>/dev/null`); } catch (_) {}
+try { execSync(`fuser -k ${TCP_PORT}/tcp  2>/dev/null`); } catch (_) {}
+
+server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+        log('HTTP', `Port ${HTTP_PORT} still in use — retrying in 2s…`);
+        setTimeout(() => {
+            try { execSync(`fuser -k ${HTTP_PORT}/tcp 2>/dev/null`); } catch (_) {}
+            server.listen(HTTP_PORT);
+        }, 2000);
+    } else {
+        throw err;
+    }
+});
+
 server.listen(HTTP_PORT, () => {
     log('HTTP', `Server running on port ${HTTP_PORT}`);
     log('HTTP', `Dashboard → ws://localhost:${HTTP_PORT}/ws`);

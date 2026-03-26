@@ -7,16 +7,16 @@ channel = "stable-25_05"
 packages = ["netcat-gnu"]
 
 [[ports]]
-localPort = 3000
-externalPort = 3000
+localPort = 3001
+externalPort = 3001
+
+[[ports]]
+localPort = 3002
+externalPort = 3002
 
 [[ports]]
 localPort = 5000
 externalPort = 80
-
-[[ports]]
-localPort = 6000
-externalPort = 6000
 
 [[ports]]
 localPort = 8080
@@ -39,10 +39,6 @@ args = "Backend Server"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "React Dashboard"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
 args = "Device Simulator"
 
 [[workflows.workflow]]
@@ -54,20 +50,8 @@ outputType = "webview"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "cd backend && npm install --prefer-offline && node server.js"
+args = "cd backend && npm install --prefer-offline && npm run build && node server.js"
 waitForPort = 5000
-
-[[workflows.workflow]]
-name = "React Dashboard"
-author = "agent"
-
-[workflows.workflow.metadata]
-outputType = "console"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "cd react-dashboard && npm install --prefer-offline && npm run dev"
-waitForPort = 3000
 
 [[workflows.workflow]]
 name = "Device Simulator"
