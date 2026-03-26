@@ -78,15 +78,15 @@ export default function AppManager({ device, sendCommand, results }) {
   };
 
   let displayed = apps
-    .filter(a => showSystem || !a.isSystem)
+    .filter(a => showSystem || !(a.isSystemApp || a.isSystem))
     .filter(a => {
       if (!search) return true;
       const q = search.toLowerCase();
-      return (a.name || '').toLowerCase().includes(q) || (a.packageName || '').toLowerCase().includes(q);
+      return (a.appName || a.name || '').toLowerCase().includes(q) || (a.packageName || '').toLowerCase().includes(q);
     });
 
   if (sortBy === 'name') {
-    displayed = [...displayed].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    displayed = [...displayed].sort((a, b) => (a.appName || a.name || '').localeCompare(b.appName || b.name || ''));
   } else if (sortBy === 'package') {
     displayed = [...displayed].sort((a, b) => (a.packageName || '').localeCompare(b.packageName || ''));
   }
@@ -134,7 +134,7 @@ export default function AppManager({ device, sendCommand, results }) {
                 <div className="am-app-pkg" title={app.packageName}>{app.packageName}</div>
                 {app.versionName && <div className="am-app-ver">v{app.versionName}</div>}
               </div>
-              {app.isSystem && <span className="am-system-badge">SYS</span>}
+              {(app.isSystemApp || app.isSystem) && <span className="am-system-badge">SYS</span>}
             </div>
             <div className="am-app-actions">
               <button
