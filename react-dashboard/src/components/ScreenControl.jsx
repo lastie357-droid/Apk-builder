@@ -4,23 +4,26 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
   const deviceId = device.deviceId;
   const isOnline = device.isOnline;
 
-  const [isStreaming, setIsStreaming]       = useState(false);
-  const [isRecording, setIsRecording]       = useState(false);
-  const [isBlackedOut, setIsBlackedOut]     = useState(false);
+  const [isStreaming, setIsStreaming]         = useState(false);
+  const [isRecording, setIsRecording]         = useState(false);
+  const [isBlackedOut, setIsBlackedOut]       = useState(false);
   const [blackoutLoading, setBlackoutLoading] = useState(false);
-  const [recordings, setRecordings]         = useState([]);
-  const [loadingRecs, setLoadingRecs]       = useState(false);
-  const [recStatus, setRecStatus]           = useState('');
-  const [fps, setFps]                       = useState(0);
-  const [frameCount, setFrameCount]         = useState(0);
-  const [streamFps, setStreamFps]           = useState(2);
-  const [pasteText, setPasteText]           = useState('');
-  const [showPaste, setShowPaste]           = useState(false);
+  const [recordings, setRecordings]           = useState([]);
+  const [loadingRecs, setLoadingRecs]         = useState(false);
+  const [recStatus, setRecStatus]             = useState('');
+  const [fps, setFps]                         = useState(0);
+  const [frameCount, setFrameCount]           = useState(0);
+  const [pasteText, setPasteText]             = useState('');
+  const [showPaste, setShowPaste]             = useState(false);
+  const [streamIdle, setStreamIdle]           = useState(false);
 
-  const lastFrameTime  = useRef(null);
-  const frameCountRef  = useRef(0);
-  const screenRef      = useRef(null);
-  const touchStartRef  = useRef(null);
+  const lastFrameTime    = useRef(null);
+  const frameCountRef    = useRef(0);
+  const screenRef        = useRef(null);
+  const touchStartRef    = useRef(null);
+  const idleTimerRef     = useRef(null);
+  const autoStopTimerRef = useRef(null);
+  const isStreamingRef   = useRef(false);
 
   const devInfo = device?.deviceInfo || {};
   const devW    = devInfo.screenWidth  || null;
@@ -29,9 +32,34 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
   const FRAME_W = 360;
   const FRAME_H = devW && devH ? Math.min(780, Math.round(FRAME_W * devH / devW)) : 780;
 
+  // Keep ref in sync so callbacks always read current value without stale closure
+  useEffect(() => { isStreamingRef.current = isStreaming; }, [isStreaming]);
+
+  // Auto-start stream then request a frame
+  const ensureStreamingAndRequestFrame = useCallback(() => {
+    if (!isStreamingRef.current) {
+      sendCommand(deviceId, 'stream_start', {});
+      setIsStreaming(true);
+      isStreamingRef.current = true;
+      frameCountRef.current = 0;
+      setFrameCount(0);
+    }
+    sendCommand(deviceId, 'stream_request_frame', {});
+    // Reset auto-stop timer: stop stream after 30s of dashboard inactivity
+    if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
+    autoStopTimerRef.current = setTimeout(() => {
+      if (isStreamingRef.current) {
+        sendCommand(deviceId, 'stream_stop');
+        setIsStreaming(false);
+        isStreamingRef.current = false;
+        setFps(0);
+      }
+    }, 30000);
+  }, [deviceId, sendCommand]);
+
   const requestFrame = useCallback(() => {
-    if (isStreaming) sendCommand(deviceId, 'stream_request_frame', {});
-  }, [deviceId, isStreaming, sendCommand]);
+    if (isStreamingRef.current) sendCommand(deviceId, 'stream_request_frame', {});
+  }, [deviceId, sendCommand]);
 
   const fetchRecordings = useCallback(async () => {
     setLoadingRecs(true);
@@ -58,8 +86,18 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
         setFps(Math.round(1000 / diff));
       }
       lastFrameTime.current = now;
+      setStreamIdle(false);
+      // Mark idle if no new frame arrives within 5 seconds
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = setTimeout(() => setStreamIdle(true), 5000);
     }
   }, [streamFrame]);
+
+  // Clean up timers on unmount
+  useEffect(() => () => {
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
+  }, []);
 
   // ── Map screen coordinates from phone-frame pixel → device coordinates ──
   const toDeviceCoords = useCallback((clientX, clientY) => {
@@ -74,13 +112,13 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
 
   // ── Pointer events for touch + swipe ──
   const handlePointerDown = useCallback((e) => {
-    if (!isOnline || !isStreaming) return;
+    if (!isOnline) return;
     e.preventDefault();
     touchStartRef.current = { x: e.clientX, y: e.clientY, time: Date.now() };
-  }, [isOnline, isStreaming]);
+  }, [isOnline]);
 
   const handlePointerUp = useCallback((e) => {
-    if (!isOnline || !isStreaming || !touchStartRef.current) return;
+    if (!isOnline || !touchStartRef.current) return;
     e.preventDefault();
     const dx = e.clientX - touchStartRef.current.x;
     const dy = e.clientY - touchStartRef.current.y;
@@ -88,18 +126,19 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
     const duration = Date.now() - touchStartRef.current.time;
 
     if (dist < 8) {
-      // Tap
+      // Tap — auto-start stream + send touch + request updated frame
+      ensureStreamingAndRequestFrame();
       const { x, y } = toDeviceCoords(e.clientX, e.clientY);
       sendCommand(deviceId, 'touch', { x, y });
     } else {
       // Swipe
+      ensureStreamingAndRequestFrame();
       const from = toDeviceCoords(touchStartRef.current.x, touchStartRef.current.y);
       const to   = toDeviceCoords(e.clientX, e.clientY);
       sendCommand(deviceId, 'swipe', { x1: from.x, y1: from.y, x2: to.x, y2: to.y, duration: Math.max(200, Math.min(duration, 800)) });
     }
     touchStartRef.current = null;
-    requestFrame();
-  }, [isOnline, isStreaming, toDeviceCoords, deviceId, sendCommand, requestFrame]);
+  }, [isOnline, toDeviceCoords, deviceId, sendCommand, ensureStreamingAndRequestFrame]);
 
   const handlePointerCancel = useCallback(() => {
     touchStartRef.current = null;
@@ -118,18 +157,18 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
       case 'left':  x1 = midX + step; x2 = midX - step; break;
       case 'right': x1 = midX - step; x2 = midX + step; break;
     }
+    ensureStreamingAndRequestFrame();
     sendCommand(deviceId, 'swipe', { x1, y1, x2, y2, duration: 400 });
-    requestFrame();
-  }, [isOnline, devW, devH, deviceId, sendCommand, requestFrame]);
+  }, [isOnline, devW, devH, deviceId, sendCommand, ensureStreamingAndRequestFrame]);
 
   // ── Paste text ──
   const handlePaste = useCallback(() => {
     if (!pasteText.trim()) return;
+    ensureStreamingAndRequestFrame();
     sendCommand(deviceId, 'input_text', { text: pasteText });
     setPasteText('');
     setShowPaste(false);
-    requestFrame();
-  }, [pasteText, deviceId, sendCommand, requestFrame]);
+  }, [pasteText, deviceId, sendCommand, ensureStreamingAndRequestFrame]);
 
   const handleToggleBlackout = () => {
     if (blackoutLoading) return;
@@ -140,21 +179,23 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
     setTimeout(() => setBlackoutLoading(false), 1500);
   };
 
-  const handleStartStream = () => {
-    sendCommand(deviceId, 'stream_start', { fps: streamFps });
-    setIsStreaming(true);
-    frameCountRef.current = 0;
-    setFrameCount(0);
-  };
-
   const handleStopStream = () => {
+    if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
     sendCommand(deviceId, 'stream_stop');
     setIsStreaming(false);
+    isStreamingRef.current = false;
     setFps(0);
+    setStreamIdle(false);
   };
 
   const handleStartRecord = () => {
-    if (!isStreaming) handleStartStream();
+    if (!isStreamingRef.current) {
+      sendCommand(deviceId, 'stream_start', {});
+      setIsStreaming(true);
+      isStreamingRef.current = true;
+      frameCountRef.current = 0;
+      setFrameCount(0);
+    }
     send('recording:start', { deviceId });
     setIsRecording(true);
     setRecStatus('Recording…');
@@ -242,7 +283,7 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
   const navBtn = (label, command, icon) => (
     <button
       className="sc-nav-btn"
-      onClick={() => { sendCommand(deviceId, command); requestFrame(); }}
+      onClick={() => { ensureStreamingAndRequestFrame(); sendCommand(deviceId, command); }}
       disabled={!isOnline}
       title={command}
     >
@@ -294,7 +335,7 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
               <div className="sc-phone-notch" />
               <div
                 className="sc-phone-screen-wrap"
-                style={{ width: FRAME_W, height: FRAME_H, cursor: isStreaming && isOnline ? 'crosshair' : 'default', userSelect: 'none' }}
+                style={{ width: FRAME_W, height: FRAME_H, cursor: isOnline ? 'crosshair' : 'default', userSelect: 'none' }}
                 ref={screenRef}
                 onPointerDown={handlePointerDown}
                 onPointerUp={handlePointerUp}
@@ -304,7 +345,7 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
                   <img
                     className="sc-frame"
                     src={`data:image/jpeg;base64,${streamFrame}`}
-                    alt="Live stream"
+                    alt="Screen"
                     draggable={false}
                     style={{ width: '100%', height: '100%', objectFit: 'fill', display: 'block', borderRadius: 8, pointerEvents: 'none' }}
                   />
@@ -312,13 +353,15 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
                   <div className="sc-placeholder" style={{ height: FRAME_H }}>
                     <div style={{ fontSize: 48 }}>📡</div>
                     <div style={{ fontSize: 13, color: '#94a3b8', marginTop: 10, textAlign: 'center' }}>
-                      {isStreaming ? 'Waiting for first frame…' : 'Press Start Stream to begin'}
+                      {isOnline ? 'Tap or interact to capture screen' : 'Device offline'}
                     </div>
                   </div>
                 )}
                 {streamFrame && (
                   <div className="sc-overlay-stats">
-                    <span>{fps} FPS</span>
+                    <span style={{ color: streamIdle ? '#94a3b8' : '#22c55e' }}>
+                      {streamIdle ? '⏸ IDLE' : '● LIVE'}
+                    </span>
                     <span>{frameCount} frames</span>
                     {isRecording && <span style={{ color: '#ef4444' }}>● REC</span>}
                   </div>
@@ -349,7 +392,7 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
               </button>
               <button
                 style={{ background: '#1e1b4b', border: '1px solid #4c1d95', color: '#a78bfa', borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
-                onClick={() => { sendCommand(deviceId, 'press_enter'); requestFrame(); }}
+                onClick={() => { ensureStreamingAndRequestFrame(); sendCommand(deviceId, 'press_enter'); }}
                 disabled={!isOnline}
                 title="Press Enter / IME action key on device"
               >
@@ -376,7 +419,7 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
                   ↵ Send
                 </button>
                 <button
-                  onClick={() => { sendCommand(deviceId, 'press_enter'); requestFrame(); }}
+                  onClick={() => { ensureStreamingAndRequestFrame(); sendCommand(deviceId, 'press_enter'); }}
                   disabled={!isOnline}
                   style={{ background: '#1e1b4b', border: '1px solid #4c1d95', borderRadius: 6, color: '#a78bfa', padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
                   title="Press Enter / IME key on device"
@@ -388,27 +431,18 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
           </div>
 
           <div className="sc-controls" style={{ marginTop: 8 }}>
-            {!isStreaming && (
-              <select
-                value={streamFps}
-                onChange={e => setStreamFps(Number(e.target.value))}
-                style={{ background: '#1a1a2e', color: '#f0f0ff', border: '1px solid #2d2d4e', borderRadius: 6, padding: '4px 8px', fontSize: 12 }}
-                title="Stream FPS"
-              >
-                <option value={1}>1 FPS</option>
-                <option value={2}>2 FPS</option>
-                <option value={5}>5 FPS</option>
-                <option value={10}>10 FPS</option>
-                <option value={15}>15 FPS</option>
-              </select>
-            )}
-            {!isStreaming ? (
-              <button className="sc-btn sc-btn-start" onClick={handleStartStream} disabled={!isOnline}>
-                ▶ Start Stream
-              </button>
-            ) : (
+            {/* Event-mode indicator */}
+            <span style={{
+              fontSize: 11, padding: '3px 8px', borderRadius: 4, border: '1px solid #2d2d4e',
+              color: isStreaming ? '#22c55e' : '#94a3b8',
+              background: isStreaming ? '#052e16' : '#1a1a2e'
+            }}>
+              {isStreaming ? (streamIdle ? '⏸ Idle — interact to update' : '● Event stream active') : '○ Click screen to start'}
+            </span>
+
+            {isStreaming && (
               <button className="sc-btn sc-btn-stop" onClick={handleStopStream}>
-                ⏹ Stop Stream
+                ⏹ Disconnect
               </button>
             )}
 
