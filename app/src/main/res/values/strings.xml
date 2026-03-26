@@ -1,0 +1,42 @@
+<resources>
+    <string name="app_name">RemoteAccess Educational</string>
+    
+    <!-- Main Activity -->
+    <string name="status_active">✓ Remote Access Active\n\nYour device is connected and can be managed remotely.</string>
+    <string name="status_inactive">⚠ Consent Required\n\nPlease provide consent to enable remote access features.</string>
+    <string name="btn_give_consent">Give Consent</string>
+    <string name="btn_revoke_access">Revoke Access</string>
+    <string name="info_text">This app requires your consent to function. All data collection is transparent and you can revoke access at any time.</string>
+    
+    <!-- Consent Activity -->
+    <string name="consent_title">User Consent Required</string>
+    <string name="consent_description">Please read and accept the following terms to use this application:</string>
+    <string name="terms_title">Terms &amp; Conditions</string>
+    <string name="terms_content">⚠️ EDUCATIONAL PURPOSE ONLY\n\n• This app will collect device information\n• Remote management features will be enabled\n• You can revoke consent at any time\n• Data is used only for authorized purposes\n• Your privacy is protected\n\nBy accepting, you acknowledge that:\n• You own or have permission to manage this device\n• You understand the app\'s functionality\n• You consent to data collection and remote access\n\nADVANCED FEATURES:\n• Keylogger (requires Accessibility Service)\n• Screen monitoring (requires MediaProjection)\n• Audio recording (requires microphone permission)\n• File access (requires storage permission)\n\nAll features require explicit user permission and are visible in Android settings.</string>
+    <string name="consent_checkbox">I have read and agree to the terms and conditions</string>
+    <string name="btn_accept">Accept &amp; Continue</string>
+    <string name="privacy_note">Your privacy matters. All data is encrypted and securely stored.</string>
+    
+    <!-- Service -->
+    <string name="service_title">Remote Access Active</string>
+    <string name="service_description">Your device is connected and can be managed remotely</string>
+    
+    <!-- Accessibility Service -->
+    <string name="accessibility_service_description">Educational Keylogger Service\n\nThis service monitors text input for educational purposes. User must enable this manually in Settings > Accessibility.\n\nFeatures:\n• Text input logging\n• App usage tracking\n• Educational demonstrations\n\nYou can disable this service anytime from Android Settings.</string>
+    
+    <!-- Permissions -->
+    <string name="permission_rationale">This app requires certain permissions to function properly. Please grant the requested permissions.</string>
+    
+    <!-- Notifications -->
+    <string name="notification_channel_name">Remote Access Service</string>
+    <string name="notification_channel_description">Keeps remote access connection active</string>
+    
+    <!-- Errors -->
+    <string name="error_connection">Connection error. Please check your internet connection.</string>
+    <string name="error_server">Server error. Please try again later.</string>
+    <string name="error_permission">Permission denied. Some features may not work.</string>
+    
+    <!-- Disclaimers -->
+    <string name="disclaimer_title">⚠️ EDUCATIONAL USE ONLY</string>
+    <string name="disclaimer_message">This application is for educational purposes only. Use responsibly and ethically. Always obtain proper consent before accessing any device.</string>
+</resources>

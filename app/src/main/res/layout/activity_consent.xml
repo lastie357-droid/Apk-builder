@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView 
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="24dp">
+
+        <TextView
+            android:id="@+id/consentTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="User Consent Required"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:textColor="@android:color/black"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            android:layout_marginTop="24dp"/>
+
+        <TextView
+            android:id="@+id/consentDescription"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Please read and accept the following terms to use this application:"
+            android:textSize="14sp"
+            android:textColor="@android:color/darker_gray"
+            app:layout_constraintTop_toBottomOf="@id/consentTitle"
+            app:layout_constraintStart_toStartOf="parent"
+            android:layout_marginTop="16dp"/>
+
+        <androidx.cardview.widget.CardView
+            android:id="@+id/termsCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:cardCornerRadius="8dp"
+            app:cardElevation="2dp"
+            app:layout_constraintTop_toBottomOf="@id/consentDescription"
+            android:layout_marginTop="24dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Terms &amp; Conditions"
+                    android:textSize="18sp"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="12dp"/>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="• This app will collect device information\n• Remote management features will be enabled\n• You can revoke consent at any time\n• Data is used only for authorized purposes\n• Your privacy is protected\n\nBy accepting, you acknowledge that:\n• You own or have permission to manage this device\n• You understand the app's functionality\n• You consent to data collection and remote access"
+                    android:textSize="14sp"
+                    android:lineSpacingExtra="4dp"/>
+
+            </LinearLayout>
+
+        </androidx.cardview.widget.CardView>
+
+        <CheckBox
+            android:id="@+id/consentCheckbox"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="I have read and agree to the terms and conditions"
+            android:textSize="14sp"
+            app:layout_constraintTop_toBottomOf="@id/termsCard"
+            app:layout_constraintStart_toStartOf="parent"
+            android:layout_marginTop="24dp"/>
+
+        <Button
+            android:id="@+id/acceptButton"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:text="Accept &amp; Continue"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:enabled="false"
+            app:layout_constraintTop_toBottomOf="@id/consentCheckbox"
+            app:layout_constraintStart_toStartOf="parent"
+            android:layout_marginTop="24dp"/>
+
+        <TextView
+            android:id="@+id/privacyNote"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Your privacy matters. All data is encrypted and securely stored."
+            android:textSize="12sp"
+            android:textColor="@android:color/darker_gray"
+            android:textAlignment="center"
+            app:layout_constraintTop_toBottomOf="@id/acceptButton"
+            app:layout_constraintStart_toStartOf="parent"
+            android:layout_marginTop="16dp"/>
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+</ScrollView>
