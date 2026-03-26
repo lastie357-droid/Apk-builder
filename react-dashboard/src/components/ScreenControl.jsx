@@ -306,7 +306,7 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
                     src={`data:image/jpeg;base64,${streamFrame}`}
                     alt="Live stream"
                     draggable={false}
-                    style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', borderRadius: 8, pointerEvents: 'none' }}
+                    style={{ width: '100%', height: '100%', objectFit: 'fill', display: 'block', borderRadius: 8, pointerEvents: 'none' }}
                   />
                 ) : (
                   <div className="sc-placeholder" style={{ height: FRAME_H }}>
@@ -371,8 +371,17 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
                   onClick={handlePaste}
                   disabled={!pasteText.trim()}
                   style={{ background: '#7c3aed', border: 'none', borderRadius: 6, color: '#fff', padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
+                  title="Send text to device"
                 >
                   ↵ Send
+                </button>
+                <button
+                  onClick={() => { sendCommand(deviceId, 'press_enter'); requestFrame(); }}
+                  disabled={!isOnline}
+                  style={{ background: '#1e1b4b', border: '1px solid #4c1d95', borderRadius: 6, color: '#a78bfa', padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
+                  title="Press Enter / IME key on device"
+                >
+                  ⏎ Enter
                 </button>
               </div>
             )}
