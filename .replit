@@ -69,9 +69,5 @@ waitForPort = 3000
 name = "Device Simulator"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "node simulator/index.js"
-
 [workflows.workflow.metadata]
 outputType = "console"
