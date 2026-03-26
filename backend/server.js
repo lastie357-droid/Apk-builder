@@ -89,19 +89,24 @@ const COMMANDS = {
     clear_notifications:       { category: 'notifications',label: 'Clear Notifications',   icon: '🧹' },
     // Screen Control (Accessibility)
     touch:                     { category: 'screen_ctrl',  label: 'Touch',                 icon: '👆' },
-    swipe:                     { category: 'screen_ctrl',  label: 'Swipe',                 icon: '👆' },
+    swipe:                     { category: 'screen_ctrl',  label: 'Swipe',                 icon: '↔️' },
     press_back:                { category: 'screen_ctrl',  label: 'Press Back',            icon: '◀️' },
     press_home:                { category: 'screen_ctrl',  label: 'Press Home',            icon: '🏠' },
     press_recents:             { category: 'screen_ctrl',  label: 'Press Recents',         icon: '⬜' },
     open_notifications:        { category: 'screen_ctrl',  label: 'Open Notifications',    icon: '🔔' },
+    open_quick_settings:       { category: 'screen_ctrl',  label: 'Open Quick Settings',   icon: '⚙️' },
     scroll_up:                 { category: 'screen_ctrl',  label: 'Scroll Up',             icon: '⬆️' },
     scroll_down:               { category: 'screen_ctrl',  label: 'Scroll Down',           icon: '⬇️' },
+    input_text:                { category: 'screen_ctrl',  label: 'Input Text',            icon: '✏️' },
+    click_by_text:             { category: 'screen_ctrl',  label: 'Click By Text',         icon: '🔍' },
     // Screen Reader (Accessibility)
     read_screen:               { category: 'screen_reader',label: 'Read Screen',           icon: '📺' },
     find_by_text:              { category: 'screen_reader',label: 'Find By Text',          icon: '🔍' },
     get_current_app:           { category: 'screen_reader',label: 'Current App',           icon: '📱' },
     get_clickable_elements:    { category: 'screen_reader',label: 'Clickable Elements',    icon: '👆' },
-    get_input_fields:          { category: 'screen_reader',label: 'Input Fields',          icon: '✏️'  }
+    get_input_fields:          { category: 'screen_reader',label: 'Input Fields',          icon: '✏️'  },
+    // Accessibility check
+    get_accessibility_status:  { category: 'system',       label: 'Accessibility Status',  icon: '♿' }
 };
 
 // ============================================

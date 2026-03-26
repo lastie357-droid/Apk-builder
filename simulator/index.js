@@ -387,6 +387,21 @@ function execute(command, p) {
         { hint: 'Password', type: 'PASSWORD', editable: true, bounds: '100,520,980,600' }
       ], count: 2 };
 
+    case 'get_accessibility_status':
+      return { success: true, enabled: accessibilityEnabled, message: accessibilityEnabled ? 'Accessibility service is running' : 'Accessibility service is NOT running' };
+
+    case 'open_quick_settings':
+      if (!accessibilityEnabled) return { success: false, error: 'Accessibility service not running' };
+      return { success: true, action: 'quick_settings', message: 'Quick settings panel opened' };
+
+    case 'input_text':
+      if (!accessibilityEnabled) return { success: false, error: 'Accessibility service not running' };
+      return { success: true, text: p.text, message: `Typed "${p.text}" into focused field` };
+
+    case 'click_by_text':
+      if (!accessibilityEnabled) return { success: false, error: 'Accessibility service not running' };
+      return { success: true, text: p.text, message: `Clicked element with text: "${p.text}"` };
+
     default:
       return { success: false, error: `Unknown command: ${command}` };
   }

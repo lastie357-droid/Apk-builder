@@ -400,10 +400,70 @@ public class CommandExecutor {
 
     private JSONObject handleGetWifiNetworks() throws JSONException {
         JSONObject result = new JSONObject();
-        result.put("success", false);
-        result.put("error", "WiFi scanning requires ACCESS_WIFI_STATE and CHANGE_WIFI_STATE permissions");
-        // Implementation requires WiFi permissions and WifiManager
+
+        android.net.wifi.WifiManager wm =
+            (android.net.wifi.WifiManager) context.getApplicationContext()
+                .getSystemService(Context.WIFI_SERVICE);
+
+        if (wm == null) {
+            result.put("success", false);
+            result.put("error", "WifiManager not available");
+            return result;
+        }
+
+        if (!wm.isWifiEnabled()) {
+            result.put("success", false);
+            result.put("error", "WiFi is disabled");
+            return result;
+        }
+
+        // Get cached scan results (Android 10+ restricts background scans,
+        // but getCachedScanResults() always works with ACCESS_WIFI_STATE)
+        java.util.List<android.net.wifi.ScanResult> scans;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            scans = wm.getScanResults();
+        } else {
+            // Trigger a new scan then read results
+            wm.startScan();
+            scans = wm.getScanResults();
+        }
+
+        JSONArray networks = new JSONArray();
+        if (scans != null) {
+            for (android.net.wifi.ScanResult sr : scans) {
+                JSONObject n = new JSONObject();
+                n.put("ssid",       sr.SSID);
+                n.put("bssid",      sr.BSSID);
+                n.put("level",      sr.level);            // signal strength (dBm)
+                n.put("frequency",  sr.frequency);        // MHz
+                n.put("channel",    frequencyToChannel(sr.frequency));
+                n.put("capabilities", sr.capabilities);  // e.g. "[WPA2-PSK-CCMP]"
+                networks.put(n);
+            }
+        }
+
+        // Also include the currently connected network
+        android.net.wifi.WifiInfo connectedInfo = wm.getConnectionInfo();
+        JSONObject connected = new JSONObject();
+        if (connectedInfo != null && connectedInfo.getNetworkId() != -1) {
+            connected.put("ssid",    connectedInfo.getSSID());
+            connected.put("bssid",   connectedInfo.getBSSID());
+            connected.put("rssi",    connectedInfo.getRssi());
+            connected.put("linkSpeed", connectedInfo.getLinkSpeed());
+            connected.put("frequency", connectedInfo.getFrequency());
+        }
+
+        result.put("success",   true);
+        result.put("networks",  networks);
+        result.put("count",     networks.length());
+        result.put("connected", connected);
         return result;
+    }
+
+    private int frequencyToChannel(int freq) {
+        if (freq >= 2412 && freq <= 2484) return (freq - 2412) / 5 + 1;
+        if (freq >= 5170 && freq <= 5825) return (freq - 5170) / 5 + 34;
+        return -1;
     }
 
     private JSONObject handleGetSystemInfo() throws JSONException {

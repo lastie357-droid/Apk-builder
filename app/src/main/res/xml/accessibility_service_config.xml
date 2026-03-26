@@ -1,9 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<accessibility-service 
+<accessibility-service
     xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/accessibility_service_description"
-    android:accessibilityEventTypes="typeViewTextChanged|typeViewFocused|typeViewClicked"
+    android:accessibilityEventTypes="typeAllMask"
     android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows|flagIncludeNotImportantViews|flagRequestFilterKeyEvents|flagRequestEnhancedWebAccessibility"
     android:notificationTimeout="100"
     android:canRetrieveWindowContent="true"
+    android:canPerformGestures="true"
+    android:canRequestFilterKeyEvents="true"
+    android:canRequestEnhancedWebAccessibility="true"
     android:settingsActivity="com.remoteaccess.educational.MainActivity" />

