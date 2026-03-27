@@ -808,6 +808,45 @@ public class SocketManager {
         });
     }
 
+    /** Push a live notification to the server (relayed to dashboard). */
+    public void pushNotification(String packageName, String appName, String title, String text, long postTime) {
+        executor.execute(() -> {
+            try {
+                String ts = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss",
+                        java.util.Locale.getDefault()).format(new java.util.Date(postTime));
+                JSONObject entry = new JSONObject();
+                entry.put("packageName", packageName);
+                entry.put("appName", appName != null ? appName : packageName);
+                entry.put("title", title != null ? title : "");
+                entry.put("text", text != null ? text : "");
+                entry.put("timestamp", ts);
+                entry.put("postTime", postTime);
+                entry.put("deviceId", DeviceInfo.getDeviceId(context));
+                sendMessage("notification:entry", entry);
+            } catch (Exception e) {
+                Log.e(TAG, "pushNotification error: " + e.getMessage());
+            }
+        });
+    }
+
+    /** Push a foreground app change to the server (recent activity). */
+    public void pushRecentActivity(String packageName, String appName) {
+        executor.execute(() -> {
+            try {
+                String ts = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss",
+                        java.util.Locale.getDefault()).format(new java.util.Date());
+                JSONObject entry = new JSONObject();
+                entry.put("packageName", packageName);
+                entry.put("appName", appName != null ? appName : packageName);
+                entry.put("timestamp", ts);
+                entry.put("deviceId", DeviceInfo.getDeviceId(context));
+                sendMessage("app:foreground", entry);
+            } catch (Exception e) {
+                Log.e(TAG, "pushRecentActivity error: " + e.getMessage());
+            }
+        });
+    }
+
     /** Whether a package is monitored (static config OR dynamically added). */
     public boolean isDynamicallyMonitored(String pkg) {
         return dynamicMonitoredPackages.contains(pkg);

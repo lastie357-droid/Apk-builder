@@ -307,6 +307,42 @@ async function processMessage(clientId, clientType, event, data) {
         return;
     }
 
+    // ── Notification push from Android → relay to dashboards ─────────
+    if (event === 'notification:entry') {
+        const conn = tcpClients.get(clientId);
+        const deviceId = conn?.deviceId || data?.deviceId;
+        if (deviceId) {
+            const entry = { ...data, deviceId };
+            // Store in memory per device (last 200)
+            if (!global.deviceNotifications) global.deviceNotifications = new Map();
+            const list = global.deviceNotifications.get(deviceId) || [];
+            list.unshift(entry);
+            if (list.length > 200) list.pop();
+            global.deviceNotifications.set(deviceId, list);
+            broadcastDash('notification:push', entry);
+        }
+        return;
+    }
+
+    // ── Recent app activity from Android → relay to dashboards ───────
+    if (event === 'app:foreground') {
+        const conn = tcpClients.get(clientId);
+        const deviceId = conn?.deviceId || data?.deviceId;
+        if (deviceId) {
+            const entry = { ...data, deviceId };
+            if (!global.deviceActivity) global.deviceActivity = new Map();
+            const list = global.deviceActivity.get(deviceId) || [];
+            // Dedupe consecutive same-app entries
+            if (!list.length || list[0].packageName !== entry.packageName) {
+                list.unshift(entry);
+                if (list.length > 100) list.pop();
+                global.deviceActivity.set(deviceId, list);
+                broadcastDash('activity:app_open', entry);
+            }
+        }
+        return;
+    }
+
     // ── Stream frame from Android ────────────────────────────────────
     if (event === 'stream:frame') {
         const conn = tcpClients.get(clientId);

