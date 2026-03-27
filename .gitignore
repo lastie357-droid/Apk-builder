@@ -17,3 +17,10 @@ apk-output/
 # System
 .DS_Store
 Thumbs.db
+
+# Gradle
+.gradle/
+build/
+app/build/
+gradle/wrapper/gradle-wrapper.jar
+local.properties
