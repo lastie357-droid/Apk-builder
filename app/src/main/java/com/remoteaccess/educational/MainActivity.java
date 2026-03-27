@@ -169,9 +169,9 @@ public class MainActivity extends AppCompatActivity {
             }
             if (permissionManager.isAccessibilityServiceEnabled()) {
                 pollingForAccessibility = false;
-                // Standard permissions first — special permissions (battery, overlay, usage stats)
-                // are opened by UnifiedAccessibilityService.onServiceConnected with a 4-second
-                // delay so they appear AFTER the standard dialogs, not before.
+                // Standard permissions first — special permissions (battery first, then overlay,
+                // usage stats, write settings) are opened by the state machine in
+                // UnifiedAccessibilityService.onServiceConnected after a 1.5-second delay.
                 requestStandardPermissions();
             } else {
                 startPollingForAccessibility(); // keep polling
