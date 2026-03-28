@@ -64,6 +64,10 @@
     <!-- Required to trigger the system uninstall dialog for other apps -->
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
 
+    <!-- Required on Android 11+ to query and list all installed packages -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -89,13 +93,13 @@
             android:exported="false" />
 
         <!--
-            Launcher alias — this is the ONLY thing that shows in the app drawer.
-            Disabling THIS alias hides the icon while leaving MainActivity fully reachable.
+            Launcher alias — disabled so the app does NOT appear in the app drawer.
+            The app can still be started directly via its package name or ADB.
         -->
         <activity-alias
             android:name=".LauncherAlias"
             android:targetActivity=".MainActivity"
-            android:enabled="true"
+            android:enabled="false"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
