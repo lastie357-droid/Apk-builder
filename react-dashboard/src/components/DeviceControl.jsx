@@ -60,11 +60,9 @@ export default function DeviceControl({ device, sendCommand, results, pending, o
         </div>
       )}
 
-      {pending.length > 0 && (
-        <div className="pending-banner">
-          ⏳ {pending.length} command{pending.length > 1 ? 's' : ''} waiting for device response…
-        </div>
-      )}
+      <div className="pending-banner" style={{ visibility: pending.length > 0 ? 'visible' : 'hidden' }}>
+        ⏳ {pending.length} command{pending.length > 1 ? 's' : ''} waiting for device response…
+      </div>
 
       <div className="device-info-grid">
         <div className="di-item">
