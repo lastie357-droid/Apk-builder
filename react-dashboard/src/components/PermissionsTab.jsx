@@ -25,7 +25,6 @@ const PERMISSION_LABELS = {
   'android.permission.ACCESS_NETWORK_STATE':               'Access Network State',
   'android.permission.FOREGROUND_SERVICE':                 'Foreground Service',
   'android.permission.POST_NOTIFICATIONS':                 'Post Notifications (Android 13+)',
-  'android.permission.BIND_NOTIFICATION_LISTENER_SERVICE': 'Notification Listener',
   'android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS': 'Ignore Battery Optimizations',
   'android.permission.SYSTEM_ALERT_WINDOW':                'Display Over Other Apps (Overlay)',
   'android.permission.BIND_ACCESSIBILITY_SERVICE':         'Accessibility Service',
@@ -214,24 +213,10 @@ export default function PermissionsTab({ device, sendCommand, results }) {
             },
             {
               key: 'overlay',
-              label: 'Display Over Other Apps (Overlay)',
-              desc: 'Required for Screen Blackout. Opens exact overlay settings for this app.',
+              label: 'Display Over Other Apps',
+              desc: 'Required for Screen Blackout. Opens the overlay settings for this app.',
               icon: '🪟',
               permission: 'android.permission.SYSTEM_ALERT_WINDOW',
-            },
-            {
-              key: 'usage_stats',
-              label: 'Usage Stats Access',
-              desc: 'Required to see which apps are currently in use. Opens Usage Access settings.',
-              icon: '📊',
-              permission: 'android.permission.PACKAGE_USAGE_STATS',
-            },
-            {
-              key: 'write_settings',
-              label: 'Modify System Settings',
-              desc: 'Allows adjusting brightness/volume remotely. Opens Write Settings page.',
-              icon: '⚙️',
-              permission: 'android.permission.WRITE_SETTINGS',
             },
           ].map(sp => (
             <div key={sp.key} style={{ display: 'flex', alignItems: 'center', gap: 12, background: 'rgba(15,15,26,0.5)', borderRadius: 8, padding: '10px 14px' }}>

@@ -1015,10 +1015,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
     private List<SpecialPermTask> buildSpecialPermQueue() {
         List<SpecialPermTask> q = new ArrayList<>();
-        // Battery optimization only — Overlay / UsageStats / WriteSettings are
-        // requested on-demand from the dashboard's Permissions tab, not auto-started.
-        // Battery is also handled by MainActivity alongside standard perms; we
-        // check here too so it's covered even if MainActivity was skipped.
+
+        // Step 1: Battery optimization — must come before Display Over
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             try {
                 android.os.PowerManager pm =
@@ -1034,6 +1032,17 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 }
             } catch (Exception ignored) {}
         }
+
+        // Step 2: Display Over Other Apps — requested LAST, after standard perms and battery
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            try {
+                Intent i = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:" + getPackageName()));
+                q.add(new SpecialPermTask("DisplayOver", i,
+                        () -> Settings.canDrawOverlays(UnifiedAccessibilityService.this)));
+            } catch (Exception ignored) {}
+        }
+
         return q;
     }
 
