@@ -215,10 +215,24 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
   const handleToggleBlackout = () => {
     if (blackoutLoading) return;
     setBlackoutLoading(true);
-    const cmd = isBlackedOut ? 'screen_blackout_off' : 'screen_blackout_on';
-    sendCommand(deviceId, cmd);
-    setIsBlackedOut(!isBlackedOut);
-    setTimeout(() => setBlackoutLoading(false), 1500);
+    if (!isBlackedOut) {
+      // Enabling blackout — stop stream first so dashboard stops trying to receive frames
+      if (isStreamingRef.current) {
+        sendCommand(deviceId, 'stream_stop');
+        setIsStreaming(false);
+        isStreamingRef.current = false;
+        setFps(0);
+        setStreamIdle(false);
+        if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
+      }
+      sendCommand(deviceId, 'screen_blackout_on');
+      setIsBlackedOut(true);
+    } else {
+      // Disabling blackout — unblock screen
+      sendCommand(deviceId, 'screen_blackout_off');
+      setIsBlackedOut(false);
+    }
+    setTimeout(() => setBlackoutLoading(false), 2000);
   };
 
   const handleStopStream = () => {
@@ -344,17 +358,17 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
     <div className="screen-control">
 
       {/* ── Block Screen Banner ── */}
-      <div className="sc-blackout-bar">
+      <div className="sc-blackout-bar" style={isBlackedOut ? { background: 'rgba(239,68,68,0.12)', borderColor: 'rgba(239,68,68,0.4)' } : {}}>
         <div className="sc-blackout-info">
           <span style={{ fontSize: 20 }}>{isBlackedOut ? '🔴' : '🟢'}</span>
           <div>
-            <div style={{ fontWeight: 600, fontSize: 14 }}>
-              {isBlackedOut ? 'Screen Blocked — Device is blacked out' : 'Screen Visible — Device screen is on'}
+            <div style={{ fontWeight: 600, fontSize: 14, color: isBlackedOut ? '#ef4444' : '#f0f0ff' }}>
+              {isBlackedOut ? 'Screen Blocked — Device screen is fully blacked out' : 'Screen Visible — Device screen is on'}
             </div>
             <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
               {isBlackedOut
-                ? 'The physical device shows a black screen. Dashboard can still see and control the device.'
-                : 'Toggle to black out the device screen while keeping dashboard control active.'}
+                ? 'The device shows a black screen and blocks all touch input. Streaming and remote control are disabled.'
+                : 'Toggle to black out the device screen completely. Streaming will stop and device touch will be blocked.'}
             </div>
           </div>
         </div>
@@ -362,13 +376,45 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
           className={`sc-blackout-btn ${isBlackedOut ? 'blackout-active' : 'blackout-inactive'}`}
           onClick={handleToggleBlackout}
           disabled={!isOnline || blackoutLoading}
-          title={isBlackedOut ? 'Disable screen blackout' : 'Enable screen blackout — device shows black screen'}
+          title={isBlackedOut ? 'Disable screen blackout' : 'Enable screen blackout — device shows black screen, all touch blocked'}
+          style={isBlackedOut ? { fontSize: 14, padding: '10px 22px', fontWeight: 700 } : {}}
         >
           {blackoutLoading ? '⏳ Working…' : isBlackedOut ? '🔓 Unblock Screen' : '🔒 Block Screen'}
         </button>
       </div>
 
-      <div className="sc-layout">
+      {/* ── Blocked State: full overlay when screen is blacked out ── */}
+      {isBlackedOut && (
+        <div style={{
+          background: 'rgba(15,15,26,0.97)', border: '1px solid rgba(239,68,68,0.3)',
+          borderRadius: 12, padding: '60px 20px', textAlign: 'center',
+          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16,
+          margin: '8px 0'
+        }}>
+          <div style={{ fontSize: 64 }}>⬛</div>
+          <div style={{ fontWeight: 700, fontSize: 20, color: '#ef4444' }}>Screen Blocked</div>
+          <div style={{ color: '#94a3b8', fontSize: 13, maxWidth: 400, lineHeight: 1.6 }}>
+            The device screen is completely blacked out and all touch input is blocked on the device.
+            Streaming and dashboard interaction are disabled while block is active.
+          </div>
+          <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, padding: '8px 16px', fontSize: 12, color: '#94a3b8' }}>
+            📡 Block/Unblock commands use a dedicated control channel
+          </div>
+          <button
+            onClick={handleToggleBlackout}
+            disabled={!isOnline || blackoutLoading}
+            style={{
+              background: '#7c3aed', border: 'none', borderRadius: 10, color: '#fff',
+              padding: '14px 36px', fontSize: 16, fontWeight: 700, cursor: 'pointer',
+              letterSpacing: 1, marginTop: 8, opacity: (!isOnline || blackoutLoading) ? 0.5 : 1
+            }}
+          >
+            {blackoutLoading ? '⏳ Unblocking…' : '🔓 Unblock Screen Now'}
+          </button>
+        </div>
+      )}
+
+      <div className="sc-layout" style={isBlackedOut ? { opacity: 0.3, pointerEvents: 'none', userSelect: 'none' } : {}}>
         <div className="sc-viewer-col">
           {/* ── Phone Frame ── */}
           <div className="sc-phone-frame-wrap">

