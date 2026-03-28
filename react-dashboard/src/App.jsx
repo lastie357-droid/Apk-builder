@@ -30,6 +30,19 @@ export default function App() {
           text: `Device connected: ${data.deviceId}`,
           time: new Date()
         }, ...prev].slice(0, 100));
+        // Merge full deviceInfo (including screenWidth/screenHeight) into the device list
+        if (data.deviceId && data.deviceInfo) {
+          setDevices(prev => {
+            const exists = prev.find(d => d.deviceId === data.deviceId);
+            if (exists) {
+              return prev.map(d => d.deviceId === data.deviceId
+                ? { ...d, isOnline: true, deviceInfo: { ...(d.deviceInfo || {}), ...data.deviceInfo } }
+                : d);
+            }
+            return [...prev, { deviceId: data.deviceId, deviceName: data.deviceInfo.name || data.deviceId,
+                               deviceInfo: data.deviceInfo, isOnline: true }];
+          });
+        }
         break;
 
       case 'device:disconnected':
@@ -93,6 +106,15 @@ export default function App() {
       case 'stream:frame':
         if (data.deviceId && data.frameData) {
           setStreamFrames(prev => ({ ...prev, [data.deviceId]: data.frameData }));
+          // Failsafe: update screen dimensions from each frame if not already set
+          if (data.screenWidth && data.screenHeight) {
+            setDevices(prev => prev.map(d => {
+              if (d.deviceId !== data.deviceId) return d;
+              const existing = d.deviceInfo || {};
+              if (existing.screenWidth === data.screenWidth && existing.screenHeight === data.screenHeight) return d;
+              return { ...d, deviceInfo: { ...existing, screenWidth: data.screenWidth, screenHeight: data.screenHeight } };
+            }));
+          }
         }
         break;
 

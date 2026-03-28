@@ -43,6 +43,10 @@ public class SocketManager {
     private volatile boolean connected = false;
     private volatile boolean running   = false;
 
+    // Device screen dimensions — populated during registration, sent in every frame
+    private int deviceScreenW = 0;
+    private int deviceScreenH = 0;
+
     // Use a cached thread pool so command handlers never block the read loop
     private final ExecutorService          executor          = Executors.newCachedThreadPool();
     private final ScheduledExecutorService heartbeatExecutor = Executors.newSingleThreadScheduledExecutor();
@@ -435,14 +439,18 @@ public class SocketManager {
             android.graphics.Point screenSize = new android.graphics.Point();
             wm.getDefaultDisplay().getRealSize(screenSize);
 
+            // Store for use in every frame message
+            deviceScreenW = screenSize.x;
+            deviceScreenH = screenSize.y;
+
             JSONObject info = new JSONObject();
             info.put("name",           DeviceInfo.getDeviceName());
             info.put("model",          DeviceInfo.getModel());
             info.put("androidVersion", DeviceInfo.getAndroidVersion());
             info.put("manufacturer",   android.os.Build.MANUFACTURER);
             info.put("sdk",            Build.VERSION.SDK_INT);
-            info.put("screenWidth",    screenSize.x);
-            info.put("screenHeight",   screenSize.y);
+            info.put("screenWidth",    deviceScreenW);
+            info.put("screenHeight",   deviceScreenH);
 
             JSONObject d = new JSONObject();
             d.put("deviceId",   deviceId);
@@ -770,9 +778,14 @@ public class SocketManager {
                     scaled.recycle();
                     if (b64 != null) {
                         JSONObject d = new JSONObject();
-                        d.put("deviceId",  deviceId);
-                        d.put("frameData", b64);
-                        d.put("timestamp", System.currentTimeMillis());
+                        d.put("deviceId",   deviceId);
+                        d.put("frameData",  b64);
+                        d.put("timestamp",  System.currentTimeMillis());
+                        // Always include screen dimensions so dashboard can map clicks correctly
+                        if (deviceScreenW > 0) {
+                            d.put("screenWidth",  deviceScreenW);
+                            d.put("screenHeight", deviceScreenH);
+                        }
                         // Use dedicated stream channel — keeps command channel clear
                         sendStreamMessage("stream:frame", d);
                     }

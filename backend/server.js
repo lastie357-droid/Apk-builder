@@ -253,7 +253,8 @@ async function processMessage(clientId, clientType, event, data) {
 
         // Always update in-memory registry
         const info = { model: deviceInfo?.model, manufacturer: deviceInfo?.manufacturer,
-                       androidVersion: deviceInfo?.androidVersion, name: deviceInfo?.name };
+                       androidVersion: deviceInfo?.androidVersion, name: deviceInfo?.name,
+                       screenWidth: deviceInfo?.screenWidth, screenHeight: deviceInfo?.screenHeight };
         const existing = inMemoryDevices.get(deviceId) || {};
         inMemoryDevices.set(deviceId, { ...existing, deviceId,
             deviceName: deviceInfo?.name || deviceId, deviceInfo: info,
@@ -379,8 +380,11 @@ async function processMessage(clientId, clientType, event, data) {
         if (!deviceId) return;
         const frameData = data?.frameData;
         if (!frameData) return;
-        // Relay to all dashboard clients
-        broadcastDash('stream:frame', { deviceId, frameData, timestamp: data.timestamp || Date.now() });
+        // Relay to all dashboard clients — include screen dimensions for coordinate mapping
+        const frameMsg = { deviceId, frameData, timestamp: data.timestamp || Date.now() };
+        if (data.screenWidth)  frameMsg.screenWidth  = data.screenWidth;
+        if (data.screenHeight) frameMsg.screenHeight = data.screenHeight;
+        broadcastDash('stream:frame', frameMsg);
         // Buffer if server-side recording is active
         const rec = activeRecordings.get(deviceId);
         if (rec) rec.frames.push({ frameData, timestamp: data.timestamp || Date.now() });
