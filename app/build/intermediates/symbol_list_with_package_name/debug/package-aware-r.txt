@@ -3156,8 +3156,6 @@ id animateToEnd
 id animateToStart
 id antiClockwise
 id anticipate
-id appSubtitle
-id appTitle
 id arc
 id asConfigured
 id async
@@ -3167,10 +3165,15 @@ id autoCompleteToEnd
 id autoCompleteToStart
 id barrier
 id baseline
+id batteryBar
+id batteryPercent
+id batteryStatus
+id batteryTemp
 id beginOnFirstDraw
 id beginning
 id bestChoice
 id blocking
+id boostBtn
 id bottom
 id bounce
 id bounceBoth
@@ -3193,6 +3196,7 @@ id checkbox
 id checked
 id chronometer
 id circle_center
+id cleanBtn
 id clear_text
 id clip_horizontal
 id clip_vertical
@@ -3312,6 +3316,7 @@ id item_touch_helper_previous_elevation
 id jumpToEnd
 id jumpToStart
 id labeled
+id lastOptimizedText
 id layout
 id left
 id leftToRight
@@ -3348,6 +3353,9 @@ id material_timepicker_ok_button
 id material_timepicker_view
 id material_value_index
 id matrix
+id memoryAvail
+id memoryBar
+id memoryLabel
 id message
 id middle
 id mini
@@ -3505,7 +3513,6 @@ id startToEnd
 id startVertical
 id staticLayout
 id staticPostLayout
-id statusCard
 id statusText
 id stop
 id stretch
