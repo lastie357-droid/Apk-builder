@@ -41,37 +41,69 @@ function StepEditor({ step, apps, onChange }) {
     />
   );
 
-  const appSelect = (value, onChange) => (
-    <select
-      value={value}
-      onChange={e => {
-        const pkg = e.target.value;
-        const found = apps.find(a => (a.packageName || a.package) === pkg);
-        onChange(pkg, found ? (found.appName || found.label || pkg) : pkg);
-      }}
-      style={{
-        background: '#1a1a2e', border: '1px solid #2d2d4e', borderRadius: 6,
-        padding: '6px 10px', color: '#f0f0ff', fontSize: 13, width: '100%'
-      }}
-    >
-      <option value="">— Select App —</option>
-      {apps.map(a => {
-        const pkg = a.packageName || a.package || '';
-        const name = a.appName || a.label || pkg;
-        return <option key={pkg} value={pkg}>{name}</option>;
-      })}
-    </select>
-  );
+  const appPickerField = (label, step, onStepChange) => {
+    const pkg  = step.packageName || '';
+    const onSelectChange = (e) => {
+      const selected = e.target.value;
+      if (!selected) return;
+      const found = apps.find(a => (a.packageName || a.package) === selected);
+      onStepChange({
+        ...step,
+        packageName: selected,
+        appLabel: found ? (found.appName || found.label || selected) : selected,
+      });
+    };
+    const onManualChange = (e) => {
+      onStepChange({ ...step, packageName: e.target.value, appLabel: e.target.value });
+    };
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flex: 1 }}>
+        {apps.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <label style={{ fontSize: 11, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              {label} — Pick from installed apps
+            </label>
+            <select
+              value={pkg}
+              onChange={onSelectChange}
+              style={{
+                background: '#1a1a2e', border: '1px solid #2d2d4e', borderRadius: 6,
+                padding: '6px 10px', color: '#f0f0ff', fontSize: 13, width: '100%'
+              }}
+            >
+              <option value="">— Select from list —</option>
+              {apps.map(a => {
+                const p = a.packageName || a.package || '';
+                const n = a.appName || a.label || p;
+                return <option key={p} value={p}>{n}</option>;
+              })}
+            </select>
+          </div>
+        )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <label style={{ fontSize: 11, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+            {apps.length > 0 ? 'Or enter package name / ID manually' : `${label} — Package Name / ID`}
+          </label>
+          <input
+            placeholder="e.g. com.whatsapp, com.instagram.android…"
+            value={pkg}
+            onChange={onManualChange}
+            style={{
+              background: '#1a1a2e', border: '1px solid #2d2d4e', borderRadius: 6,
+              padding: '6px 10px', color: '#f0f0ff', fontSize: 13, width: '100%'
+            }}
+          />
+        </div>
+      </div>
+    );
+  };
 
   switch (step.type) {
     case 'open_app':
       return (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {field('App to Open',
-            apps.length > 0
-              ? appSelect(step.packageName, (pkg, label) => onChange({ ...step, packageName: pkg, appLabel: label }))
-              : input({ placeholder: 'com.example.app', value: step.packageName, onChange: e => onChange({ ...step, packageName: e.target.value }) })
-          )}
+          {appPickerField('App to Open', step, onChange)}
         </div>
       );
     case 'click_text':
@@ -93,11 +125,7 @@ function StepEditor({ step, apps, onChange }) {
     case 'close_app':
       return (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {field('App to Close',
-            apps.length > 0
-              ? appSelect(step.packageName, (pkg, label) => onChange({ ...step, packageName: pkg, appLabel: label }))
-              : input({ placeholder: 'com.example.app', value: step.packageName, onChange: e => onChange({ ...step, packageName: e.target.value }) })
-          )}
+          {appPickerField('App to Close', step, onChange)}
         </div>
       );
     case 'delay':
