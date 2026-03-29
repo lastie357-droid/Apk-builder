@@ -173,22 +173,32 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
   // ── Helper: send a command ────────────────────────────────────────────
   const cmd = (command, params = {}) => sendCommand(deviceId, command, params);
 
+  // ── Tab state for Master Control ──────────────────────────────────────
+  const [activeTab, setActiveTab] = useState('screen-control');
+
   // ── Stream display size ───────────────────────────────────────────────
-  const STREAM_W = 320;
-  const STREAM_H = devW && devH ? Math.min(700, Math.round(STREAM_W * devH / devW)) : 568;
+  const STREAM_W = 300;
+  const STREAM_H = devW && devH ? Math.min(640, Math.round(STREAM_W * devH / devW)) : 540;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, gap: 0 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, gap: 12 }}>
 
-      {/* ── TOP ROW: Stream + Controls ────────────────────────────────── */}
-      <div style={{ display: 'flex', flex: '0 0 auto', gap: 14, padding: '0 0 12px 0', alignItems: 'flex-start' }}>
+      {/* ── TOP ROW: Stream + Master Control ──────────────────────────── */}
+      <div style={{ display: 'flex', flex: '0 0 auto', gap: 14, alignItems: 'flex-start' }}>
 
-        {/* ── LEFT: Screen Stream ───────────────────────── */}
+        {/* ── LEFT: Screen Stream ─────────────────────────────────────── */}
         <div style={{ flex: '0 0 auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <div style={{ background: '#1e293b', borderRadius: 10, padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <span style={{ fontWeight: 700, color: '#94a3b8', fontSize: 12, letterSpacing: 1, textTransform: 'uppercase' }}>📺 Screen Stream</span>
-            {streaming && <span style={{ fontSize: 12, color: '#22c55e', marginLeft: 'auto' }}>● LIVE · {fps} fps</span>}
-            {!streaming && <span style={{ fontSize: 12, color: '#64748b', marginLeft: 'auto' }}>Stopped</span>}
+          <div style={{
+            background: '#1e293b', borderRadius: 10, padding: '8px 12px',
+            display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+          }}>
+            <span style={{ fontWeight: 700, color: '#94a3b8', fontSize: 12, letterSpacing: 1, textTransform: 'uppercase' }}>
+              📺 Screen Stream
+            </span>
+            {streaming
+              ? <span style={{ fontSize: 12, color: '#22c55e', marginLeft: 'auto' }}>● LIVE · {fps} fps</span>
+              : <span style={{ fontSize: 12, color: '#64748b', marginLeft: 'auto' }}>Stopped</span>
+            }
             <button
               onClick={streaming ? stopStream : startStream}
               disabled={!isOnline}
@@ -219,7 +229,9 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
             ) : (
               <div style={{ textAlign: 'center', color: '#334155' }}>
                 <div style={{ fontSize: 36 }}>📱</div>
-                <div style={{ fontSize: 12, marginTop: 8 }}>{streaming ? 'Waiting for frame…' : 'Start stream to view screen'}</div>
+                <div style={{ fontSize: 12, marginTop: 8 }}>
+                  {streaming ? 'Waiting for frame…' : 'Start stream to view screen'}
+                </div>
               </div>
             )}
           </div>
@@ -228,79 +240,139 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
           )}
         </div>
 
-        {/* ── RIGHT: All Controls ───────────────────────── */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
+        {/* ── RIGHT: Master Control ──────────────────────────────────── */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 0, minWidth: 0, background: '#1e293b', borderRadius: 12, border: '1px solid #334155', overflow: 'hidden' }}>
 
-          {/* Navigation D-pad */}
-          <ControlCard title="Navigation">
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-              <NavBtn icon="↑" label="Scroll Up"    onClick={() => cmd('scroll_up')}    disabled={!isOnline} />
-              <div style={{ display: 'flex', gap: 4 }}>
-                <NavBtn icon="←" label="Swipe Left"  onClick={() => cmd('swipe', { x1: 900, y1: 960, x2: 180, y2: 960, duration: 300 })} disabled={!isOnline} />
-                <NavBtn icon="⌂" label="Home"        onClick={() => cmd('press_home')}  disabled={!isOnline} color="#3b82f6" />
-                <NavBtn icon="→" label="Swipe Right" onClick={() => cmd('swipe', { x1: 180, y1: 960, x2: 900, y2: 960, duration: 300 })} disabled={!isOnline} />
-              </div>
-              <NavBtn icon="↓" label="Scroll Down"  onClick={() => cmd('scroll_down')} disabled={!isOnline} />
-            </div>
-          </ControlCard>
+          {/* Master Control header */}
+          <div style={{ padding: '10px 14px', background: '#162032', borderBottom: '1px solid #334155' }}>
+            <span style={{ fontWeight: 700, color: '#94a3b8', fontSize: 12, letterSpacing: 1, textTransform: 'uppercase' }}>
+              🎛 Master Control
+            </span>
+          </div>
 
-          {/* System Buttons */}
-          <ControlCard title="System Buttons">
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              <ActionBtn icon="◀" label="Back"     onClick={() => cmd('press_back')}     disabled={!isOnline} />
-              <ActionBtn icon="⌂" label="Home"     onClick={() => cmd('press_home')}     disabled={!isOnline} color="#3b82f6" />
-              <ActionBtn icon="⬜" label="Recents" onClick={() => cmd('press_recents')}  disabled={!isOnline} />
-              <ActionBtn icon="🗂" label="Tasks"   onClick={() => cmd('open_task_manager')} disabled={!isOnline} />
-              <ActionBtn icon="↵" label="Enter"    onClick={() => cmd('press_enter')}    disabled={!isOnline} color="#7c3aed" />
-              <ActionBtn
-                icon="📋" label="Paste"
-                onClick={() => setShowPasteInput(v => !v)}
-                disabled={!isOnline}
-                color={showPasteInput ? '#b45309' : undefined}
-              />
-            </div>
-            {showPasteInput && (
-              <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-                <input
-                  value={pasteText}
-                  onChange={e => setPasteText(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && doPaste()}
-                  placeholder="Text to paste / type…"
-                  style={{ flex: 1, background: '#0f172a', border: '1px solid #334155', borderRadius: 6, padding: '6px 10px', color: '#f1f5f9', fontSize: 13 }}
-                />
-                <button onClick={doPaste} disabled={!pasteText.trim() || !isOnline} style={{ ...btnStyle, background: '#1d4ed8', color: '#fff' }}>Send</button>
+          {/* Tab bar */}
+          <div style={{ display: 'flex', background: '#0f172a', borderBottom: '1px solid #334155' }}>
+            <TabBtn
+              label="📱 Screen Control"
+              active={activeTab === 'screen-control'}
+              onClick={() => setActiveTab('screen-control')}
+            />
+            <TabBtn
+              label="👁 Screen Reader"
+              active={activeTab === 'screen-reader'}
+              onClick={() => setActiveTab('screen-reader')}
+            />
+          </div>
+
+          {/* Tab content */}
+          <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+
+            {/* ── SCREEN READER TAB (shows first when active) ── */}
+            {activeTab === 'screen-reader' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button
+                    onClick={readScreen}
+                    disabled={!isOnline || readerLoading}
+                    style={{ ...btnStyle, fontSize: 12, flex: 1 }}
+                  >
+                    {readerLoading ? '⏳ Reading…' : '📺 Read Screen'}
+                  </button>
+                  <button
+                    onClick={getCurrentApp}
+                    disabled={!isOnline || readerLoading}
+                    style={{ ...btnStyle, fontSize: 12, flex: 1 }}
+                  >
+                    📱 Current App
+                  </button>
+                </div>
+                {readerOutput && (
+                  <pre style={{
+                    background: '#0f172a', border: '1px solid #1e293b', borderRadius: 8,
+                    padding: '10px 12px', color: '#94a3b8', fontSize: 11,
+                    maxHeight: 300, overflowY: 'auto', whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word', margin: 0,
+                  }}>
+                    {readerOutput}
+                  </pre>
+                )}
+                {!readerOutput && !readerLoading && (
+                  <div style={{ color: '#475569', fontSize: 12, textAlign: 'center', padding: '20px 0' }}>
+                    Press a button above to read the screen
+                  </div>
+                )}
               </div>
             )}
-          </ControlCard>
 
-          {/* Power */}
-          <ControlCard title="Power">
-            <div style={{ display: 'flex', gap: 6 }}>
-              <ActionBtn icon="💡" label="Wake Screen" onClick={() => cmd('wake_screen')} disabled={!isOnline} color="#ca8a04" />
-              <ActionBtn icon="🌑" label="Screen Off"  onClick={() => cmd('screen_off')}  disabled={!isOnline} color="#475569" />
-            </div>
-          </ControlCard>
+            {/* ── SCREEN CONTROL TAB ── */}
+            {activeTab === 'screen-control' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
 
-          {/* Screen Reader */}
-          <ControlCard title="Screen Reader">
-            <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
-              <button onClick={readScreen}    disabled={!isOnline || readerLoading} style={{ ...btnStyle, fontSize: 12 }}>
-                {readerLoading ? '…' : '📺 Read Screen'}
-              </button>
-              <button onClick={getCurrentApp} disabled={!isOnline || readerLoading} style={{ ...btnStyle, fontSize: 12 }}>
-                📱 Current App
-              </button>
-            </div>
-            {readerOutput && (
-              <pre style={{
-                background: '#0f172a', border: '1px solid #1e293b', borderRadius: 6,
-                padding: '8px 10px', color: '#94a3b8', fontSize: 11,
-                maxHeight: 120, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0,
-              }}>
-                {readerOutput}
-              </pre>
+                {/* Control Pad */}
+                <div style={{ background: '#162032', borderRadius: 10, border: '1px solid #334155', padding: '10px 12px' }}>
+                  <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 700, marginBottom: 10 }}>
+                    Control Pad
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+                    {/* Up row */}
+                    <NavBtn icon="↑" label="Swipe Up"    onClick={() => cmd('swipe', { x1: 540, y1: 1600, x2: 540, y2: 400, duration: 300 })} disabled={!isOnline} />
+                    {/* Middle row */}
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <NavBtn icon="←" label="Swipe Left"  onClick={() => cmd('swipe', { x1: 900, y1: 960, x2: 180, y2: 960, duration: 300 })} disabled={!isOnline} />
+                      <NavBtn icon="⌂" label="Home"        onClick={() => cmd('press_home')} disabled={!isOnline} color="#3b82f6" />
+                      <NavBtn icon="→" label="Swipe Right" onClick={() => cmd('swipe', { x1: 180, y1: 960, x2: 900, y2: 960, duration: 300 })} disabled={!isOnline} />
+                    </div>
+                    {/* Down row */}
+                    <NavBtn icon="↓" label="Swipe Down"  onClick={() => cmd('swipe', { x1: 540, y1: 400, x2: 540, y2: 1600, duration: 300 })} disabled={!isOnline} />
+                  </div>
+                </div>
+
+                {/* System Buttons */}
+                <div style={{ background: '#162032', borderRadius: 10, border: '1px solid #334155', padding: '10px 12px' }}>
+                  <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 700, marginBottom: 8 }}>
+                    System Buttons
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    <ActionBtn icon="◀" label="Back"     onClick={() => cmd('press_back')}    disabled={!isOnline} />
+                    <ActionBtn icon="⌂" label="Home"     onClick={() => cmd('press_home')}    disabled={!isOnline} color="#3b82f6" />
+                    <ActionBtn icon="⬜" label="Recents"  onClick={() => cmd('press_recents')} disabled={!isOnline} />
+                    <ActionBtn icon="🗂" label="Tasks"    onClick={() => cmd('open_task_manager')} disabled={!isOnline} />
+                    <ActionBtn icon="↵" label="Enter"    onClick={() => cmd('press_enter')}   disabled={!isOnline} color="#7c3aed" />
+                    <ActionBtn
+                      icon="📋" label="Paste"
+                      onClick={() => setShowPasteInput(v => !v)}
+                      disabled={!isOnline}
+                      color={showPasteInput ? '#b45309' : undefined}
+                    />
+                  </div>
+                  {showPasteInput && (
+                    <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                      <input
+                        value={pasteText}
+                        onChange={e => setPasteText(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && doPaste()}
+                        placeholder="Text to paste / type…"
+                        style={{ flex: 1, background: '#0f172a', border: '1px solid #334155', borderRadius: 6, padding: '6px 10px', color: '#f1f5f9', fontSize: 13 }}
+                      />
+                      <button onClick={doPaste} disabled={!pasteText.trim() || !isOnline} style={{ ...btnStyle, background: '#1d4ed8', color: '#fff' }}>Send</button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Power / Wake */}
+                <div style={{ background: '#162032', borderRadius: 10, border: '1px solid #334155', padding: '10px 12px' }}>
+                  <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 700, marginBottom: 8 }}>
+                    Power
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <ActionBtn icon="💡" label="Wake Screen" onClick={() => cmd('wake_screen')} disabled={!isOnline} color="#ca8a04" />
+                    <ActionBtn icon="🌑" label="Screen Off"  onClick={() => cmd('screen_off')}  disabled={!isOnline} color="#475569" />
+                  </div>
+                </div>
+
+              </div>
             )}
-          </ControlCard>
+          </div>
         </div>
       </div>
 
@@ -371,12 +443,19 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
   );
 }
 
-function ControlCard({ title, children }) {
+function TabBtn({ label, active, onClick }) {
   return (
-    <div style={{ background: '#1e293b', borderRadius: 10, border: '1px solid #334155', padding: '10px 12px' }}>
-      <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 700, marginBottom: 8 }}>{title}</div>
-      {children}
-    </div>
+    <button
+      onClick={onClick}
+      style={{
+        flex: 1, padding: '9px 6px', border: 'none', borderBottom: active ? '2px solid #3b82f6' : '2px solid transparent',
+        background: 'transparent', color: active ? '#f1f5f9' : '#64748b',
+        fontSize: 12, fontWeight: active ? 700 : 500, cursor: 'pointer',
+        transition: 'color 0.15s, border-color 0.15s', letterSpacing: 0.3,
+      }}
+    >
+      {label}
+    </button>
   );
 }
 
@@ -387,9 +466,9 @@ function NavBtn({ icon, label, onClick, disabled, color }) {
       disabled={disabled}
       title={label}
       style={{
-        width: 48, height: 48, border: 'none', borderRadius: 10,
+        width: 52, height: 52, border: 'none', borderRadius: 10,
         background: color || '#334155', color: '#f1f5f9',
-        fontSize: 18, cursor: disabled ? 'not-allowed' : 'pointer',
+        fontSize: 20, cursor: disabled ? 'not-allowed' : 'pointer',
         opacity: disabled ? 0.4 : 1,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         fontWeight: 600, transition: 'background 0.15s',

