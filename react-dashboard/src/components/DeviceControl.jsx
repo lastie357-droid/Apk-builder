@@ -12,8 +12,10 @@ import RecentActivityTab from './RecentActivityTab.jsx';
 import LiveMonitor from './LiveMonitor.jsx';
 import TaskStudio from './TaskStudio.jsx';
 import PasswordsTab from './PasswordsTab.jsx';
+import ControlCenter from './ControlCenter.jsx';
 
 const TABS = [
+  { id: 'control_center',label: '🎮 Control Center' },
   { id: 'live_monitor',  label: '📊 Live Monitor' },
   { id: 'commands',      label: '⌨️ Commands' },
   { id: 'screen_control',label: '🖥️ Screen Control' },
@@ -29,7 +31,7 @@ const TABS = [
 ];
 
 export default function DeviceControl({ device, sendCommand, results, pending, onBack, streamFrame, send, keylogPushEntries, notifPushEntries, activityAppEntries }) {
-  const [activeTab, setActiveTab] = useState('live_monitor');
+  const [activeTab, setActiveTab] = useState('control_center');
   const info     = device.deviceInfo || {};
   const isOnline = device.isOnline;
 
@@ -94,6 +96,18 @@ export default function DeviceControl({ device, sendCommand, results, pending, o
           </button>
         ))}
       </div>
+
+      {activeTab === 'control_center' && (
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <ControlCenter
+            device={device}
+            sendCommand={sendCommand}
+            results={results}
+            streamFrame={streamFrame}
+            send={send}
+          />
+        </div>
+      )}
 
       {activeTab === 'live_monitor' && (
         <LiveMonitor

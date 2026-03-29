@@ -36,7 +36,11 @@ body {
 .main-content {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 20px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 /* Status Bar */
@@ -213,7 +217,12 @@ body {
 }
 
 /* Device Control */
-.device-control {}
+.device-control {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
 
 .dc-header {
   display: flex;

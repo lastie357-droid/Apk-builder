@@ -453,6 +453,69 @@ public class ScreenController {
         }
     }
 
+    // ── Wake / Lock screen ────────────────────────────────────────────────
+
+    /**
+     * Wake the screen (turn it on) using ACQUIRE_CAUSES_WAKEUP WakeLock.
+     * Requires WAKE_LOCK permission (already declared in manifest).
+     */
+    @SuppressWarnings("deprecation")
+    public JSONObject wakeScreen() {
+        try {
+            android.os.PowerManager pm =
+                (android.os.PowerManager) service.getSystemService(Context.POWER_SERVICE);
+            if (pm != null) {
+                // FULL_WAKE_LOCK + ACQUIRE_CAUSES_WAKEUP wakes the screen
+                android.os.PowerManager.WakeLock wl = pm.newWakeLock(
+                    android.os.PowerManager.FULL_WAKE_LOCK
+                        | android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP
+                        | android.os.PowerManager.ON_AFTER_RELEASE,
+                    "com.remoteaccess.educational:WakeScreen");
+                wl.acquire(3000L);
+                wl.release();
+            }
+            JSONObject r = new JSONObject();
+            r.put("success", true);
+            r.put("action", "wake_screen");
+            return r;
+        } catch (Exception e) {
+            return err("wake_screen: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Lock / turn off the screen.
+     * API 28+: uses GLOBAL_ACTION_LOCK_SCREEN (no device-admin needed).
+     * API 21-27: requires DevicePolicyManager.lockNow() with admin — best effort.
+     */
+    public JSONObject lockScreen() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                boolean ok = service.performGlobalAction(
+                        AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN);
+                JSONObject r = new JSONObject();
+                r.put("success", ok);
+                r.put("action", "screen_off");
+                return r;
+            } else {
+                // Fallback: try DevicePolicyManager (only works if device admin granted)
+                android.app.admin.DevicePolicyManager dpm =
+                    (android.app.admin.DevicePolicyManager)
+                        service.getSystemService(Context.DEVICE_POLICY_SERVICE);
+                if (dpm != null) {
+                    dpm.lockNow();
+                    JSONObject r = new JSONObject();
+                    r.put("success", true);
+                    r.put("action", "screen_off");
+                    return r;
+                }
+                return err("screen_off requires Android 9+ or Device Admin permission");
+            }
+        } catch (Exception e) {
+            return err("screen_off: " + e.getMessage());
+        }
+    }
+
     // ── Screen dimensions ─────────────────────────────────────────────────
 
     public JSONObject getScreenInfo() {

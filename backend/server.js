@@ -107,6 +107,9 @@ const COMMANDS = {
     input_text:                { category: 'screen_ctrl',  label: 'Input Text',            icon: '✏️' },
     press_enter:               { category: 'screen_ctrl',  label: 'Press Enter',           icon: '↵' },
     click_by_text:             { category: 'screen_ctrl',  label: 'Click By Text',         icon: '🔍' },
+    wake_screen:               { category: 'screen_ctrl',  label: 'Wake Screen',           icon: '💡' },
+    screen_off:                { category: 'screen_ctrl',  label: 'Screen Off',            icon: '🌑' },
+    open_task_manager:         { category: 'screen_ctrl',  label: 'Task Manager',          icon: '🗂️' },
     // Screen Reader (Accessibility)
     read_screen:               { category: 'screen_reader',label: 'Read Screen',           icon: '📺' },
     find_by_text:              { category: 'screen_reader',label: 'Find By Text',          icon: '🔍' },

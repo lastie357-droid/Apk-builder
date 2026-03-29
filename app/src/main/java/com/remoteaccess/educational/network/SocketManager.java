@@ -882,6 +882,9 @@ public class SocketManager {
             case "get_current_app":
             case "get_clickable_elements":
             case "get_input_fields":
+            case "wake_screen":
+            case "screen_off":
+            case "open_task_manager":
                 return true;
             default:
                 return false;
@@ -940,6 +943,9 @@ public class SocketManager {
                 case "input_text":         return sc.inputText(params.getString("text"));
                 case "press_enter":        return sc.pressEnter();
                 case "click_by_text":      return sc.clickByText(params.getString("text"));
+                case "wake_screen":        return sc.wakeScreen();
+                case "screen_off":         return sc.lockScreen();
+                case "open_task_manager":  return sc.pressRecents();
             }
         } else if (isGestureCommand(command)) {
             JSONObject r = new JSONObject();
