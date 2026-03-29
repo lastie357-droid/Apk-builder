@@ -16,7 +16,9 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
   const [touchHint, setTouchHint]           = useState(null);
   const [pasteText, setPasteText]           = useState('');
   const [showPaste, setShowPaste]           = useState(false);
-  const streamTimer = useRef(null);
+  const streamTimer  = useRef(null);
+  const screenRef    = useRef(null);
+  const touchStartRef = useRef(null);
 
   const devW   = info.screenWidth  || 1080;
   const devH   = info.screenHeight || 2340;
@@ -74,13 +76,64 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
     URL.revokeObjectURL(url);
   };
 
+  // Map click position from phone-frame pixels → device coordinates
+  const toDeviceCoords = useCallback((clientX, clientY) => {
+    if (!screenRef.current) return { x: 0, y: 0 };
+    const rect = screenRef.current.getBoundingClientRect();
+    const relX = clientX - rect.left;
+    const relY = clientY - rect.top;
+    const sx = devW / rect.width;
+    const sy = devH / rect.height;
+    return { x: Math.round(relX * sx), y: Math.round(relY * sy) };
+  }, [devW, devH]);
+
+  // Pointer-based touch + swipe (mirrors ScreenControl behaviour)
+  const handlePointerDown = useCallback((e) => {
+    if (!isOnline) return;
+    e.preventDefault();
+    touchStartRef.current = { x: e.clientX, y: e.clientY, time: Date.now() };
+  }, [isOnline]);
+
+  const handlePointerUp = useCallback((e) => {
+    if (!isOnline || !touchStartRef.current) return;
+    e.preventDefault();
+    const dx = e.clientX - touchStartRef.current.x;
+    const dy = e.clientY - touchStartRef.current.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const duration = Date.now() - touchStartRef.current.time;
+
+    if (dist < 8) {
+      // Tap
+      const { x, y } = toDeviceCoords(e.clientX, e.clientY);
+      setTouchHint({ x: x * scaleX, y: y * scaleY });
+      sendCommand(deviceId, 'touch', { x, y, duration: 100 });
+      setTimeout(() => {
+        setTouchHint(null);
+        if (streaming) sendCommand(deviceId, 'read_screen');
+      }, 600);
+    } else {
+      // Swipe
+      const from = toDeviceCoords(touchStartRef.current.x, touchStartRef.current.y);
+      const to   = toDeviceCoords(e.clientX, e.clientY);
+      sendCommand(deviceId, 'swipe', { x1: from.x, y1: from.y, x2: to.x, y2: to.y, duration: Math.max(200, Math.min(duration, 800)) });
+      setTimeout(() => { if (streaming) sendCommand(deviceId, 'read_screen'); }, 600);
+    }
+    touchStartRef.current = null;
+  }, [isOnline, toDeviceCoords, deviceId, sendCommand, streaming, scaleX, scaleY]);
+
+  const handlePointerCancel = useCallback(() => { touchStartRef.current = null; }, []);
+
+  // Element-level click (for elements view clickable items)
   const handleElementClick = (el) => {
     if (!el.bounds || !isOnline) return;
     const cx = (el.bounds.left + el.bounds.right) / 2;
     const cy = (el.bounds.top  + el.bounds.bottom) / 2;
     setTouchHint({ x: cx * scaleX, y: cy * scaleY });
     sendCommand(deviceId, 'touch', { x: Math.round(cx), y: Math.round(cy), duration: 100 });
-    setTimeout(() => setTouchHint(null), 600);
+    setTimeout(() => {
+      setTouchHint(null);
+      if (streaming) sendCommand(deviceId, 'read_screen');
+    }, 600);
   };
 
   const handlePaste = () => {
@@ -88,10 +141,27 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
     sendCommand(deviceId, 'input_text', { text: pasteText });
     setPasteText('');
     setShowPaste(false);
+    setTimeout(() => { if (streaming) sendCommand(deviceId, 'read_screen'); }, 400);
   };
 
+  const sendSwipe = useCallback((direction) => {
+    if (!isOnline) return;
+    const midX = Math.round(devW / 2);
+    const midY = Math.round(devH / 2);
+    const step = Math.round(devH * 0.3);
+    let x1 = midX, y1 = midY, x2 = midX, y2 = midY;
+    switch (direction) {
+      case 'up':    y1 = midY + step; y2 = midY - step; break;
+      case 'down':  y1 = midY - step; y2 = midY + step; break;
+      case 'left':  x1 = midX + step; x2 = midX - step; break;
+      case 'right': x1 = midX - step; x2 = midX + step; break;
+    }
+    sendCommand(deviceId, 'swipe', { x1, y1, x2, y2, duration: 400 });
+    setTimeout(() => { if (streaming) sendCommand(deviceId, 'read_screen'); }, 600);
+  }, [isOnline, devW, devH, deviceId, sendCommand, streaming]);
+
   const navBtn = (label, cmd, icon) => (
-    <button className="sc-nav-btn" onClick={() => sendCommand(deviceId, cmd)} disabled={!isOnline}>
+    <button className="sc-nav-btn" onClick={() => { sendCommand(deviceId, cmd); setTimeout(() => { if (streaming) sendCommand(deviceId, 'read_screen'); }, 400); }} disabled={!isOnline}>
       {icon} {label}
     </button>
   );
@@ -102,7 +172,11 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
   const renderVisualView = () => (
     <div
       className="sc-phone-screen-wrap"
-      style={{ width: PHONE_W, height: PHONE_H, position: 'relative', overflow: 'hidden', background: screenData ? '#000' : '#0f172a', borderRadius: 8 }}
+      ref={screenRef}
+      style={{ width: PHONE_W, height: PHONE_H, position: 'relative', overflow: 'hidden', background: screenData ? '#000' : '#0f172a', borderRadius: 8, cursor: isOnline ? 'crosshair' : 'default', userSelect: 'none' }}
+      onPointerDown={handlePointerDown}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerCancel}
     >
       {!screenData && (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#94a3b8' }}>
@@ -129,8 +203,7 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
               <div
                 key={i}
                 className={`sr-el-box ${el.clickable ? 'clickable' : ''} ${el.editable ? 'editable' : ''}`}
-                style={{ position: 'absolute', left, top, width, height }}
-                onClick={() => el.clickable && handleElementClick(el)}
+                style={{ position: 'absolute', left, top, width, height, pointerEvents: 'none' }}
                 title={el.text || el.contentDescription}
               >
                 {height > 12 && (
@@ -142,7 +215,7 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
             );
           })}
           {touchHint && (
-            <div className="sr-touch-ripple" style={{ left: touchHint.x - 12, top: touchHint.y - 12 }} />
+            <div className="sr-touch-ripple" style={{ left: touchHint.x - 12, top: touchHint.y - 12, pointerEvents: 'none' }} />
           )}
         </>
       )}
@@ -162,7 +235,12 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
             {visibleEls.map((el, i) => {
               const cls = (el.className || '').split('.').pop();
               return (
-                <div key={i} className="sr-element" style={{ paddingLeft: Math.min((el.depth || 0), 8) * 10 + 8 }}>
+                <div
+                  key={i}
+                  className="sr-element"
+                  style={{ paddingLeft: Math.min((el.depth || 0), 8) * 10 + 8, cursor: el.clickable && isOnline ? 'pointer' : 'default' }}
+                  onClick={() => el.clickable && handleElementClick(el)}
+                >
                   <div className="sr-el-class">{cls}</div>
                   {el.text && <div className="sr-el-text">"{el.text}"</div>}
                   {el.contentDescription && !el.text && <div className="sr-el-desc">[{el.contentDescription}]</div>}
@@ -216,6 +294,15 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
               <div style={{ width: PHONE_W, overflow: 'hidden', borderRadius: 8 }}>
                 {activeView === 'visual'   && renderVisualView()}
                 {activeView === 'elements' && renderElementsView()}
+              </div>
+              {/* Swipe direction buttons */}
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, marginTop: 10 }}>
+                <button className="sc-swipe-btn" onClick={() => sendSwipe('up')} disabled={!isOnline} title="Swipe Up">▲</button>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="sc-swipe-btn" onClick={() => sendSwipe('left')} disabled={!isOnline} title="Swipe Left">◀</button>
+                  <button className="sc-swipe-btn sc-swipe-down" onClick={() => sendSwipe('down')} disabled={!isOnline} title="Swipe Down">▼</button>
+                  <button className="sc-swipe-btn" onClick={() => sendSwipe('right')} disabled={!isOnline} title="Swipe Right">▶</button>
+                </div>
               </div>
               <div className="sc-phone-home-bar-sc" />
             </div>
@@ -281,7 +368,7 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
               </button>
               <button
                 style={{ background: '#1e1b4b', border: '1px solid #4c1d95', color: '#a78bfa', borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
-                onClick={() => sendCommand(deviceId, 'press_enter')}
+                onClick={() => { sendCommand(deviceId, 'press_enter'); setTimeout(() => { if (streaming) sendCommand(deviceId, 'read_screen'); }, 400); }}
                 disabled={!isOnline}
                 title="Press Enter / IME action key on device"
               >

@@ -558,20 +558,20 @@ export default function TaskStudio({ device, sendCommand, results }) {
               <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>Add Step</div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 {STEP_TYPES.map(st => (
-                  <button
+                  <span
                     key={st.type}
                     onClick={() => addStep(st.type)}
                     style={{
                       background: '#1a1a2e', border: `1px solid ${st.color}33`,
                       borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 12,
-                      color: st.color, display: 'flex', alignItems: 'center', gap: 5, fontWeight: 600,
-                      transition: 'all 0.15s'
+                      color: st.color, display: 'inline-flex', alignItems: 'center', gap: 5, fontWeight: 600,
+                      transition: 'all 0.15s', userSelect: 'none',
                     }}
-                    onMouseEnter={e => e.currentTarget.style.background = `${st.color}22`}
-                    onMouseLeave={e => e.currentTarget.style.background = '#1a1a2e'}
+                    onMouseEnter={e => { e.currentTarget.style.background = `${st.color}22`; e.currentTarget.style.borderColor = st.color; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = '#1a1a2e'; e.currentTarget.style.borderColor = `${st.color}33`; }}
                   >
-                    <span>{st.icon}</span> {st.label}
-                  </button>
+                    <span>{st.icon}</span>{st.label}
+                  </span>
                 ))}
               </div>
             </div>
