@@ -5,6 +5,9 @@ auth.method = "token"
 auth.token = "{{ .Envs.FRP_TOKEN }}"
 
 loginFailExit = false
+transport.poolCount = 10
+transport.heartbeatTimeout = 90
+transport.heartbeatInterval = 30
 
 [[proxies]]
 name = "tester"
