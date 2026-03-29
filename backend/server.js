@@ -627,6 +627,37 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/api/auth', authRoutes);
 app.use('/api/user', devicesRoutes);
 
+// ── Admin login using ADMIN_USERNAME / ADMIN_PASSWORD secrets ────────────────
+app.post('/api/admin/login', (req, res) => {
+    const { username, password } = req.body;
+    const adminUser = process.env.ADMIN_USERNAME;
+    const adminPass = process.env.ADMIN_PASSWORD;
+    if (!adminUser || !adminPass) {
+        return res.status(500).json({ success: false, error: 'Admin credentials not configured on server.' });
+    }
+    if (username === adminUser && password === adminPass) {
+        const token = require('crypto').randomBytes(32).toString('hex');
+        // Store token in memory with expiry (24h)
+        if (!global._adminTokens) global._adminTokens = new Map();
+        global._adminTokens.set(token, Date.now() + 86400000);
+        return res.json({ success: true, token });
+    }
+    return res.status(401).json({ success: false, error: 'Invalid credentials.' });
+});
+
+// ── Admin token verification ──────────────────────────────────────────────────
+app.post('/api/admin/verify', (req, res) => {
+    const { token } = req.body;
+    if (!token) return res.status(401).json({ success: false });
+    if (!global._adminTokens) return res.status(401).json({ success: false });
+    const expiry = global._adminTokens.get(token);
+    if (!expiry || Date.now() > expiry) {
+        global._adminTokens.delete(token);
+        return res.status(401).json({ success: false });
+    }
+    return res.json({ success: true });
+});
+
 wss.on('connection', async (ws, req) => {
     const id = crypto.randomBytes(8).toString('hex');
     ws.id         = id;

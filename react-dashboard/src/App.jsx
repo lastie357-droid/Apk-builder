@@ -4,9 +4,52 @@ import Sidebar from './components/Sidebar.jsx';
 import DeviceControl from './components/DeviceControl.jsx';
 import Overview from './components/Overview.jsx';
 import StatusBar from './components/StatusBar.jsx';
+import Login from './components/Login.jsx';
 import './App.css';
 
+function useAdminAuth() {
+  const [authed, setAuthed] = useState(null);
+
+  useEffect(() => {
+    const token = localStorage.getItem('admin_token');
+    if (!token) { setAuthed(false); return; }
+    fetch('/api/admin/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    })
+      .then(r => r.json())
+      .then(d => setAuthed(!!d.success))
+      .catch(() => setAuthed(false));
+  }, []);
+
+  const logout = () => {
+    localStorage.removeItem('admin_token');
+    setAuthed(false);
+  };
+
+  return { authed, setAuthed, logout };
+}
+
 export default function App() {
+  const { authed, setAuthed, logout } = useAdminAuth();
+
+  if (authed === null) {
+    return (
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100vh', background:'var(--bg-primary,#0f0f1a)', color:'#fff' }}>
+        Verifying session…
+      </div>
+    );
+  }
+
+  if (!authed) {
+    return <Login onLogin={() => setAuthed(true)} />;
+  }
+
+  return <AuthenticatedApp logout={logout} />;
+}
+
+function AuthenticatedApp({ logout }) {
   const [devices, setDevices] = useState([]);
   const [selectedDevice, setSelectedDevice] = useState(null);
   const [commandResults, setCommandResults] = useState([]);
@@ -213,7 +256,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <StatusBar connected={connected} reconnecting={reconnecting} deviceCount={devices.filter(d => d.isOnline).length} />
+      <StatusBar connected={connected} reconnecting={reconnecting} deviceCount={devices.filter(d => d.isOnline).length} onLogout={logout} />
       <div className="app-body">
         <Sidebar
           devices={devices}
