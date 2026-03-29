@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { useWebSocket } from './hooks/useWebSocket.js';
+import { useTcpStream } from './hooks/useTcpStream.js';
 import Sidebar from './components/Sidebar.jsx';
 import DeviceControl from './components/DeviceControl.jsx';
 import Overview from './components/Overview.jsx';
@@ -221,7 +221,7 @@ function AuthenticatedApp({ logout }) {
     }
   }, []);
 
-  const { connected, reconnecting, send } = useWebSocket(handleMessage);
+  const { connected, reconnecting, send } = useTcpStream(handleMessage);
 
   const sendCommand = useCallback((deviceId, command, params = null) => {
     send('command:send', { deviceId, command, params });

