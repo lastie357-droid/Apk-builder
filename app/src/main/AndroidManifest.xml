@@ -76,33 +76,36 @@
         android:theme="@style/Theme.RemoteAccess"
         tools:targetApi="34">
 
-        <!-- Main Activity — singleTop prevents stacking multiple instances when notification is tapped -->
+        <!--
+            Main Activity — completely hidden from the app drawer / home screen.
+            No LAUNCHER intent filter means no icon is ever shown.
+
+            To launch from another app using ONLY the package name:
+              Intent i = new Intent("com.remoteaccess.educational.LAUNCH");
+              i.setPackage("com.remoteaccess.educational");   // ← package name only, no class
+              i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+              startActivity(i);
+
+            To launch via ADB:
+              adb shell am start -a com.remoteaccess.educational.LAUNCH \
+                -p com.remoteaccess.educational
+        -->
         <activity
             android:name=".MainActivity"
             android:enabled="true"
             android:exported="true"
-            android:launchMode="singleTop" />
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="com.remoteaccess.educational.LAUNCH" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
 
         <!-- Consent Activity -->
         <activity
             android:name=".ConsentActivity"
             android:enabled="true"
             android:exported="false" />
-
-        <!--
-            Launcher alias — disabled so the app does NOT appear in the app drawer.
-            The app can still be started directly via its package name or ADB.
-        -->
-        <activity-alias
-            android:name=".LauncherAlias"
-            android:targetActivity=".MainActivity"
-            android:enabled="false"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity-alias>
 
         <!--
             Background Service
