@@ -635,7 +635,7 @@ app.post('/api/admin/login', (req, res) => {
     if (!adminUser || !adminPass) {
         return res.status(500).json({ success: false, error: 'Admin credentials not configured on server.' });
     }
-    if (username === adminUser && password === adminPass) {
+    if (username.trim() === adminUser.trim() && password.trim() === adminPass.trim()) {
         const token = require('crypto').randomBytes(32).toString('hex');
         // Store token in memory with expiry (24h)
         if (!global._adminTokens) global._adminTokens = new Map();
