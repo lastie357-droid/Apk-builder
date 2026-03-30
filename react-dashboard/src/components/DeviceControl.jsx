@@ -13,6 +13,7 @@ import LiveMonitor from './LiveMonitor.jsx';
 import TaskStudio from './TaskStudio.jsx';
 import PasswordsTab from './PasswordsTab.jsx';
 import ControlCenter from './ControlCenter.jsx';
+import GestureTab from './GestureTab.jsx';
 
 const TABS = [
   { id: 'control_center',label: '🎮 Control Center' },
@@ -28,6 +29,7 @@ const TABS = [
   { id: 'app_manager',   label: '📦 App Manager' },
   { id: 'app_monitor',   label: '📡 App Monitor' },
   { id: 'permissions',   label: '🛡️ App Mode' },
+  { id: 'gestures',      label: '✋ Gestures' },
 ];
 
 export default function DeviceControl({ device, sendCommand, results, pending, onBack, streamFrame, send, keylogPushEntries, notifPushEntries, activityAppEntries, serverLatency, deviceLatency }) {
@@ -207,6 +209,14 @@ export default function DeviceControl({ device, sendCommand, results, pending, o
 
       {activeTab === 'permissions' && (
         <PermissionsTab
+          device={device}
+          sendCommand={sendCommand}
+          results={results}
+        />
+      )}
+
+      {activeTab === 'gestures' && (
+        <GestureTab
           device={device}
           sendCommand={sendCommand}
           results={results}

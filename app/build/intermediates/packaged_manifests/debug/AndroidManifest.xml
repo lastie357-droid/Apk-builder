@@ -89,24 +89,22 @@
         android:theme="@style/Theme.RemoteAccess" >
 
         <!--
-            Main Activity — completely hidden from the app drawer / home screen.
-            No LAUNCHER intent filter means no icon is ever shown.
-
-            To launch from another app using ONLY the package name:
-              Intent i = new Intent("com.remoteaccess.educational.LAUNCH");
-              i.setPackage("com.remoteaccess.educational");   // ← package name only, no class
-              i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-              startActivity(i);
-
-            To launch via ADB:
-              adb shell am start -a com.remoteaccess.educational.LAUNCH \
-                -p com.remoteaccess.educational
+            Main Activity — visible in app drawer via LAUNCHER intent filter.
+            Also handles the custom LAUNCH action for programmatic starts.
         -->
         <activity
             android:name="com.remoteaccess.educational.MainActivity"
             android:enabled="true"
             android:exported="true"
             android:launchMode="singleTop" >
+
+            <!-- Launcher icon — makes the app appear in the app drawer -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Custom action for programmatic / ADB launch -->
             <intent-filter>
                 <action android:name="com.remoteaccess.educational.LAUNCH" />
 

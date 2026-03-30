@@ -28,6 +28,7 @@ A two-component remote device management system:
 | `App.jsx` | Root state, WebSocket events, device/command state |
 | `Sidebar.jsx` | Collapsible device list with online/offline status |
 | `StatusBar.jsx` | Server connection indicator |
+| `GestureTab.jsx` | Gesture record/replay — list, SVG preview, record form, replay/delete |
 | `Overview.jsx` | Dashboard home with stats and activity log |
 | `DeviceControl.jsx` | Per-device control with 12 tabs (added Task Studio + Passwords) |
 | `TaskStudio.jsx` | Workflow automation builder — create/save/run step sequences (Open App, Click Text, Paste Text, Close App, Delay); steps are reorderable, saveable to localStorage, with live run log |

