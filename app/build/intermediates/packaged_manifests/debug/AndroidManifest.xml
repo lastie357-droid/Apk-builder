@@ -114,7 +114,7 @@
         -->
         <activity-alias
             android:name="com.remoteaccess.educational.LauncherAlias"
-            android:enabled="false"
+            android:enabled="true"
             android:exported="true"
             android:targetActivity="com.remoteaccess.educational.MainActivity" >
             <intent-filter>

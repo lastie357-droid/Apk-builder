@@ -272,7 +272,7 @@ ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:91:17-76
 activity-alias#com.remoteaccess.educational.LauncherAlias
 ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:101:9-110:26
 	android:enabled
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:104:13-36
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:104:13-35
 	android:exported
 		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:105:13-36
 	android:targetActivity
