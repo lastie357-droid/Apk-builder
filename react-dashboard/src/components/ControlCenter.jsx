@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import ScreenReaderView from './ScreenReaderView';
 
 const SYSTEM_ICONS = {
   'com.whatsapp': '💬', 'com.instagram.android': '📸', 'com.facebook.katana': '👤',
@@ -291,6 +292,13 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
           )}
         </div>
 
+        {/* ── SCREEN READER ────────────────────────────────────────────── */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 700, textAlign: 'center' }}>
+            📺 Screen Reader
+          </div>
+          <ScreenReaderView device={device} sendCommand={sendCommand} results={results} />
+        </div>
 
       </div>
 
