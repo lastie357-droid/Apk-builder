@@ -32,7 +32,7 @@ function LatencyBadge({ label, ms }) {
   );
 }
 
-export default function ControlCenter({ device, sendCommand, results, streamFrame, send, serverLatency, deviceLatency }) {
+export default function ControlCenter({ device, sendCommand, results, streamFrame, send, serverLatency, deviceLatency, onTabChange }) {
   const deviceId = device.deviceId;
   const isOnline = device.isOnline;
   const devInfo  = device.deviceInfo || {};
@@ -108,44 +108,6 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
     const cmd = blockActive ? 'screen_blackout_off' : 'screen_blackout_on';
     sendCommand(deviceId, cmd, {});
     setBlockActive(v => !v);
-  };
-
-  // ── Screen reader ─────────────────────────────────────────────────────
-  const [readerOutput, setReaderOutput] = useState('');
-  const [readerLoading, setReaderLoading] = useState(false);
-  const seenReader = useRef(new Set());
-
-  useEffect(() => {
-    results.forEach(r => {
-      if ((r.command === 'read_screen' || r.command === 'get_current_app') &&
-           r.success && !seenReader.current.has(r.id)) {
-        seenReader.current.add(r.id);
-        setReaderLoading(false);
-        try {
-          const d = typeof r.response === 'string' ? JSON.parse(r.response) : r.response;
-          if (r.command === 'read_screen') {
-            const texts = (d.elements || []).map(el => el.text || el.contentDescription || '').filter(Boolean);
-            setReaderOutput(texts.join('\n') || d.screenText || '(no text found)');
-          } else {
-            setReaderOutput(`Current app: ${d.appName || d.packageName || 'unknown'}`);
-          }
-        } catch (_) {
-          setReaderOutput(typeof r.response === 'string' ? r.response : JSON.stringify(r.response));
-          setReaderLoading(false);
-        }
-      }
-    });
-  }, [results]);
-
-  const readScreen = () => {
-    setReaderLoading(true);
-    setReaderOutput('');
-    sendCommand(deviceId, 'read_screen', {});
-  };
-  const getCurrentApp = () => {
-    setReaderLoading(true);
-    setReaderOutput('');
-    sendCommand(deviceId, 'get_current_app', {});
   };
 
   // ── Paste / Input ─────────────────────────────────────────────────────
@@ -241,6 +203,14 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
           📂 <span style={{ fontSize: 11 }}>App Folder</span>
           {apps.length > 0 && <span style={{ fontSize: 10, color: '#7dd3fc' }}>({apps.length})</span>}
         </button>
+        {onTabChange && (
+          <button
+            onClick={() => onTabChange('task_studio')}
+            style={{ ...smallBtn('#4c1d95'), display: 'flex', alignItems: 'center', gap: 5, padding: '4px 12px' }}
+          >
+            🎬 <span style={{ fontSize: 11 }}>Run Task</span>
+          </button>
+        )}
       </div>
 
       {/* ── TOP ROW: Two Phone Frames ──────────────────────────────────── */}
@@ -321,76 +291,6 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
           )}
         </div>
 
-        {/* ── SCREEN READER PHONE ─────────────────────────────────────── */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 700, textAlign: 'center' }}>
-            👁 Screen Reader
-          </div>
-
-          {/* Phone bezel */}
-          <div style={{
-            background: '#1e293b', borderRadius: 24, padding: '14px 10px 10px',
-            border: '2px solid #334155', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
-            boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
-          }}>
-            {/* Notch */}
-            <div style={{ width: 60, height: 6, background: '#334155', borderRadius: 4, marginBottom: 2 }} />
-
-            {/* Reader area */}
-            <div style={{
-              width: STREAM_W, height: STREAM_H,
-              background: '#0f172a', borderRadius: 8, border: '1px solid #1e293b',
-              overflow: 'hidden auto', padding: '8px 10px', boxSizing: 'border-box',
-              display: 'flex', flexDirection: 'column',
-            }}>
-              {readerLoading && (
-                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b', fontSize: 12 }}>
-                  ⏳ Reading…
-                </div>
-              )}
-              {!readerLoading && !readerOutput && (
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#334155', textAlign: 'center' }}>
-                  <div style={{ fontSize: 24, marginBottom: 6 }}>👁</div>
-                  <div style={{ fontSize: 11 }}>Press Read Screen<br />to inspect UI elements</div>
-                </div>
-              )}
-              {readerOutput && (
-                <pre style={{
-                  color: '#94a3b8', fontSize: 10, whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word', margin: 0, lineHeight: 1.5,
-                }}>
-                  {readerOutput}
-                </pre>
-              )}
-            </div>
-
-            {/* Reader controls */}
-            <div style={{ display: 'flex', gap: 6, justifyContent: 'center', paddingBottom: 4 }}>
-              <button
-                onClick={readScreen}
-                disabled={!isOnline || readerLoading}
-                style={{ ...smallBtn('#1d4ed8'), fontSize: 11 }}
-              >
-                📺 Read
-              </button>
-              <button
-                onClick={getCurrentApp}
-                disabled={!isOnline || readerLoading}
-                style={{ ...smallBtn('#334155'), fontSize: 11 }}
-              >
-                📱 App
-              </button>
-              {readerOutput && (
-                <button
-                  onClick={() => setReaderOutput('')}
-                  style={{ ...smallBtn('#334155'), fontSize: 11 }}
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
 
       </div>
 

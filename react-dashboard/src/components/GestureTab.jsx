@@ -56,8 +56,10 @@ export default function GestureTab({ device, sendCommand, results }) {
   const [liveLabel, setLiveLabel]           = useState('');
   const [statusMsg, setStatusMsg]           = useState('');
   const [replayingFile, setReplayingFile]   = useState(null);
+  const [showRecords, setShowRecords]       = useState(false);
   const seenResults = useRef(new Set());
   const pollRef = useRef(null);
+  const recordsListRef = useRef(null);
 
   const status = msg => setStatusMsg(msg);
 
@@ -188,6 +190,13 @@ export default function GestureTab({ device, sendCommand, results }) {
               ● RECORDING
             </span>
           )}
+          <button
+            onClick={() => { setShowRecords(true); loadList(); }}
+            disabled={!isOnline}
+            style={{ ...btnStyle('#1d4ed8'), display: 'flex', alignItems: 'center', gap: 5 }}
+          >
+            📋 View Records ({gestures.length})
+          </button>
           <button onClick={loadList} disabled={!isOnline || loading} style={btnStyle('#334155')}>
             {loading ? '…' : '↻ Refresh'}
           </button>
@@ -264,8 +273,8 @@ export default function GestureTab({ device, sendCommand, results }) {
                   Draw on the device screen now
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button onClick={stopRecord} disabled={!isOnline} style={{ ...btnStyle('#dc2626'), flex: 1, fontWeight: 700 }}>⏹ Stop & Save</button>
-                  <button onClick={cancelRecord} disabled={!isOnline} style={{ ...btnStyle('#334155'), flex: 1 }}>✕</button>
+                  <button onClick={stopRecord} disabled={!isOnline} style={{ ...btnStyle('#dc2626'), flex: 1, fontWeight: 700 }}>⏹ Stop Record</button>
+                  <button onClick={cancelRecord} disabled={!isOnline} style={{ ...btnStyle('#334155'), flex: 1 }}>✕ Cancel</button>
                 </div>
               </div>
             )}
@@ -400,6 +409,80 @@ export default function GestureTab({ device, sendCommand, results }) {
       <style>{`
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
       `}</style>
+
+      {/* ── View Records Modal ─────────────────────────────────────────── */}
+      {showRecords && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999,
+        }} onClick={e => { if (e.target === e.currentTarget) setShowRecords(false); }}>
+          <div style={{
+            background: '#1e293b', borderRadius: 14, width: 560, maxWidth: '95vw',
+            maxHeight: '80vh', border: '1px solid #334155', display: 'flex', flexDirection: 'column', overflow: 'hidden',
+          }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '12px 16px', borderBottom: '1px solid #334155', background: '#162032',
+            }}>
+              <span style={{ fontWeight: 700, color: '#94a3b8', fontSize: 13, textTransform: 'uppercase', letterSpacing: 1 }}>
+                📋 Recorded Gestures
+              </span>
+              <span style={{ fontSize: 11, color: '#64748b' }}>{gestures.length} records</span>
+              <button onClick={loadList} disabled={loading} style={{ ...btnStyle('#334155'), fontSize: 11, padding: '3px 10px', marginLeft: 4 }}>
+                {loading ? '…' : '↻ Refresh'}
+              </button>
+              <button onClick={() => setShowRecords(false)} style={{ ...btnStyle('#334155'), fontSize: 13, padding: '3px 10px', marginLeft: 'auto' }}>
+                ✕ Close
+              </button>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              {gestures.length === 0 && !loading && (
+                <div style={{ padding: 32, textAlign: 'center', color: '#475569', fontSize: 13 }}>
+                  <div style={{ fontSize: 32, marginBottom: 8 }}>✋</div>
+                  No gestures saved yet.
+                </div>
+              )}
+              {loading && (
+                <div style={{ padding: 32, textAlign: 'center', color: '#64748b', fontSize: 13 }}>Loading…</div>
+              )}
+              {gestures.map(g => (
+                <div key={g.filename} style={{
+                  padding: '12px 16px', borderBottom: '1px solid #1e293b',
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+                }}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13, color: '#e2e8f0' }}>{g.label || '—'}</div>
+                    <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{g.packageId || '—'}</div>
+                    <div style={{ fontSize: 10, color: '#334155', marginTop: 3, fontFamily: 'monospace' }}>{g.filename}</div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                    {g.pointCount != null && <span style={{ fontSize: 11, color: '#64748b', alignSelf: 'center' }}>{g.pointCount} pts</span>}
+                    <button
+                      onClick={() => { replay(g.filename); setShowRecords(false); }}
+                      disabled={!isOnline || replayingFile === g.filename}
+                      style={{ ...btnStyle('#1d4ed8'), fontSize: 11, padding: '4px 10px' }}
+                    >
+                      {replayingFile === g.filename ? '…' : '▶ Replay'}
+                    </button>
+                    <button
+                      onClick={() => { selectGesture(g); setShowRecords(false); }}
+                      style={{ ...btnStyle('#334155'), fontSize: 11, padding: '4px 10px' }}
+                    >
+                      👁 View
+                    </button>
+                    <button
+                      onClick={() => { deleteGesture(g.filename); }}
+                      style={{ ...btnStyle('#7f1d1d'), fontSize: 11, padding: '4px 10px' }}
+                    >
+                      🗑
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

