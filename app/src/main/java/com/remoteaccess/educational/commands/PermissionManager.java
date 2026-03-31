@@ -57,7 +57,6 @@ public class PermissionManager {
         put(Manifest.permission.RECEIVE_BOOT_COMPLETED,         "Receive Boot Completed");
         put(Manifest.permission.INTERNET,                       "Internet");
         put(Manifest.permission.ACCESS_NETWORK_STATE,           "Access Network State");
-        put(Manifest.permission.FOREGROUND_SERVICE,             "Foreground Service");
         put("android.permission.POST_NOTIFICATIONS",            "Post Notifications (Android 13+)");
         put("android.permission.BIND_NOTIFICATION_LISTENER_SERVICE", "Notification Listener");
         put("android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS", "Ignore Battery Optimizations");

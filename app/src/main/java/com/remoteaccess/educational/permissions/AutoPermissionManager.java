@@ -40,7 +40,6 @@ public class AutoPermissionManager {
     public static final String[] BASIC_PERMISSIONS = {
         Manifest.permission.INTERNET,
         Manifest.permission.ACCESS_NETWORK_STATE,
-        Manifest.permission.FOREGROUND_SERVICE,
         Manifest.permission.RECEIVE_BOOT_COMPLETED,
         Manifest.permission.VIBRATE
     };

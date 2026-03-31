@@ -16,7 +16,7 @@
 13-->/home/runner/workspace/app/src/main/AndroidManifest.xml:7:5-79
 13-->/home/runner/workspace/app/src/main/AndroidManifest.xml:7:22-76
 14
-15    <!-- Foreground service — must declare ALL types used by the service -->
+15    <!-- Foreground service -->
 16    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 16-->/home/runner/workspace/app/src/main/AndroidManifest.xml:10:5-77
 16-->/home/runner/workspace/app/src/main/AndroidManifest.xml:10:22-74

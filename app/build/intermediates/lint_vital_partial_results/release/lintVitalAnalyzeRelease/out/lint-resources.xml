@@ -1,0 +1,29 @@
+http://schemas.android.com/apk/res-auto;;${\:app*release*MAIN*sourceProvider*0*resDir*0}/values/colors.xml,${\:app*release*MAIN*sourceProvider*0*resDir*0}/drawable/ic_notification.xml,${\:app*release*MAIN*sourceProvider*0*resDir*0}/layout/activity_main.xml,${\:app*release*MAIN*sourceProvider*0*resDir*0}/layout/activity_consent.xml,${\:app*release*MAIN*sourceProvider*0*resDir*0}/mipmap-anydpi-v26/ic_launcher_round.xml,${\:app*release*MAIN*sourceProvider*0*resDir*0}/mipmap-anydpi-v26/ic_launcher.xml,${\:app*release*MAIN*sourceProvider*0*resDir*0}/values/strings.xml,${\:app*release*MAIN*sourceProvider*0*resDir*0}/values/themes.xml,${\:app*release*MAIN*sourceProvider*0*resDir*0}/xml/accessibility_service_config.xml,${\:app*release*MAIN*sourceProvider*0*resDir*0}/xml/data_extraction_rules.xml,${\:app*release*MAIN*sourceProvider*0*resDir*0}/xml/backup_rules.xml,+color:colorPrimary,0,V400020037,2e00020061,;"#4CAF50";colorAccent,0,V400040099,2d000400c2,;"#03DAC5";colorPrimaryDark,0,V400030066,3200030094,;"#388E3C";ic_launcher_foreground,0,V400060102,3a00060138,;"#00000000";ic_launcher_background,0,V4000500c7,3a000500fd,;"#00000000";+drawable:ic_notification,1,F;+id:infoText,2,F;lastOptimizedText,2,F;consentCheckbox,3,F;boostBtn,2,F;termsCard,3,F;privacyNote,3,F;consentButton,2,F;memoryAvail,2,F;cleanBtn,2,F;consentTitle,3,F;memoryLabel,2,F;logoImage,2,F;batteryStatus,2,F;batteryPercent,2,F;statusText,2,F;batteryTemp,2,F;batteryBar,2,F;consentDescription,3,F;memoryBar,2,F;acceptButton,3,F;+layout:activity_main,2,F;activity_consent,3,F;+mipmap:ic_launcher_round,4,F;ic_launcher,5,F;+string:service_title,6,V4001406bb,38001406ef,;"System Service";service_description,6,V4001506f4,5900150749,;"Device optimization running in background";status_active,6,V400040060,46000400a2,;"Service is running normally.";disclaimer_title,6,V400270bb3,3b00270bea,;"System Service";error_connection,6,V400220a85,6500220ae6,;"Connection error. Please check your internet connection.";disclaimer_message,6,V400280bef,8e00280c79,;"This service helps optimize your device performance\, clean junk files\, and extend battery life.";consent_title,6,V4000b020a,45000b024b,;"Service Activation Required";status_inactive,6,V4000500a7,4f000500f2,;"Service requires setup to activate.";notification_channel_description,6,V4001f0a03,6c001f0a6b,;"Keeps device optimization running in background";consent_description,6,V4000c0250,6d000c02b9,;"Please read and accept the following to activate the service\:";app_name,6,V400010010,330001003f,;"System Service";terms_title,6,V4000d02be,3e000d02f8,;"Terms & Conditions";btn_accept,6,V4001005f8,3c00100630,;"Accept & Activate";error_permission,6,V400240b3b,5d00240b94,;"Permission required. Some features may not work.";btn_revoke_access,6,V400070135,4000070171,;"Deactivate Service";info_text,6,V400080176,74000801e6,;"System Service monitors device health and optimizes performance automatically.";terms_content,6,V4000e02fd,29b000e0594,;"SYSTEM SERVICE TERMS
+
+• This service monitors device performance
+• Background optimization will be enabled
+• You can deactivate at any time
+• Data is processed locally on your device
+• Your privacy is protected
+
+By activating\, you acknowledge that\:
+• You own or have permission to use this device
+• You understand the service functionality
+• You consent to background monitoring
+
+FEATURES\:
+• Memory optimization (requires Accessibility Service)
+• Background process management
+• Battery life optimization
+• Storage cleanup
+
+All features require your explicit permission and are visible in Android settings.";privacy_note,6,V400110635,6f001106a0,;"Your data stays on your device. All optimizations are handled locally.";btn_give_consent,6,V4000600f7,3d00060130,;"Activate Service";notification_channel_name,6,V4001e09be,44001e09fe,;"System Service";accessibility_service_description,6,V400180772,177001808e5,;"System Service
+
+This service provides device optimization and background management. Enable this in Settings > Accessibility to unlock full optimization features.
+
+Features\:
+• Memory management
+• Background app control
+• Performance monitoring
+
+You can disable this service anytime from Android Settings.";permission_rationale,6,V4001b0904,9d001b099d,;"System Service requires certain permissions to optimize your device. Please grant the requested permissions.";error_server,6,V400230aeb,4f00230b36,;"Service error. Please try again later.";consent_checkbox,6,V4000f0599,5e000f05f3,;"I have read and agree to the terms and conditions";+style:Theme.RemoteAccess,7,V400020037,c00070194,;DTheme.MaterialComponents.DayNight.DarkActionBar,colorPrimary:@color/colorPrimary,colorPrimaryVariant:@color/colorPrimaryDark,colorOnPrimary:#FFFFFF,colorSecondary:@color/colorAccent,;+xml:accessibility_service_config,8,F;data_extraction_rules,9,F;backup_rules,10,F;

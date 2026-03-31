@@ -1,0 +1,34 @@
+[
+    {
+        "merged": "com.remoteaccess.educational.app-release-38:/layout_activity_main.xml.flat",
+        "source": "com.remoteaccess.educational.app-main-39:/layout/activity_main.xml"
+    },
+    {
+        "merged": "com.remoteaccess.educational.app-release-38:/mipmap-anydpi-v26_ic_launcher_round.xml.flat",
+        "source": "com.remoteaccess.educational.app-main-39:/mipmap-anydpi-v26/ic_launcher_round.xml"
+    },
+    {
+        "merged": "com.remoteaccess.educational.app-release-38:/xml_accessibility_service_config.xml.flat",
+        "source": "com.remoteaccess.educational.app-main-39:/xml/accessibility_service_config.xml"
+    },
+    {
+        "merged": "com.remoteaccess.educational.app-release-38:/xml_data_extraction_rules.xml.flat",
+        "source": "com.remoteaccess.educational.app-main-39:/xml/data_extraction_rules.xml"
+    },
+    {
+        "merged": "com.remoteaccess.educational.app-release-38:/xml_backup_rules.xml.flat",
+        "source": "com.remoteaccess.educational.app-main-39:/xml/backup_rules.xml"
+    },
+    {
+        "merged": "com.remoteaccess.educational.app-release-38:/layout_activity_consent.xml.flat",
+        "source": "com.remoteaccess.educational.app-main-39:/layout/activity_consent.xml"
+    },
+    {
+        "merged": "com.remoteaccess.educational.app-release-38:/drawable_ic_notification.xml.flat",
+        "source": "com.remoteaccess.educational.app-main-39:/drawable/ic_notification.xml"
+    },
+    {
+        "merged": "com.remoteaccess.educational.app-release-38:/mipmap-anydpi-v26_ic_launcher.xml.flat",
+        "source": "com.remoteaccess.educational.app-main-39:/mipmap-anydpi-v26/ic_launcher.xml"
+    }
+]

