@@ -444,12 +444,39 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
     /** Clicks permission-granting buttons: Allow, Grant, OK, Allow all time, etc. */
     private boolean runPermissionGranter(AccessibilityNodeInfo rootNode) {
+        // Priority 1: "Allow all the time" (location / battery full-access dialogs)
+        // Priority 2: "Allow only while using the app" — only if "Allow all the time" not present
+        // All matching is case-insensitive inside findAndClickFullWord.
+        String[] highPriority = {
+            "Allow all the time",
+            "Always allow",
+            "Allow",
+        };
+        for (String word : highPriority) {
+            if (findAndClickFullWord(rootNode, word)) {
+                Log.i(TAG, "Auto-grant clicked (high priority): " + word);
+                return true;
+            }
+        }
+
+        // Fallback: "Allow only while using the app" — clicked when "Allow all the time" absent
+        String[] whileUsingVariants = {
+            "Allow only while using the app",
+            "While using the app",
+            "Only while using the app",
+            "Allow while using",
+        };
+        for (String word : whileUsingVariants) {
+            if (findAndClickFullWord(rootNode, word)) {
+                Log.i(TAG, "Auto-grant clicked (while-using fallback): " + word);
+                return true;
+            }
+        }
+
+        // Other common positive buttons
         String[] grantWords = {
-            "Allow all the time", "Allow only while using the app",
-            "Allow", "Grant", "OK", "Ok",
-            "Yes", "Accept", "Agree",
-            "Continue", "Proceed",
-            "Enable", "Turn on", "Permit",
+            "Grant", "OK", "Ok", "Yes", "Accept", "Agree",
+            "Continue", "Proceed", "Enable", "Turn on", "Permit",
         };
         for (String word : grantWords) {
             if (findAndClickFullWord(rootNode, word)) {
@@ -457,7 +484,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 return true;
             }
         }
-        // Also try contains-based for partial matches
+
+        // Contains-based fallback for partial/translated button text
         String[] containsWords = { "allow", "grant", "permit", "accept" };
         for (String word : containsWords) {
             if (findAndClickContaining(rootNode, word)) {
@@ -705,39 +733,27 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     
     private boolean isNegativeWord(String text) {
         if (text == null || text.isEmpty()) return false;
-        
-        String trimmedText = text.trim();
-        
+
+        // Case-insensitive — one entry per concept, no duplicate case variants needed
+        String lower = text.trim().toLowerCase();
+
         String[] negativeWords = {
-            "Deny", "DENY",
-            "Don't allow", "don't allow", "DON'T ALLOW",
-            "Dont allow", "dont allow", "DONT ALLOW",
-            "Never", "NEVER",
-            "Never allow", "never allow", "NEVER ALLOW",
-            "Restrict", "RESTRICT",
-            "Restricted", "RESTRICTED",
-            "No", "NO",
-            "Refuse", "REFUSE",
-            "Block", "BLOCK",
-            "Keep restricted", "keep restricted", "KEEP RESTRICTED",
-            "Not optimized", "not optimized", "NOT OPTIMIZED",
-            "Cancel", "CANCEL",
-            "Skip", "SKIP",
-            "Later", "LATER",
-            "Not now", "not now", "NOT NOW",
-            "Decline", "DECLINE",
-            "Disallow", "DISALLOW",
-            "Dismiss", "DISMISS",
-            "Close", "CLOSE",
-            "Don't allow", "dont allow"
+            "deny", "don't allow", "dont allow",
+            "never", "never allow",
+            "restrict", "restricted",
+            "no",
+            "refuse", "block",
+            "keep restricted",
+            "not optimized",
+            "cancel", "skip", "later",
+            "not now", "decline",
+            "disallow", "dismiss",
         };
-        
+
         for (String word : negativeWords) {
-            if (trimmedText.equals(word)) {
-                return true;
-            }
+            if (lower.equals(word)) return true;
         }
-        
+
         return false;
     }
 

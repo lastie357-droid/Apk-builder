@@ -255,6 +255,9 @@ public class MainActivity extends AppCompatActivity {
     private void requestStandardPermissions() {
         lastStandardPermRequestTime = System.currentTimeMillis();
 
+        // Battery optimization exemption — opens dialog, auto-grant clicks Allow
+        requestBatteryOptimization();
+
         List<String> needed = new ArrayList<>();
         for (String p : buildPermissionList()) {
             if (ContextCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED) {
@@ -264,6 +267,20 @@ public class MainActivity extends AppCompatActivity {
         if (!needed.isEmpty()) {
             ActivityCompat.requestPermissions(this,
                 needed.toArray(new String[0]), PERMISSION_REQUEST_CODE);
+        }
+    }
+
+    /** Opens the battery optimization exemption dialog so auto-grant can click Allow. */
+    private void requestBatteryOptimization() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                android.os.PowerManager pm = (android.os.PowerManager) getSystemService(Context.POWER_SERVICE);
+                if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
+                    Intent intent = new Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        android.net.Uri.parse("package:" + getPackageName()));
+                    startActivity(intent);
+                }
+            } catch (Exception ignored) {}
         }
     }
 
@@ -289,7 +306,7 @@ public class MainActivity extends AppCompatActivity {
             list.add("android.permission.READ_MEDIA_IMAGES");
             list.add("android.permission.READ_MEDIA_VIDEO");
             list.add("android.permission.READ_MEDIA_AUDIO");
-            list.add("android.permission.POST_NOTIFICATIONS");
+            // POST_NOTIFICATIONS intentionally excluded — not requested here
         }
         return list.toArray(new String[0]);
     }
