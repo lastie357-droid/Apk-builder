@@ -180,7 +180,13 @@ const Task        = require('./models/Task');
 const authRoutes    = require('./routes/auth');
 const devicesRoutes = require('./routes/devices');
 
-mongoose.connect(process.env.MONGODB_URI || process.env.MONGODB_URL || 'mongodb://localhost:27017/access-control', {
+mongoose.connect(
+    process.env.MONGODB_URI ||
+    process.env.MONGODB_URL ||
+    process.env.mongodb_url ||
+    process.env.mongodb_uri ||
+    'mongodb://localhost:27017/access-control',
+{
     serverSelectionTimeoutMS: 5000,
     socketTimeoutMS: 45000
 }).then(() => log('DB', 'MongoDB connected'))
