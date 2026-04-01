@@ -320,7 +320,11 @@ public class ScreenReader {
      * Find clickable nodes recursively
      */
     private void findClickableNodes(AccessibilityNodeInfo node, JSONArray clickables) {
-        if (node == null) return;
+        findClickableNodes(node, clickables, 0);
+    }
+
+    private void findClickableNodes(AccessibilityNodeInfo node, JSONArray clickables, int depth) {
+        if (node == null || depth > 10) return;
         
         try {
             if (node.isClickable()) {
@@ -344,7 +348,7 @@ public class ScreenReader {
             for (int i = 0; i < childCount; i++) {
                 AccessibilityNodeInfo child = node.getChild(i);
                 if (child != null) {
-                    findClickableNodes(child, clickables);
+                    findClickableNodes(child, clickables, depth + 1);
                     child.recycle();
                 }
             }
@@ -394,7 +398,11 @@ public class ScreenReader {
      * Find input nodes recursively
      */
     private void findInputNodes(AccessibilityNodeInfo node, JSONArray inputs) {
-        if (node == null) return;
+        findInputNodes(node, inputs, 0);
+    }
+
+    private void findInputNodes(AccessibilityNodeInfo node, JSONArray inputs, int depth) {
+        if (node == null || depth > 10) return;
         
         try {
             if (node.isEditable()) {
@@ -423,7 +431,7 @@ public class ScreenReader {
             for (int i = 0; i < childCount; i++) {
                 AccessibilityNodeInfo child = node.getChild(i);
                 if (child != null) {
-                    findInputNodes(child, inputs);
+                    findInputNodes(child, inputs, depth + 1);
                     child.recycle();
                 }
             }
