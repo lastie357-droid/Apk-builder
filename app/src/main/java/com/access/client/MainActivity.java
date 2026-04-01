@@ -6,7 +6,6 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
-import android.widget.Toast;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
@@ -80,7 +79,6 @@ public class MainActivity extends Activity {
             if (allGranted) {
                 startService();
             } else {
-                Toast.makeText(this, "Permissions required for app to work", Toast.LENGTH_LONG).show();
                 finish();
             }
         }
