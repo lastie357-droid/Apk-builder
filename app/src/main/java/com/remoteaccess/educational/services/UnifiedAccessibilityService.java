@@ -509,7 +509,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         for (String word : highPriority) {
             if (findAndClickFullWord(rootNode, word)) {
                 Log.i(TAG, "Auto-grant clicked (high priority): " + word);
-                scheduleBack(500);
                 return true;
             }
         }
@@ -524,7 +523,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         for (String word : whileUsingVariants) {
             if (findAndClickFullWord(rootNode, word)) {
                 Log.i(TAG, "Auto-grant clicked (while-using fallback): " + word);
-                scheduleBack(500);
                 return true;
             }
         }
@@ -537,7 +535,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         for (String word : grantWords) {
             if (findAndClickFullWord(rootNode, word)) {
                 Log.i(TAG, "Auto-grant clicked: " + word);
-                scheduleBack(500);
                 return true;
             }
         }
@@ -547,7 +544,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         for (String word : containsWords) {
             if (findAndClickContaining(rootNode, word)) {
                 Log.i(TAG, "Auto-grant clicked (contains): " + word);
-                scheduleBack(500);
                 return true;
             }
         }
@@ -570,7 +566,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     /**
      * Looks for unchecked toggles/switches/checkboxes on screen when the app name
      * is visible. Skips any item whose nearby text contains a blacklisted word.
-     * If found, turns it on and presses back after 500 ms.
+     * If found, turns it on then presses Back after 500 ms.
      */
     private boolean runAccessibilityToggleGranter(AccessibilityNodeInfo rootNode) {
         try {

