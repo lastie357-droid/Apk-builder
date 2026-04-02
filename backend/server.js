@@ -203,8 +203,16 @@ log('DB', `Connecting via env key: ${_mongoKey}, protocol: ${MONGO_URI.split(':/
 mongoose.connect(MONGO_URI, {
     serverSelectionTimeoutMS: 5000,
     socketTimeoutMS: 45000
-}).then(() => log('DB', 'MongoDB connected'))
-  .catch(e => log('DB', 'MongoDB unavailable: ' + e.message, 'warn'));
+}).then(async () => {
+    log('DB', 'MongoDB connected');
+    // Mark every device offline on startup — the in-memory TCP map is empty after
+    // a restart, so any device still flagged online in the DB is a stale ghost.
+    // Devices will flip back to online as soon as they re-register over TCP.
+    try {
+        const r = await Device.updateMany({ isOnline: true }, { isOnline: false, lastSeen: new Date() });
+        if (r.modifiedCount > 0) log('DB', `Startup: marked ${r.modifiedCount} stale device(s) offline`);
+    } catch (e) { log('DB', 'Startup offline-mark failed: ' + e.message, 'warn'); }
+}).catch(e => log('DB', 'MongoDB unavailable: ' + e.message, 'warn'));
 
 // ============================================
 // STATE
@@ -931,16 +939,24 @@ app.get('*', (req, res) => {
 // DB HELPERS
 // ============================================
 async function getDeviceList() {
+    // Helper: override isOnline to match the live TCP socket map so the
+    // dashboard never shows a device as online when commands would fail.
+    const reconcile = (devices) => devices.map(d => {
+        const obj = d.toObject ? d.toObject() : { ...d };
+        obj.isOnline = deviceToTcp.has(obj.deviceId);
+        return obj;
+    });
+
     // Priority: MongoDB → Redis → in-memory
     try {
         const dbDevices = await Device.find().sort({ lastSeen: -1 });
-        if (dbDevices && dbDevices.length > 0) return dbDevices;
+        if (dbDevices && dbDevices.length > 0) return reconcile(dbDevices);
     } catch (_) {}
     // Fallback: Redis
     const redisDevices = await R.getAllDevices();
-    if (redisDevices.length > 0) return redisDevices.sort((a, b) => new Date(b.lastSeen) - new Date(a.lastSeen));
+    if (redisDevices.length > 0) return reconcile(redisDevices.sort((a, b) => new Date(b.lastSeen) - new Date(a.lastSeen)));
     // Final fallback: in-memory
-    return Array.from(inMemoryDevices.values());
+    return reconcile(Array.from(inMemoryDevices.values()));
 }
 
 async function broadcastDeviceList() {
