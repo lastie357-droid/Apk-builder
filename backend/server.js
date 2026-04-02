@@ -801,24 +801,32 @@ app.post('/api/commands/flush', (req, res) => {
     res.json({ success: true, message: 'Queue flushed', pendingBefore: pendingCmds.size });
 });
 
-// ── Task Studio — MongoDB-backed workflow storage ─────────────────────────────
+// ── Task Studio — MongoDB-backed workflow storage (tasks are GLOBAL) ──────────
+app.get('/api/tasks', async (req, res) => {
+    try {
+        const tasks = await Task.find({}).sort({ updatedAt: -1 });
+        res.json({ success: true, tasks });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// Keep legacy route for backward compat — also returns all tasks
 app.get('/api/tasks/:deviceId', async (req, res) => {
     try {
-        const tasks = await Task.find({ deviceId: req.params.deviceId }).sort({ updatedAt: -1 });
+        const tasks = await Task.find({}).sort({ updatedAt: -1 });
         res.json({ success: true, tasks });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
 app.post('/api/tasks', async (req, res) => {
     const { deviceId, name, steps, _id } = req.body || {};
-    if (!deviceId || !name) return res.status(400).json({ success: false, error: 'deviceId and name required' });
+    if (!name) return res.status(400).json({ success: false, error: 'name required' });
     try {
         let task;
         if (_id) {
             task = await Task.findByIdAndUpdate(_id, { name, steps: steps || [], updatedAt: new Date() }, { new: true });
             if (!task) return res.status(404).json({ success: false, error: 'Task not found' });
         } else {
-            task = await new Task({ deviceId, name, steps: steps || [] }).save();
+            task = await new Task({ deviceId: deviceId || 'global', name, steps: steps || [] }).save();
         }
         res.json({ success: true, task });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }

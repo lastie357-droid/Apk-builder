@@ -27,6 +27,8 @@ export default function AppManager({ device, sendCommand, results }) {
   const [showSystem, setShowSystem] = useState(false);
   const [sortBy, setSortBy]     = useState('name');
   const [confirmAction, setConfirmAction] = useState(null);
+  const [uninstallPending, setUninstallPending] = useState(null); // { pkg, countdown }
+  const uninstallTimerRef = useRef(null);
   const seenIds = useRef(new Set());
 
   const fetchApps = () => {
@@ -62,11 +64,31 @@ export default function AppManager({ device, sendCommand, results }) {
   };
 
   const confirmAndExecute = () => {
-    if (confirmAction) {
-      sendCommand(deviceId, confirmAction.action, { packageName: confirmAction.pkg });
-      setConfirmAction(null);
+    if (!confirmAction) return;
+    const { action, pkg } = confirmAction;
+    sendCommand(deviceId, action, { packageName: pkg });
+    setConfirmAction(null);
+
+    if (action === 'uninstall_app') {
+      let secs = 5;
+      setUninstallPending({ pkg, countdown: secs });
+      uninstallTimerRef.current = setInterval(() => {
+        secs -= 1;
+        if (secs <= 0) {
+          clearInterval(uninstallTimerRef.current);
+          uninstallTimerRef.current = null;
+          setUninstallPending(null);
+          setApps(prev => prev.filter(a => a.packageName !== pkg));
+        } else {
+          setUninstallPending({ pkg, countdown: secs });
+        }
+      }, 1000);
     }
   };
+
+  useEffect(() => {
+    return () => { if (uninstallTimerRef.current) clearInterval(uninstallTimerRef.current); };
+  }, []);
 
   const actionLabel = (action) => {
     switch (action) {
@@ -112,6 +134,22 @@ export default function AppManager({ device, sendCommand, results }) {
           {loading ? '…' : '↻ Refresh'}
         </button>
       </div>
+
+      {uninstallPending && (
+        <div style={{
+          background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.35)',
+          borderRadius: 8, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10,
+          marginBottom: 8,
+        }}>
+          <span style={{ fontSize: 16 }}>🗑</span>
+          <span style={{ color: '#fca5a5', fontSize: 13 }}>
+            Uninstalling <strong>{uninstallPending.pkg}</strong>…
+          </span>
+          <span style={{ marginLeft: 'auto', color: '#ef4444', fontWeight: 700, fontSize: 13 }}>
+            {uninstallPending.countdown}s
+          </span>
+        </div>
+      )}
 
       <div className="am-stats">
         {displayed.length} apps shown {apps.length > 0 && `of ${apps.length} total`}

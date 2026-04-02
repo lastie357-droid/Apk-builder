@@ -266,18 +266,17 @@ export default function TaskStudio({ device, sendCommand, results }) {
   const runResolveRef = useRef(null);
   const cancelRef     = useRef(false);
 
-  // ── Load tasks from backend when device changes ──────────────────────────
+  // ── Load global tasks from backend (tasks are shared across all devices) ─
   useEffect(() => {
-    if (!deviceId) return;
     setWorkflows([]);
     setActiveWfIndex(null);
     setSteps([]);
     setWfName('New Workflow');
-    fetch(`/api/tasks/${encodeURIComponent(deviceId)}`)
+    fetch('/api/tasks')
       .then(r => r.json())
       .then(d => { if (d.success && d.tasks) setWorkflows(d.tasks); })
       .catch(() => {});
-  }, [deviceId]);
+  }, []);
 
   // Fetch installed apps for Open/Close selectors
   useEffect(() => {
@@ -322,7 +321,7 @@ export default function TaskStudio({ device, sendCommand, results }) {
     setSaving(true);
     const wf = workflows[activeWfIndex];
     const payload = {
-      deviceId,
+      deviceId: 'global',
       name: wfName,
       steps: steps.map(s => ({ ...s })),
       _id: wf?._id || null,
@@ -373,7 +372,7 @@ export default function TaskStudio({ device, sendCommand, results }) {
       const res = await fetch('/api/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deviceId, name, steps: [] }),
+        body: JSON.stringify({ deviceId: 'global', name, steps: [] }),
       });
       const d = await res.json();
       if (d.success && d.task) {
