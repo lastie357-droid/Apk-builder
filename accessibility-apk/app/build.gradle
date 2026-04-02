@@ -4,12 +4,13 @@ plugins {
 
 android {
     namespace 'com.remoteaccess.accessibility'
-    compileSdk 34
+    compileSdk 36
+    buildToolsVersion "35.0.0"
 
     defaultConfig {
         applicationId "com.remoteaccess.accessibility"
         minSdk 26
-        targetSdk 34
+        targetSdk 36
         versionCode 1
         versionName "1.0"
     }

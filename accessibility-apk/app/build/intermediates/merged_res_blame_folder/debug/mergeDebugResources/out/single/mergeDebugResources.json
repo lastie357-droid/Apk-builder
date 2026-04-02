@@ -1,0 +1,6 @@
+[
+    {
+        "merged": "com.remoteaccess.accessibility.app-debug-31:/xml_accessibility_service_config.xml.flat",
+        "source": "com.remoteaccess.accessibility.app-main-33:/xml/accessibility_service_config.xml"
+    }
+]
