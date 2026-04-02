@@ -1031,31 +1031,6 @@ server.on('error', (err) => {
     }
 });
 
-// ── FRP tunnel — expose TCP port 6000 through sjc1.clusters.zeabur.com:21400 ──
-(function startFrp() {
-    const { spawn } = require('child_process');
-    const path  = require('path');
-    const frpBin  = path.join(__dirname, '..', 'frp', 'frpc');
-    const frpConf = path.join(__dirname, '..', 'frp', 'frpc.toml');
-    const fs = require('fs');
-    if (!fs.existsSync(frpBin)) { log('FRP', 'frpc binary not found — tunnel disabled', 'warn'); return; }
-
-    function launch() {
-        const env = { ...process.env };   // includes FRP_TOKEN for template expansion
-        const proc = spawn(frpBin, ['-c', frpConf], { env, stdio: ['ignore', 'pipe', 'pipe'] });
-        proc.stdout.on('data', d => d.toString().split('\n').filter(Boolean)
-            .forEach(line => log('FRP', line.trim())));
-        proc.stderr.on('data', d => d.toString().split('\n').filter(Boolean)
-            .forEach(line => log('FRP', line.trim(), 'warn')));
-        proc.on('exit', (code) => {
-            log('FRP', `frpc exited (code ${code}) — restarting in 5s…`, 'warn');
-            setTimeout(launch, 5000);
-        });
-        log('FRP', `Tunnel started → sjc1.clusters.zeabur.com:21400 → localhost:6000`);
-    }
-    launch();
-})();
-
 // Initialize Redis first, then start HTTP server
 R.init().then(() => {
     server.listen(HTTP_PORT, () => {

@@ -11,8 +11,8 @@ transport.heartbeatInterval = 30
 transport.tls.enable = true
 
 [[proxies]]
-name = "remoteaccess-tcp"
+name = "test"
 type = "tcp"
 localIP = "127.0.0.1"
 localPort = 6000
-remotePort = 21400
+remotePort = 6000
