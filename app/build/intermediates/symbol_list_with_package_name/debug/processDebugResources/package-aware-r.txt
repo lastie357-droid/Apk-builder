@@ -3963,7 +3963,6 @@ string service_description
 string service_title
 string side_sheet_accessibility_pane_title
 string side_sheet_behavior
-string standalone_accessibility_service_description
 string status_active
 string status_bar_notification_info_overflow
 string status_inactive
@@ -5241,6 +5240,5 @@ styleable ViewStubCompat android_id android_layout android_inflatedId
 styleable ViewTransition android_id SharedValue SharedValueId clearsTag duration ifTagNotSet ifTagSet motionInterpolator motionTarget onStateTransition pathMotionArc setsTag transitionDisable upDuration viewTransitionMode
 styleable include constraintSet
 xml accessibility_service_config
-xml accessibility_service_config_standalone
 xml backup_rules
 xml data_extraction_rules

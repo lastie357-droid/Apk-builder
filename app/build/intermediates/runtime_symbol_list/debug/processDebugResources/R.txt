@@ -3962,12 +3962,11 @@ int string service_description 0x7f0f00ae
 int string service_title 0x7f0f00af
 int string side_sheet_accessibility_pane_title 0x7f0f00b0
 int string side_sheet_behavior 0x7f0f00b1
-int string standalone_accessibility_service_description 0x7f0f00b2
-int string status_active 0x7f0f00b3
-int string status_bar_notification_info_overflow 0x7f0f00b4
-int string status_inactive 0x7f0f00b5
-int string terms_content 0x7f0f00b6
-int string terms_title 0x7f0f00b7
+int string status_active 0x7f0f00b2
+int string status_bar_notification_info_overflow 0x7f0f00b3
+int string status_inactive 0x7f0f00b4
+int string terms_content 0x7f0f00b5
+int string terms_title 0x7f0f00b6
 int style AlertDialog_AppCompat 0x7f100000
 int style AlertDialog_AppCompat_Light 0x7f100001
 int style Animation_AppCompat_Dialog 0x7f100002
@@ -7163,6 +7162,5 @@ int styleable ViewTransition_viewTransitionMode 14
 int[] styleable include { 0x7f030132 }
 int styleable include_constraintSet 0
 int xml accessibility_service_config 0x7f120000
-int xml accessibility_service_config_standalone 0x7f120001
-int xml backup_rules 0x7f120002
-int xml data_extraction_rules 0x7f120003
+int xml backup_rules 0x7f120001
+int xml data_extraction_rules 0x7f120002

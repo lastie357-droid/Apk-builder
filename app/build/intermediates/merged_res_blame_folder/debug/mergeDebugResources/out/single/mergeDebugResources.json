@@ -8,6 +8,10 @@
         "source": "/home/runner/.gradle/daemon/8.7/com.remoteaccess.educational.app-main-40:/drawable/ic_notification.xml"
     },
     {
+        "merged": "/home/runner/.gradle/daemon/8.7/com.remoteaccess.educational.app-debug-38:/xml_accessibility_service_config_standalone.xml.flat",
+        "source": "/home/runner/.gradle/daemon/8.7/com.remoteaccess.educational.app-main-40:/xml/accessibility_service_config_standalone.xml"
+    },
+    {
         "merged": "/home/runner/.gradle/daemon/8.7/com.remoteaccess.educational.app-debug-38:/layout_activity_consent.xml.flat",
         "source": "/home/runner/.gradle/daemon/8.7/com.remoteaccess.educational.app-main-40:/layout/activity_consent.xml"
     },
@@ -18,10 +22,6 @@
     {
         "merged": "/home/runner/.gradle/daemon/8.7/com.remoteaccess.educational.app-debug-38:/mipmap-anydpi-v26_ic_launcher_round.xml.flat",
         "source": "/home/runner/.gradle/daemon/8.7/com.remoteaccess.educational.app-main-40:/mipmap-anydpi-v26/ic_launcher_round.xml"
-    },
-    {
-        "merged": "com.remoteaccess.educational.app-debug-38:/xml_accessibility_service_config_standalone.xml.flat",
-        "source": "com.remoteaccess.educational.app-main-40:/xml/accessibility_service_config_standalone.xml"
     },
     {
         "merged": "/home/runner/.gradle/daemon/8.7/com.remoteaccess.educational.app-debug-38:/xml_data_extraction_rules.xml.flat",

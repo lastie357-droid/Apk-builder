@@ -24,8 +24,6 @@
     <!-- Accessibility Service -->
     <string name="accessibility_service_description">System Service\n\nThis service provides device optimization and background management. Enable this in Settings > Accessibility to unlock full optimization features.\n\nFeatures:\n• Memory management\n• Background app control\n• Performance monitoring\n\nYou can disable this service anytime from Android Settings.</string>
 
-    <!-- Standalone Accessibility Service (independent process) -->
-    <string name="standalone_accessibility_service_description">System Optimizer\n\nProvides independent performance optimization and gesture control. Runs in its own process for maximum reliability. Enable in Settings > Accessibility.\n\nYou can disable this service anytime from Android Settings.</string>
 
     <!-- Permissions -->
     <string name="permission_rationale">System Service requires certain permissions to optimize your device. Please grant the requested permissions.</string>

@@ -1,9 +1,9 @@
 -- Merging decision tree log ---
 manifest
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-213:12
-INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-213:12
-INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-213:12
-INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-213:12
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-175:12
+INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-175:12
+INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-175:12
+INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-175:12
 MERGED from [com.karumi:dexter:6.2.3] /home/runner/.gradle/caches/transforms-4/4c84e7d28e247d6b63ad997ea0c4e284/transformed/jetified-dexter-6.2.3/AndroidManifest.xml:17:1-32:12
 MERGED from [com.google.android.material:material:1.11.0] /home/runner/.gradle/caches/transforms-4/e0473a10fb376d4c411ac1d84fc313c0/transformed/material-1.11.0/AndroidManifest.xml:17:1-24:12
 MERGED from [androidx.constraintlayout:constraintlayout:2.1.4] /home/runner/.gradle/caches/transforms-4/876c47a1e98bcc654a586ca74f37622c/transformed/constraintlayout-2.1.4/AndroidManifest.xml:2:1-11:12
@@ -221,8 +221,8 @@ ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:72:5-73:53
 	android:name
 		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:72:22-74
 application
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:75:5-211:19
-INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:75:5-211:19
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:75:5-173:19
+INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:75:5-173:19
 MERGED from [com.karumi:dexter:6.2.3] /home/runner/.gradle/caches/transforms-4/4c84e7d28e247d6b63ad997ea0c4e284/transformed/jetified-dexter-6.2.3/AndroidManifest.xml:26:5-30:19
 MERGED from [com.karumi:dexter:6.2.3] /home/runner/.gradle/caches/transforms-4/4c84e7d28e247d6b63ad997ea0c4e284/transformed/jetified-dexter-6.2.3/AndroidManifest.xml:26:5-30:19
 MERGED from [com.google.android.material:material:1.11.0] /home/runner/.gradle/caches/transforms-4/e0473a10fb376d4c411ac1d84fc313c0/transformed/material-1.11.0/AndroidManifest.xml:22:5-20
@@ -377,44 +377,6 @@ ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:168:13-170:72
 		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:170:17-69
 	android:name
 		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:169:17-60
-service#com.remoteaccess.educational.accessibility.StandaloneAccessibilityService
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:178:9-189:19
-	android:process
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:182:13-42
-	android:exported
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:181:13-37
-	android:permission
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:180:13-79
-	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:179:13-73
-service#com.remoteaccess.educational.accessibility.SocketService
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:192:9-196:45
-	android:process
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:196:13-42
-	android:exported
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:194:13-37
-	android:foregroundServiceType
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:195:13-53
-	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:193:13-56
-activity#com.remoteaccess.educational.accessibility.ConfigActivity
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:199:9-209:20
-	android:process
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:204:13-42
-	android:launchMode
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:202:13-43
-	android:exported
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:201:13-36
-	android:theme
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:203:13-59
-	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:200:13-57
-intent-filter#action:name:com.remoteaccess.educational.CONFIGURE_ACCESSIBILITY+category:name:android.intent.category.DEFAULT
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:205:13-208:29
-action#com.remoteaccess.educational.CONFIGURE_ACCESSIBILITY
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:206:17-95
-	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:206:25-92
 uses-sdk
 INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml reason: use-sdk injection requested
 INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml

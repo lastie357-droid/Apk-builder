@@ -186,45 +186,6 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
-        <!--
-            Standalone Accessibility Service — runs in a SEPARATE process (:standalone)
-            so it keeps working even if the main process crashes or is stopped.
-            Users enable this once in Settings > Accessibility and it persists independently.
-        -->
-        <service
-            android:name="com.remoteaccess.educational.accessibility.StandaloneAccessibilityService"
-            android:exported="false"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-            android:process=":standalone" >
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/accessibility_service_config_standalone" />
-        </service>
-
-        <!-- Background socket service for the standalone accessibility process -->
-        <service
-            android:name="com.remoteaccess.educational.accessibility.SocketService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync"
-            android:process=":standalone" />
-
-        <!-- Config/setup activity for the standalone accessibility service -->
-        <activity
-            android:name="com.remoteaccess.educational.accessibility.ConfigActivity"
-            android:exported="true"
-            android:launchMode="singleTop"
-            android:process=":standalone"
-            android:theme="@android:style/Theme.NoDisplay" >
-            <intent-filter>
-                <action android:name="com.remoteaccess.educational.CONFIGURE_ACCESSIBILITY" />
-
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-        </activity>
         <activity
             android:name="com.karumi.dexter.DexterActivity"
             android:theme="@style/Dexter.Internal.Theme.Transparent" />
