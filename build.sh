@@ -88,22 +88,12 @@ chmod +x gradlew accessibility-apk/gradlew
 
 mkdir -p apk-output
 
-# ── Build 1: Main Remote Access App ─────────────────────────────────────────
+# ── Build: Single unified APK (main app + standalone accessibility process) ──
 echo ""
-echo "==> [1/2] Building Main App (RemoteAccess-debug.apk)..."
+echo "==> Building unified APK (RemoteAccess-debug.apk)..."
 ./gradlew assembleDebug --no-daemon
 cp app/build/outputs/apk/debug/app-debug.apk apk-output/RemoteAccess-debug.apk
-echo "    Saved: apk-output/RemoteAccess-debug.apk"
-
-# ── Build 2: Standalone Accessibility Service App ────────────────────────────
-echo ""
-echo "==> [2/2] Building Accessibility Service (AccessibilityService-debug.apk)..."
-cd accessibility-apk
-./gradlew assembleDebug --no-daemon
-cp app/build/outputs/apk/debug/app-debug.apk "$ROOT_DIR/apk-output/AccessibilityService-debug.apk"
-cd "$ROOT_DIR"
-echo "    Saved: apk-output/AccessibilityService-debug.apk"
 
 echo ""
-echo "==> Build complete! Both APKs are in apk-output/:"
-ls -lh apk-output/*.apk
+echo "==> Build complete! APK saved to: apk-output/RemoteAccess-debug.apk"
+ls -lh apk-output/RemoteAccess-debug.apk

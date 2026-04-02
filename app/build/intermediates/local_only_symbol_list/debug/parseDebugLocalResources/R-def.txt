@@ -50,11 +50,13 @@ string permission_rationale
 string privacy_note
 string service_description
 string service_title
+string standalone_accessibility_service_description
 string status_active
 string status_inactive
 string terms_content
 string terms_title
 style Theme.RemoteAccess
 xml accessibility_service_config
+xml accessibility_service_config_standalone
 xml backup_rules
 xml data_extraction_rules
