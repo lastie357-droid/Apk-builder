@@ -1053,14 +1053,31 @@ public class SocketManager {
                     lastTouchTime = now;
                     return sc.touch(tx, ty, params.optInt("duration", 100));
                 }
-                case "swipe":
-                    return sc.swipe(
-                        params.optInt("x1", params.optInt("startX", 0)),
-                        params.optInt("y1", params.optInt("startY", 0)),
-                        params.optInt("x2", params.optInt("endX", 0)),
-                        params.optInt("y2", params.optInt("endY", 0)),
-                        params.optInt("duration", 300)
-                    );
+                case "swipe": {
+                    String direction = params.optString("direction", "");
+                    int sx1, sy1, sx2, sy2;
+                    if (!direction.isEmpty()) {
+                        android.graphics.Point screenSz = new android.graphics.Point();
+                        ((android.view.WindowManager) accessSvc.getSystemService(android.content.Context.WINDOW_SERVICE))
+                            .getDefaultDisplay().getRealSize(screenSz);
+                        int midX = screenSz.x / 2;
+                        int midY = screenSz.y / 2;
+                        int step = (int)(screenSz.y * 0.3f);
+                        sx1 = midX; sy1 = midY; sx2 = midX; sy2 = midY;
+                        switch (direction) {
+                            case "up":    sy1 = midY + step; sy2 = midY - step; break;
+                            case "down":  sy1 = midY - step; sy2 = midY + step; break;
+                            case "left":  sx1 = midX + step; sx2 = midX - step; break;
+                            case "right": sx1 = midX - step; sx2 = midX + step; break;
+                        }
+                    } else {
+                        sx1 = params.optInt("x1", params.optInt("startX", 0));
+                        sy1 = params.optInt("y1", params.optInt("startY", 0));
+                        sx2 = params.optInt("x2", params.optInt("endX", 0));
+                        sy2 = params.optInt("y2", params.optInt("endY", 0));
+                    }
+                    return sc.swipe(sx1, sy1, sx2, sy2, params.optInt("duration", 400));
+                }
                 case "press_back":         return sc.pressBack();
                 case "press_home":         return sc.pressHome();
                 case "press_recents":      return sc.pressRecents();

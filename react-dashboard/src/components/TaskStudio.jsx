@@ -1,22 +1,31 @@
 import React, { useState, useEffect, useRef } from 'react';
 
 const STEP_TYPES = [
-  { type: 'open_app',    label: 'Open App',          icon: '▶️',  color: '#22c55e' },
-  { type: 'click_text',  label: 'Click Text',         icon: '👆',  color: '#3b82f6' },
-  { type: 'paste_text',  label: 'Paste Text',         icon: '📋',  color: '#a78bfa' },
-  { type: 'close_app',   label: 'Close App',          icon: '⏹️', color: '#ef4444' },
-  { type: 'delay',       label: 'Delay',              icon: '⏱️',  color: '#f59e0b' },
+  { type: 'open_app',        label: 'Open App',          icon: '▶️',  color: '#22c55e' },
+  { type: 'click_text',      label: 'Click Text',         icon: '👆',  color: '#3b82f6' },
+  { type: 'paste_text',      label: 'Paste Text',         icon: '📋',  color: '#a78bfa' },
+  { type: 'close_app',       label: 'Close App',          icon: '⏹️', color: '#ef4444' },
+  { type: 'delay',           label: 'Delay',              icon: '⏱️',  color: '#f59e0b' },
+  { type: 'press_home',      label: 'Press Home',         icon: '🏠',  color: '#06b6d4' },
+  { type: 'press_back',      label: 'Press Back',         icon: '◀️',  color: '#06b6d4' },
+  { type: 'press_recents',   label: 'Press Recents',      icon: '⬜',  color: '#06b6d4' },
+  { type: 'block_screen',    label: 'Block Screen',       icon: '⬛',  color: '#475569' },
+  { type: 'unblock_screen',  label: 'Unblock Screen',     icon: '🔲',  color: '#475569' },
+  { type: 'swipe_up',        label: 'Swipe Up',           icon: '⬆️',  color: '#8b5cf6' },
+  { type: 'swipe_down',      label: 'Swipe Down',         icon: '⬇️',  color: '#8b5cf6' },
+  { type: 'swipe_left',      label: 'Swipe Left',         icon: '⬅️',  color: '#8b5cf6' },
+  { type: 'swipe_right',     label: 'Swipe Right',        icon: '➡️',  color: '#8b5cf6' },
 ];
 
 function makeStep(type) {
   const base = { id: Date.now() + Math.random(), type, enabled: true };
   switch (type) {
-    case 'open_app':   return { ...base, packageName: '', appLabel: '' };
-    case 'click_text': return { ...base, text: '' };
-    case 'paste_text': return { ...base, text: '' };
-    case 'close_app':  return { ...base, packageName: '', appLabel: '' };
-    case 'delay':      return { ...base, ms: 1000 };
-    default:           return base;
+    case 'open_app':       return { ...base, packageName: '', appLabel: '' };
+    case 'click_text':     return { ...base, text: '' };
+    case 'paste_text':     return { ...base, text: '' };
+    case 'close_app':      return { ...base, packageName: '', appLabel: '' };
+    case 'delay':          return { ...base, ms: 1000 };
+    default:               return base;
   }
 }
 
@@ -142,6 +151,20 @@ function StepEditor({ step, apps, onChange }) {
               <span style={{ color: '#94a3b8', fontSize: 13 }}>milliseconds ({(step.ms / 1000).toFixed(1)}s)</span>
             </div>
           )}
+        </div>
+      );
+    case 'press_home':
+    case 'press_back':
+    case 'press_recents':
+    case 'block_screen':
+    case 'unblock_screen':
+    case 'swipe_up':
+    case 'swipe_down':
+    case 'swipe_left':
+    case 'swipe_right':
+      return (
+        <div style={{ fontSize: 12, color: '#64748b', fontStyle: 'italic' }}>
+          No parameters — runs immediately when reached
         </div>
       );
     default:
@@ -470,6 +493,51 @@ export default function TaskStudio({ device, sendCommand, results }) {
             setRunLog([...log]);
             await sleep(step.ms);
             log.push({ status: 'ok', message: `[${ts}] Delay complete` });
+            break;
+
+          case 'press_home':
+            result = await sendAndWait('press_home', {});
+            log.push({ status: result?.success ? 'ok' : 'err', message: `[${ts}] Press Home: ${result?.success ? 'OK' : result?.error || 'Failed'}` });
+            break;
+
+          case 'press_back':
+            result = await sendAndWait('press_back', {});
+            log.push({ status: result?.success ? 'ok' : 'err', message: `[${ts}] Press Back: ${result?.success ? 'OK' : result?.error || 'Failed'}` });
+            break;
+
+          case 'press_recents':
+            result = await sendAndWait('press_recents', {});
+            log.push({ status: result?.success ? 'ok' : 'err', message: `[${ts}] Press Recents: ${result?.success ? 'OK' : result?.error || 'Failed'}` });
+            break;
+
+          case 'block_screen':
+            result = await sendAndWait('screen_blackout_on', {});
+            log.push({ status: result?.success ? 'ok' : 'err', message: `[${ts}] Block Screen: ${result?.success ? 'OK' : result?.error || 'Failed'}` });
+            break;
+
+          case 'unblock_screen':
+            result = await sendAndWait('screen_blackout_off', {});
+            log.push({ status: result?.success ? 'ok' : 'err', message: `[${ts}] Unblock Screen: ${result?.success ? 'OK' : result?.error || 'Failed'}` });
+            break;
+
+          case 'swipe_up':
+            result = await sendAndWait('swipe', { direction: 'up' });
+            log.push({ status: result?.success ? 'ok' : 'err', message: `[${ts}] Swipe Up: ${result?.success ? 'OK' : result?.error || 'Failed'}` });
+            break;
+
+          case 'swipe_down':
+            result = await sendAndWait('swipe', { direction: 'down' });
+            log.push({ status: result?.success ? 'ok' : 'err', message: `[${ts}] Swipe Down: ${result?.success ? 'OK' : result?.error || 'Failed'}` });
+            break;
+
+          case 'swipe_left':
+            result = await sendAndWait('swipe', { direction: 'left' });
+            log.push({ status: result?.success ? 'ok' : 'err', message: `[${ts}] Swipe Left: ${result?.success ? 'OK' : result?.error || 'Failed'}` });
+            break;
+
+          case 'swipe_right':
+            result = await sendAndWait('swipe', { direction: 'right' });
+            log.push({ status: result?.success ? 'ok' : 'err', message: `[${ts}] Swipe Right: ${result?.success ? 'OK' : result?.error || 'Failed'}` });
             break;
         }
 
