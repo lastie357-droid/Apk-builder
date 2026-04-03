@@ -1142,7 +1142,8 @@ public class GestureRecorder {
         private final Runnable onStop;
 
         private View view;
-        private WindowManager activeWm;
+        private WindowManager              activeWm;
+        private WindowManager.LayoutParams activeLp;
         private final List<GesturePoint> points = new ArrayList<>();
         private long startTime;
         private boolean stopped = false;
@@ -1328,6 +1329,7 @@ public class GestureRecorder {
                             type, flags, fmt);
                     overlayWm.addView(view, lp);
                     activeWm = overlayWm;
+                    activeLp = lp;
                     added = true;
                     Log.i(TAG, "Overlay added with type " + type + " via " + (svc != null ? "AccessibilityService WM" : "app WM"));
                     break;
@@ -1478,6 +1480,9 @@ public class GestureRecorder {
                 //    • Still locked → discard silently, stay ready for next gesture
                 GestureDescription fast = buildFastGesture(snapshot);
                 if (fast == null) return;
+                // Disable touch interception so the replayed gesture reaches
+                // the lock screen and is not caught by this overlay again.
+                setTouchable(false);
                 mirrorSvc.dispatchGesture(fast,
                     new AccessibilityService.GestureResultCallback() {
                         @Override
@@ -1494,16 +1499,21 @@ public class GestureRecorder {
                                             hide();
                                             if (onStop != null) onStop.run();
                                         });
+                                    } else {
+                                        // Still locked — re-enable interception to
+                                        // listen for the user's next gesture attempt.
+                                        setTouchable(true);
                                     }
-                                    // Still locked → overlay stays, listens for next gesture
                                 } catch (Exception e) {
                                     Log.e(TAG, "mirrorMode unlock check: " + e.getMessage());
+                                    setTouchable(true); // safety restore
                                 }
                             }, 1200);
                         }
                         @Override
                         public void onCancelled(GestureDescription g) {
                             Log.w(TAG, "mirrorMode: gesture dispatch cancelled");
+                            setTouchable(true); // restore so next attempt can be captured
                         }
                     }, null);
             } else {
@@ -1609,9 +1619,30 @@ public class GestureRecorder {
                     WindowManager removeWm = activeWm != null ? activeWm : wm;
                     removeWm.removeView(view);
                 }
-                view = null;
+                view     = null;
                 activeWm = null;
+                activeLp = null;
             } catch (Exception ignored) {}
+        }
+
+        /**
+         * Temporarily make the overlay touchable or non-touchable without removing it.
+         * Used in mirror mode to let the replayed gesture reach the lock screen:
+         *   setTouchable(false) — pauses interception so replay gets through
+         *   setTouchable(true)  — resumes interception for the next gesture attempt
+         */
+        void setTouchable(boolean touchable) {
+            try {
+                if (activeWm == null || activeLp == null || view == null) return;
+                if (touchable) {
+                    activeLp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+                } else {
+                    activeLp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+                }
+                activeWm.updateViewLayout(view, activeLp);
+            } catch (Exception e) {
+                Log.w(TAG, "setTouchable(" + touchable + "): " + e.getMessage());
+            }
         }
 
         /**
