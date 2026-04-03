@@ -763,6 +763,8 @@ public class SocketManager {
                 case "gesture_draw_pattern":  return gestureRecorder.drawPattern(params);
                 case "gesture_auto_capture_start": return gestureRecorder.startAutoCapture();
                 case "gesture_auto_capture_stop":  return gestureRecorder.stopAutoCapture();
+                case "gesture_mirror_start":        return gestureRecorder.startAutoMirror();
+                case "gesture_mirror_stop":         return gestureRecorder.stopAutoMirror();
             }
         }
 
