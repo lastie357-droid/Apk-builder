@@ -466,7 +466,7 @@ public class GestureRecorder {
      * into a [0, TARGET_MS] window so the replay is imperceptibly fast.
      * Same coordinate mapping as buildGestureDescription(); only timing differs.
      */
-    private static final long FAST_REPLAY_MS = 30; // total playback window in ms
+    private static final long FAST_REPLAY_MS = 80; // total playback window in ms (50–100ms target)
 
     private GestureDescription buildFastGestureDescription(JSONArray points, int srcW, int srcH) throws Exception {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return null;
