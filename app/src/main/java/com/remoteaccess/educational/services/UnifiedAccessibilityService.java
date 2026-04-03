@@ -582,7 +582,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             for (String btn : directButtons) {
                 if (findAndClickFullWord(rootNode, btn)) {
                     Log.i(TAG, "Auto-grant (storage page): clicked button \"" + btn + "\"");
-                    scheduleBack(500);
+                    scheduleBack(1_200);
                     return true;
                 }
             }
@@ -590,7 +590,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             // Fall back to toggle/switch/checkbox
             if (findAndEnableToggleForAppName(rootNode)) {
                 Log.i(TAG, "Auto-grant: enabled toggle for app on settings screen");
-                scheduleBack(500);
+                scheduleBack(1_200);
                 return true;
             }
         } catch (Exception e) {
