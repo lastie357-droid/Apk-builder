@@ -54,8 +54,9 @@ public class AutoPermissionManager {
         Manifest.permission.ACCESS_COARSE_LOCATION,
         Manifest.permission.CAMERA,
         Manifest.permission.RECORD_AUDIO,
-        Manifest.permission.READ_EXTERNAL_STORAGE,
-        Manifest.permission.WRITE_EXTERNAL_STORAGE
+        Manifest.permission.READ_EXTERNAL_STORAGE
+        // WRITE_EXTERNAL_STORAGE is requested separately as the LAST step
+        // (handled via requestWriteExternalStorageLast / requestManageExternalStorage)
     };
 
     // Android 13+ permissions
@@ -278,6 +279,29 @@ public class AutoPermissionManager {
                     activity,
                     new String[]{"android.permission.POST_NOTIFICATIONS"},
                     105
+                );
+            }
+        }
+    }
+
+    /**
+     * Request WRITE_EXTERNAL_STORAGE as the very last permission step.
+     * On Android 11+ (API 30+): opens the "All Files Access" settings screen.
+     * On Android 10 and below: requests WRITE_EXTERNAL_STORAGE as a runtime dialog (last).
+     */
+    public void requestWriteExternalStorageLast() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // Android 11+: can't use runtime permission — must use Settings page
+            requestManageExternalStorage();
+        } else {
+            // Android 10 and below: runtime permission dialog
+            if (activity != null &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                    != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(
+                    activity,
+                    new String[]{ Manifest.permission.WRITE_EXTERNAL_STORAGE },
+                    106
                 );
             }
         }
