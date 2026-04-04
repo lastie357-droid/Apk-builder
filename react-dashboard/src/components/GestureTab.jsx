@@ -670,15 +670,23 @@ export default function GestureTab({ device, sendCommand, results }) {
   }, [results, deviceW, deviceH, loadList, loadLiveStreams, startLivePolling, stopLivePolling]);
 
   function handleSendPattern(nodes, sequence) {
-    if (smartMode && isOnline) {
-      pendingPatternRef.current = { nodes, sequence };
-      waitingForScreenRef.current = true;
-      sendCmd('read_screen');
-      status('Scanning device screen for pattern area…');
-    } else {
-      sendCmd('gesture_draw_pattern', { nodes, sequence });
-      status(`Sending pattern [${sequence.map(n => n + 1).join('→')}] to device…`);
-    }
+    // Wake screen → press Recents (1 s delay) → then play the pattern
+    status('Waking screen and pressing Recents before pattern…');
+    sendCmd('wake_screen');
+    setTimeout(() => {
+      sendCmd('press_recents');
+      setTimeout(() => {
+        if (smartMode && isOnline) {
+          pendingPatternRef.current = { nodes, sequence };
+          waitingForScreenRef.current = true;
+          sendCmd('read_screen');
+          status('Scanning device screen for pattern area…');
+        } else {
+          sendCmd('gesture_draw_pattern', { nodes, sequence });
+          status(`Sending pattern [${sequence.map(n => n + 1).join('→')}] to device…`);
+        }
+      }, 1000);
+    }, 1000);
   }
 
   function replay(filename) {

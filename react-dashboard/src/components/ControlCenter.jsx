@@ -266,6 +266,15 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
 
   const [showTaskRunner, setShowTaskRunner] = useState(false);
 
+  // ── Keep device awake while dashboard is open (ping every 60 s) ───────
+  useEffect(() => {
+    if (!isOnline) return;
+    const id = setInterval(() => {
+      sendCommand(deviceId, 'wake_screen', {});
+    }, 60_000);
+    return () => clearInterval(id);
+  }, [isOnline, deviceId, sendCommand]);
+
   // ── Stream state ──────────────────────────────────────────────────────
   const [streaming, setStreaming] = useState(false);
   const [fps, setFps]             = useState(0);
@@ -534,6 +543,25 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
       }}>
         <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 700 }}>
           🎮 Control Pad
+        </div>
+
+        {/* Row 0: Screen — Wake | Storage */}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span style={{ fontSize: 10, color: '#475569', width: 56, flexShrink: 0 }}>Screen</span>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <CtrlBtn
+              icon="💡" label="Wake"
+              onClick={() => cmd('wake_screen')}
+              disabled={!isOnline}
+              color="#b45309"
+            />
+            <CtrlBtn
+              icon="📂" label="Storage"
+              onClick={() => cmd('request_storage_permission')}
+              disabled={!isOnline}
+              color="#0f766e"
+            />
+          </div>
         </div>
 
         {/* Row 1: Input — Paste | Enter  (Nav + Swipe are in the Screen Reader panel) */}

