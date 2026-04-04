@@ -96,7 +96,8 @@
             android:name=".MainActivity"
             android:enabled="true"
             android:exported="true"
-            android:launchMode="singleTop">
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true">
             <!-- Enables Settings > App Info > Open without showing a launcher icon -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

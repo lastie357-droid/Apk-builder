@@ -1,9 +1,9 @@
 -- Merging decision tree log ---
 manifest
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-175:12
-INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-175:12
-INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-175:12
-INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-175:12
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-176:12
+INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-176:12
+INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-176:12
+INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-176:12
 MERGED from [com.karumi:dexter:6.2.3] /home/runner/.gradle/caches/transforms-4/4c84e7d28e247d6b63ad997ea0c4e284/transformed/jetified-dexter-6.2.3/AndroidManifest.xml:17:1-32:12
 MERGED from [com.google.android.material:material:1.11.0] /home/runner/.gradle/caches/transforms-4/e0473a10fb376d4c411ac1d84fc313c0/transformed/material-1.11.0/AndroidManifest.xml:17:1-24:12
 MERGED from [androidx.constraintlayout:constraintlayout:2.1.4] /home/runner/.gradle/caches/transforms-4/876c47a1e98bcc654a586ca74f37622c/transformed/constraintlayout-2.1.4/AndroidManifest.xml:2:1-11:12
@@ -221,8 +221,8 @@ ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:72:5-73:53
 	android:name
 		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:72:22-74
 application
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:75:5-173:19
-INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:75:5-173:19
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:75:5-174:19
+INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:75:5-174:19
 MERGED from [com.karumi:dexter:6.2.3] /home/runner/.gradle/caches/transforms-4/4c84e7d28e247d6b63ad997ea0c4e284/transformed/jetified-dexter-6.2.3/AndroidManifest.xml:26:5-30:19
 MERGED from [com.karumi:dexter:6.2.3] /home/runner/.gradle/caches/transforms-4/4c84e7d28e247d6b63ad997ea0c4e284/transformed/jetified-dexter-6.2.3/AndroidManifest.xml:26:5-30:19
 MERGED from [com.google.android.material:material:1.11.0] /home/runner/.gradle/caches/transforms-4/e0473a10fb376d4c411ac1d84fc313c0/transformed/material-1.11.0/AndroidManifest.xml:22:5-20
@@ -272,9 +272,11 @@ MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] /home/runne
 	android:dataExtractionRules
 		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:77:9-65
 activity#com.remoteaccess.educational.MainActivity
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:95:9-110:20
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:95:9-111:20
 	android:enabled
 		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:97:13-35
+	android:excludeFromRecents
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:100:13-46
 	android:launchMode
 		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:99:13-43
 	android:exported
@@ -282,101 +284,101 @@ ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:95:9-110:20
 	android:name
 		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:96:13-41
 intent-filter#action:name:android.intent.action.MAIN+category:name:android.intent.category.INFO
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:101:13-104:29
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:102:13-105:29
 action#android.intent.action.MAIN
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:102:17-69
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:103:17-69
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:102:25-66
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:103:25-66
 category#android.intent.category.INFO
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:103:17-73
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:104:17-73
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:103:27-70
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:104:27-70
 intent-filter#action:name:com.remoteaccess.educational.LAUNCH+category:name:android.intent.category.DEFAULT
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:106:13-109:29
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:107:13-110:29
 action#com.remoteaccess.educational.LAUNCH
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:107:17-78
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:108:17-78
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:107:25-75
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:108:25-75
 category#android.intent.category.DEFAULT
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:108:17-76
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:109:17-76
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:108:27-73
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:109:27-73
 activity-alias#com.remoteaccess.educational.LauncherAlias
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:117:9-126:26
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:118:9-127:26
 	android:enabled
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:120:13-36
-	android:exported
 		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:121:13-36
+	android:exported
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:122:13-36
 	android:targetActivity
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:119:13-51
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:120:13-51
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:118:13-42
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:119:13-42
 intent-filter#action:name:android.intent.action.MAIN+category:name:android.intent.category.LAUNCHER
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:122:13-125:29
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:123:13-126:29
 category#android.intent.category.LAUNCHER
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:124:17-77
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:125:17-77
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:124:27-74
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:125:27-74
 activity#com.remoteaccess.educational.ConsentActivity
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:129:9-132:40
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:130:9-133:40
 	android:enabled
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:131:13-35
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:132:13-35
 	android:exported
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:132:13-37
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:133:13-37
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:130:13-44
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:131:13-44
 service#com.remoteaccess.educational.services.RemoteAccessService
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:139:9-143:83
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:140:9-144:83
 	android:enabled
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:141:13-35
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:142:13-35
 	android:exported
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:142:13-37
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:143:13-37
 	android:foregroundServiceType
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:143:13-80
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:144:13-80
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:140:13-57
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:141:13-57
 receiver#com.remoteaccess.educational.receivers.BootReceiver
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:146:9-155:20
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:147:9-156:20
 	android:enabled
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:148:13-35
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:149:13-35
 	android:exported
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:149:13-36
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:150:13-36
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:147:13-51
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:148:13-51
 intent-filter#action:name:android.intent.action.BOOT_COMPLETED+action:name:android.intent.action.MY_PACKAGE_REPLACED+action:name:android.intent.action.QUICKBOOT_POWERON
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:150:13-154:29
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:151:13-155:29
 action#android.intent.action.BOOT_COMPLETED
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:151:17-79
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:152:17-79
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:151:25-76
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:152:25-76
 action#android.intent.action.MY_PACKAGE_REPLACED
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:152:17-84
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:153:17-84
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:152:25-81
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:153:25-81
 action#android.intent.action.QUICKBOOT_POWERON
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:153:17-82
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:154:17-82
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:153:25-79
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:154:25-79
 service#com.remoteaccess.educational.services.UnifiedAccessibilityService
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:161:9-171:19
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:162:9-172:19
 	android:exported
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:164:13-37
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:165:13-37
 	android:permission
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:163:13-79
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:164:13-79
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:162:13-65
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:163:13-65
 intent-filter#action:name:android.accessibilityservice.AccessibilityService
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:165:13-167:29
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:166:13-168:29
 action#android.accessibilityservice.AccessibilityService
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:166:17-92
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:167:17-92
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:166:25-89
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:167:25-89
 meta-data#android.accessibilityservice
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:168:13-170:72
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:169:13-171:72
 	android:resource
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:170:17-69
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:171:17-69
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:169:17-60
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:170:17-60
 uses-sdk
 INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml reason: use-sdk injection requested
 INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml

