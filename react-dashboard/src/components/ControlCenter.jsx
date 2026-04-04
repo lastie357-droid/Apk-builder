@@ -266,13 +266,16 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
 
   const [showTaskRunner, setShowTaskRunner] = useState(false);
 
-  // ── Keep device awake while dashboard is open (ping every 60 s) ───────
+  // ── Keep device awake while dashboard is open (ping every 30 s) ───────
+  const [stayAwakeActive, setStayAwakeActive] = useState(false);
   useEffect(() => {
     if (!isOnline) return;
+    setStayAwakeActive(true);
+    sendCommand(deviceId, 'wake_screen', {});
     const id = setInterval(() => {
       sendCommand(deviceId, 'wake_screen', {});
-    }, 60_000);
-    return () => clearInterval(id);
+    }, 30_000);
+    return () => { clearInterval(id); setStayAwakeActive(false); };
   }, [isOnline, deviceId, sendCommand]);
 
   // ── Stream state ──────────────────────────────────────────────────────
@@ -430,6 +433,13 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
         {!isOnline && (
           <span style={{ fontSize: 10, color: '#ef4444', fontStyle: 'italic', marginLeft: 4 }}>device offline</span>
         )}
+        {/* Stay Awake indicator */}
+        {isOnline && stayAwakeActive && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: '#22c55e', background: 'rgba(34,197,94,0.08)', borderRadius: 6, padding: '2px 8px', border: '1px solid rgba(34,197,94,0.2)' }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e', display: 'inline-block', animation: 'pulse 2s infinite' }} />
+            Stay Awake
+          </div>
+        )}
         {/* App Folder button — compact, opens dialog */}
         <button
           onClick={() => { setShowAppDialog(true); if (!apps.length) loadApps(); }}
@@ -545,15 +555,21 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
           🎮 Control Pad
         </div>
 
-        {/* Row 0: Screen — Wake | Storage */}
+        {/* Row 0: Screen — Wake Screen Up | Turn Screen On | Storage */}
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <span style={{ fontSize: 10, color: '#475569', width: 56, flexShrink: 0 }}>Screen</span>
           <div style={{ display: 'flex', gap: 8 }}>
             <CtrlBtn
-              icon="💡" label="Wake"
+              icon="💡" label="Wake Screen Up"
               onClick={() => cmd('wake_screen')}
               disabled={!isOnline}
               color="#b45309"
+            />
+            <CtrlBtn
+              icon="🔆" label="Turn Screen On"
+              onClick={() => cmd('wake_screen')}
+              disabled={!isOnline}
+              color="#92400e"
             />
             <CtrlBtn
               icon="📂" label="Storage"
@@ -713,6 +729,8 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
           onClose={() => setShowTaskRunner(false)}
         />
       )}
+
+      <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }`}</style>
     </div>
   );
 }

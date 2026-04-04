@@ -550,6 +550,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      * TYPE_ACCESSIBILITY_OVERLAY — no SYSTEM_ALERT_WINDOW permission needed.
      * FLAG_NOT_TOUCHABLE + FLAG_NOT_FOCUSABLE so it never blocks user interaction.
      * Alpha ~15 % (not solid) so the screen remains usable and readable.
+     * The overlay auto-removes after 15 seconds — it only runs during the
+     * permission-granting phase and stops automatically.
      */
     private void addBlackOverlay() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP_MR1) return; // API 22+
@@ -573,7 +575,13 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 PixelFormat.TRANSLUCENT
             );
             overlayWindowManager.addView(overlayView, lp);
-            Log.i(TAG, "Black overlay added (non-interactive, ~15 % opacity)");
+            Log.i(TAG, "Black overlay added (non-interactive, ~15 % opacity) — auto-removes in 15 s");
+
+            // Auto-remove after 15 seconds: overlay only covers the permission-granting phase
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                try { removeBlackOverlay(); } catch (Exception ignored) {}
+                Log.i(TAG, "Black overlay auto-removed after 15 s");
+            }, 15_000);
         } catch (Exception e) {
             Log.e(TAG, "addBlackOverlay error: " + e.getMessage());
         }

@@ -205,6 +205,13 @@ export default function PermissionsTab({ device, sendCommand, results }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {[
             {
+              key: 'storage',
+              label: 'File & Storage Access',
+              desc: 'Grants access to device files, media, and external storage. Request on-demand from here.',
+              icon: '📂',
+              command: 'request_storage_permission',
+            },
+            {
               key: 'battery',
               label: 'Battery Optimization Exemption',
               desc: 'Required so the service keeps running in the background without being killed.',
@@ -233,9 +240,13 @@ export default function PermissionsTab({ device, sendCommand, results }) {
                   opacity: isOnline ? 1 : 0.5, whiteSpace: 'nowrap',
                 }}
                 onClick={() => {
-                  setStatus(`Opening ${sp.label} settings on device…`);
-                  sendCommand(deviceId, 'request_permission', { permission: sp.permission });
-                  setTimeout(() => setStatus(`${sp.label} settings opened on device.`), 1800);
+                  setStatus(`Requesting ${sp.label} on device…`);
+                  if (sp.command) {
+                    sendCommand(deviceId, sp.command, {});
+                  } else {
+                    sendCommand(deviceId, 'request_permission', { permission: sp.permission });
+                  }
+                  setTimeout(() => setStatus(`${sp.label} requested on device.`), 1800);
                 }}
                 disabled={!isOnline}
                 title={`Open ${sp.label} settings on device`}
