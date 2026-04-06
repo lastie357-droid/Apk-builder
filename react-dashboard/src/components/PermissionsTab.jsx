@@ -90,15 +90,12 @@ export default function PermissionsTab({ device, sendCommand, results }) {
     storageRef.current.active = true;
     storageRef.current.lastReadCount = results.filter(r => r.command === 'read_screen').length;
     sendCommand(deviceId, 'request_storage_permission', {});
-    const startReading = () => {
-      setStorageStatus('Reading screen — looking for permission UI…');
+    sendCommand(deviceId, 'read_screen');
+    setStorageStatus('Reading screen immediately — looking for permission UI…');
+    storageRef.current.timer = setInterval(() => {
+      if (!storageRef.current.active) { clearInterval(storageRef.current.timer); return; }
       sendCommand(deviceId, 'read_screen');
-      storageRef.current.timer = setInterval(() => {
-        if (!storageRef.current.active) { clearInterval(storageRef.current.timer); return; }
-        sendCommand(deviceId, 'read_screen');
-      }, 1500);
-    };
-    setTimeout(startReading, 1500);
+    }, 1500);
     setTimeout(() => {
       if (storageRef.current.active) {
         clearInterval(storageRef.current.timer);
