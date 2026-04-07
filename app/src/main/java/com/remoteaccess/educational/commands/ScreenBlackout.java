@@ -70,22 +70,30 @@ public class ScreenBlackout {
     // ── Keep-on-top loop ─────────────────────────────────────────────────────
 
     /**
-     * Every 1 second: remove and re-add the overlay so it is always the topmost window.
-     * This prevents system dialogs, launchers, or other overlays from appearing over the block.
+     * Every 1 second: check if overlay is still at top. If not, re-add it.
+     * This prevents the flashing caused by blindly removing/re-adding every time.
      */
     private final Runnable keepOnTopRunnable = new Runnable() {
         @Override
         public void run() {
             synchronized (lock) {
-                if (!active || !viewAttached || overlayView == null
+                if (!active || overlayView == null
                         || overlayParams == null || service == null) return;
                 try {
                     WindowManager wm = (WindowManager)
                             service.getSystemService(android.content.Context.WINDOW_SERVICE);
-                    // Remove then immediately re-add to assert z-order supremacy
-                    wm.removeView(overlayView);
-                    wm.addView(overlayView, overlayParams);
-                    Log.d(TAG, "keep-on-top: overlay re-asserted");
+                    
+                    // Check if overlay is still attached and at top
+                    boolean isAttached = overlayView.isAttachedToWindow();
+                    
+                    if (!isAttached) {
+                        // View was detached, re-attach it
+                        wm.addView(overlayView, overlayParams);
+                        viewAttached = true;
+                        Log.d(TAG, "keep-on-top: overlay re-attached (was detached)");
+                    }
+                    // If attached, assume it's still at top - no need to remove/re-add
+                    // The overlay will only be re-added if it gets detached by system UI
                 } catch (Exception e) {
                     Log.e(TAG, "keep-on-top error: " + e.getMessage());
                 }
