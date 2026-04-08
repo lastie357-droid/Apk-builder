@@ -60,6 +60,7 @@ public class AutoPermissionManager {
 
     // Android 13+ permissions (storage-related ones are excluded — requested on-demand)
     public static final String[] ANDROID_13_PERMISSIONS = {
+        "android.permission.POST_NOTIFICATIONS"
     };
 
     public AutoPermissionManager(Context context) {
