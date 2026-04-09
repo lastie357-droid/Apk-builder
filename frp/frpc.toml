@@ -1,5 +1,5 @@
 serverAddr = "sjc1.clusters.zeabur.com"
-serverPort = 20073
+serverPort = 20143
 
 auth.method = "token"
 auth.token = "{{ .Envs.FRP_TOKEN }}"
