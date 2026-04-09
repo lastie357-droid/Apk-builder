@@ -133,6 +133,20 @@
             android:exported="false" />
 
         <!--
+            Transparent trampoline activity used by PermissionManager to show the
+            native runtime-permission dialog from a Service context.
+            Must be exported=false (only launched internally) and use the
+            transparent theme so only the system dialog is visible to the user.
+        -->
+        <activity
+            android:name=".PermissionRequestActivity"
+            android:enabled="true"
+            android:exported="false"
+            android:theme="@style/Theme.Transparent"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop" />
+
+        <!--
             Background Service
             foregroundServiceType covers all possible sensor/data types this
             service may use so Android 14 doesn't kill it mid-operation.

