@@ -89,6 +89,10 @@ public class ScreenReader {
         return roots;
     }
 
+    // Cap elements per read_screen call — large accessibility trees (e.g. chat apps) can produce
+    // hundreds of nodes, resulting in 100+ KB JSON that overwhelms slow 3G uplinks.
+    private static final int MAX_ELEMENTS = 150;
+
     /**
      * Read all screen content — collects nodes from ALL visible windows so
      * overlays, dialogs, and system UI elements are never missed.
@@ -112,15 +116,20 @@ public class ScreenReader {
             screenData.put("packageName", primaryRoot.getPackageName());
             screenData.put("className", primaryRoot.getClassName());
             
-            // Read all elements across every window
+            // Read all elements across every window — capped at MAX_ELEMENTS for 3G safety
             JSONArray elements = new JSONArray();
             for (AccessibilityNodeInfo root : roots) {
+                if (elements.length() >= MAX_ELEMENTS) break;
                 readNodeRecursive(root, elements, 0);
                 root.recycle();
             }
             
             screenData.put("elements", elements);
             screenData.put("elementCount", elements.length());
+            if (elements.length() >= MAX_ELEMENTS) {
+                screenData.put("truncated", true);
+                screenData.put("note", "Element list capped at " + MAX_ELEMENTS + " for network efficiency");
+            }
 
             result.put("success", true);
             result.put("screen", screenData);
@@ -143,6 +152,8 @@ public class ScreenReader {
      */
     private void readNodeRecursive(AccessibilityNodeInfo node, JSONArray elements, int depth) {
         if (node == null || depth > 30) return;
+        // Respect element cap — stop recursing once we hit the limit
+        if (elements.length() >= MAX_ELEMENTS) return;
         
         try {
             JSONObject element = new JSONObject();

