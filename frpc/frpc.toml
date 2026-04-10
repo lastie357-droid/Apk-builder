@@ -1,6 +1,14 @@
 serverAddr = "127.0.0.1"
 serverPort = 7000
 
+# Disable TCP multiplexing — each device gets its own physical TCP connection
+# to frps, eliminating the application-level framing/buffering that adds latency.
+transport.tcpMux = false
+
+# Faster heartbeats so dead tunnels are detected and rebuilt quickly
+transport.heartbeatInterval = 10
+transport.heartbeatTimeout = 30
+
 [[proxies]]
 name = "my-tunnel"
 type = "tcp"

