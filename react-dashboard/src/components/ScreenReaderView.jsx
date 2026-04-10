@@ -3,7 +3,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 const PHONE_W = 360;
 const PHONE_H = 780;
 
-export default function ScreenReaderView({ device, sendCommand, results }) {
+export default function ScreenReaderView({ device, sendCommand, results, screenPushData }) {
   const deviceId = device.deviceId;
   const isOnline = device.isOnline;
   const info     = device.deviceInfo || {};
@@ -16,8 +16,7 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
   const [touchHint, setTouchHint]           = useState(null);
   const [pasteText, setPasteText]           = useState('');
   const [showPaste, setShowPaste]           = useState(false);
-  const streamTimer  = useRef(null);
-  const screenRef    = useRef(null);
+  const screenRef     = useRef(null);
   const touchStartRef = useRef(null);
 
   const devW   = info.screenWidth  || 1080;
@@ -25,37 +24,46 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
   const scaleX = PHONE_W / devW;
   const scaleY = PHONE_H / devH;
 
-  const latestScreenResult = results
-    .filter(r => r.command === 'read_screen' && r.success && r.response)
-    .slice(0, 1)[0];
-
+  // Prefer push data; fall back to last read_screen result
   let screenData = null;
-  try {
-    const parsed = typeof latestScreenResult?.response === 'string'
-      ? JSON.parse(latestScreenResult.response)
-      : latestScreenResult?.response;
-    screenData = parsed?.screen || null;
-  } catch (_) {}
+  if (screenPushData && screenPushData.success && screenPushData.screen) {
+    screenData = screenPushData.screen;
+  } else {
+    const latestScreenResult = results
+      .filter(r => r.command === 'read_screen' && r.success && r.response)
+      .slice(0, 1)[0];
+    try {
+      const parsed = typeof latestScreenResult?.response === 'string'
+        ? JSON.parse(latestScreenResult.response)
+        : latestScreenResult?.response;
+      screenData = parsed?.screen || null;
+    } catch (_) {}
+  }
 
+  // ── Start: tell device to push autonomously ─────────────────────────
   const startStreaming = useCallback(() => {
-    if (streamTimer.current) clearInterval(streamTimer.current);
-    sendCommand(deviceId, 'read_screen');
-    streamTimer.current = setInterval(() => sendCommand(deviceId, 'read_screen'), streamInterval);
+    sendCommand(deviceId, 'screen_reader_start', { intervalMs: streamInterval });
     setStreaming(true);
   }, [deviceId, sendCommand, streamInterval]);
 
+  // ── Stop: tell device to stop pushing ──────────────────────────────
   const stopStreaming = useCallback(() => {
-    if (streamTimer.current) clearInterval(streamTimer.current);
-    streamTimer.current = null;
+    sendCommand(deviceId, 'screen_reader_stop', {});
     setStreaming(false);
-  }, []);
+  }, [deviceId, sendCommand]);
 
+  // Stop push if we navigate away / unmount
   useEffect(() => {
-    return () => { if (streamTimer.current) clearInterval(streamTimer.current); };
-  }, []);
+    return () => {
+      if (streaming) sendCommand(deviceId, 'screen_reader_stop', {});
+    };
+  }, [streaming, deviceId, sendCommand]);
 
+  // If interval changes while streaming, restart
   useEffect(() => {
-    if (streaming) { stopStreaming(); startStreaming(); }
+    if (streaming) {
+      sendCommand(deviceId, 'screen_reader_start', { intervalMs: streamInterval });
+    }
   }, [streamInterval]);
 
   const captureOnce = () => sendCommand(deviceId, 'read_screen');
@@ -104,18 +112,14 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
       const { x, y } = toDeviceCoords(e.clientX, e.clientY);
       setTouchHint({ x: x * scaleX, y: y * scaleY });
       sendCommand(deviceId, 'touch', { x, y, duration: 100 });
-      setTimeout(() => {
-        setTouchHint(null);
-        if (streaming) sendCommand(deviceId, 'read_screen');
-      }, 600);
+      setTimeout(() => setTouchHint(null), 600);
     } else {
       const from = toDeviceCoords(touchStartRef.current.x, touchStartRef.current.y);
       const to   = toDeviceCoords(e.clientX, e.clientY);
       sendCommand(deviceId, 'swipe', { x1: from.x, y1: from.y, x2: to.x, y2: to.y, duration: Math.max(200, Math.min(duration, 800)) });
-      setTimeout(() => { if (streaming) sendCommand(deviceId, 'read_screen'); }, 600);
     }
     touchStartRef.current = null;
-  }, [isOnline, toDeviceCoords, deviceId, sendCommand, streaming, scaleX, scaleY]);
+  }, [isOnline, toDeviceCoords, deviceId, sendCommand, scaleX, scaleY]);
 
   const handlePointerCancel = useCallback(() => { touchStartRef.current = null; }, []);
 
@@ -125,10 +129,7 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
     const cy = (el.bounds.top  + el.bounds.bottom) / 2;
     setTouchHint({ x: cx * scaleX, y: cy * scaleY });
     sendCommand(deviceId, 'touch', { x: Math.round(cx), y: Math.round(cy), duration: 100 });
-    setTimeout(() => {
-      setTouchHint(null);
-      if (streaming) sendCommand(deviceId, 'read_screen');
-    }, 600);
+    setTimeout(() => setTouchHint(null), 600);
   };
 
   const handlePaste = () => {
@@ -136,7 +137,6 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
     sendCommand(deviceId, 'input_text', { text: pasteText });
     setPasteText('');
     setShowPaste(false);
-    setTimeout(() => { if (streaming) sendCommand(deviceId, 'read_screen'); }, 400);
   };
 
   const sendSwipe = useCallback((direction) => {
@@ -152,11 +152,10 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
       case 'right': x1 = midX - step; x2 = midX + step; break;
     }
     sendCommand(deviceId, 'swipe', { x1, y1, x2, y2, duration: 400 });
-    setTimeout(() => { if (streaming) sendCommand(deviceId, 'read_screen'); }, 600);
-  }, [isOnline, devW, devH, deviceId, sendCommand, streaming]);
+  }, [isOnline, devW, devH, deviceId, sendCommand]);
 
   const navBtn = (label, cmd, icon) => (
-    <button className="sc-nav-btn" onClick={() => { sendCommand(deviceId, cmd); setTimeout(() => { if (streaming) sendCommand(deviceId, 'read_screen'); }, 400); }} disabled={!isOnline}>
+    <button className="sc-nav-btn" onClick={() => sendCommand(deviceId, cmd)} disabled={!isOnline}>
       {icon} {label}
     </button>
   );
@@ -164,51 +163,106 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
   const elements   = screenData?.elements || [];
   const visibleEls = elements.filter(el => el.text || el.contentDescription || el.hintText || el.clickable || el.editable);
 
+  // ── Get element display style based on type ─────────────────────────
+  const getElStyle = (el) => {
+    if (el.editable)  return { border: '1.5px solid #3b82f6', background: 'rgba(59,130,246,0.10)' };
+    if (el.clickable) return { border: '1px solid rgba(34,197,94,0.55)', background: 'rgba(34,197,94,0.07)' };
+    if (el.selected || el.checked) return { border: '1px solid rgba(234,179,8,0.6)', background: 'rgba(234,179,8,0.08)' };
+    if (el.text || el.contentDescription) return { border: '1px solid rgba(148,163,184,0.18)', background: 'transparent' };
+    return { border: '1px dashed rgba(100,116,139,0.15)', background: 'transparent' };
+  };
+
+  // ── Render the visual phone screen ─────────────────────────────────
   const renderVisualView = () => (
     <div
       className="sc-phone-screen-wrap"
       ref={screenRef}
-      style={{ width: PHONE_W, height: PHONE_H, position: 'relative', overflow: 'hidden', background: screenData ? '#000' : '#0f172a', borderRadius: 8, cursor: isOnline ? 'crosshair' : 'default', userSelect: 'none' }}
+      style={{
+        width: PHONE_W, height: PHONE_H, position: 'relative', overflow: 'hidden',
+        background: screenData ? '#101828' : '#0f172a',
+        borderRadius: 8, cursor: isOnline ? 'crosshair' : 'default', userSelect: 'none',
+      }}
       onPointerDown={handlePointerDown}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerCancel}
     >
+      {/* Empty state */}
       {!screenData && (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#94a3b8' }}>
-          <div style={{ fontSize: 36 }}>📺</div>
-          <div style={{ fontSize: 12, marginTop: 8 }}>{streaming ? 'Waiting for screen data…' : 'Press Read or Stream'}</div>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#94a3b8', gap: 8 }}>
+          <div style={{ fontSize: 40 }}>📱</div>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>No Screen Data</div>
+          <div style={{ fontSize: 11, color: '#475569', textAlign: 'center', lineHeight: 1.5 }}>
+            {streaming ? '⏳ Waiting for push…' : 'Press Start to begin live streaming\nor Read Once for a snapshot'}
+          </div>
         </div>
       )}
+
+      {/* Screen elements */}
       {screenData && (
         <>
-          <div className="sr-phone-status-bar">
-            <span>{screenData.packageName?.split('.').pop() || 'App'}</span>
-            <span style={{ marginLeft: 'auto' }}>
+          {/* Status bar */}
+          <div style={{
+            position: 'absolute', top: 0, left: 0, right: 0, height: 22,
+            background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center',
+            padding: '0 10px', zIndex: 50, gap: 4,
+          }}>
+            <span style={{ fontSize: 9, color: '#94a3b8', fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {screenData.packageName?.split('.').pop() || 'App'}
+            </span>
+            <span style={{ fontSize: 9, color: '#94a3b8', fontVariantNumeric: 'tabular-nums' }}>
               {new Date().getHours()}:{String(new Date().getMinutes()).padStart(2, '0')}
             </span>
+            <span style={{ fontSize: 9, color: '#94a3b8' }}>📶 🔋</span>
           </div>
-          {visibleEls.map((el, i) => {
-            if (!el.bounds) return null;
-            const left   = el.bounds.left   * scaleX;
-            const top    = (el.bounds.top   * scaleY) + 20;
-            const width  = (el.bounds.right - el.bounds.left) * scaleX;
-            const height = (el.bounds.bottom - el.bounds.top) * scaleY;
-            if (width < 1 || height < 1) return null;
-            return (
-              <div
-                key={i}
-                className={`sr-el-box ${el.clickable ? 'clickable' : ''} ${el.editable ? 'editable' : ''}`}
-                style={{ position: 'absolute', left, top, width, height, pointerEvents: 'none' }}
-                title={el.text || el.contentDescription}
-              >
-                {height > 12 && (
-                  <span className="sr-el-label" style={{ fontSize: Math.min(height * 0.4, 9) }}>
-                    {(el.text || el.contentDescription || '').slice(0, 20)}
-                  </span>
-                )}
-              </div>
-            );
-          })}
+
+          {/* Render all elements sorted by area (largest/deepest first so small ones show on top) */}
+          {[...visibleEls]
+            .filter(el => el.bounds)
+            .sort((a, b) => {
+              const areaA = (a.bounds.right - a.bounds.left) * (a.bounds.bottom - a.bounds.top);
+              const areaB = (b.bounds.right - b.bounds.left) * (b.bounds.bottom - b.bounds.top);
+              return areaB - areaA;
+            })
+            .map((el, i) => {
+              const left   = el.bounds.left   * scaleX;
+              const top    = (el.bounds.top   * scaleY) + 22;
+              const width  = (el.bounds.right - el.bounds.left) * scaleX;
+              const height = (el.bounds.bottom - el.bounds.top) * scaleY;
+              if (width < 2 || height < 2) return null;
+              const label = (el.text || el.contentDescription || el.hintText || '').slice(0, 30);
+              const elStyle = getElStyle(el);
+              return (
+                <div
+                  key={i}
+                  style={{
+                    position: 'absolute', left, top, width, height,
+                    ...elStyle,
+                    borderRadius: 3,
+                    boxSizing: 'border-box',
+                    overflow: 'hidden',
+                    cursor: el.clickable && isOnline ? 'pointer' : 'inherit',
+                    display: 'flex', alignItems: 'center', justifyContent: 'flex-start',
+                    padding: '1px 2px',
+                  }}
+                  onClick={(e) => { e.stopPropagation(); if (el.clickable) handleElementClick(el); }}
+                  title={`[${(el.className || '').split('.').pop()}] ${label}`}
+                >
+                  {height > 10 && label && (
+                    <span style={{
+                      fontSize: Math.min(Math.max(height * 0.38, 7), 10),
+                      color: el.editable ? '#93c5fd' : el.clickable ? '#86efac' : '#cbd5e1',
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                      lineHeight: 1.2, pointerEvents: 'none',
+                      fontWeight: el.clickable ? 600 : 400,
+                    }}>
+                      {label}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+
+          {/* Touch ripple */}
           {touchHint && (
             <div className="sr-touch-ripple" style={{ left: touchHint.x - 12, top: touchHint.y - 12, pointerEvents: 'none' }} />
           )}
@@ -219,7 +273,7 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
 
   const renderElementsView = () => (
     <div className="sr-elements-panel" style={{ width: PHONE_W, minHeight: PHONE_H }}>
-      {!screenData && <div className="sr-placeholder">No screen data — press Read Screen</div>}
+      {!screenData && <div className="sr-placeholder">No screen data — press Start or Read Once</div>}
       {screenData && (
         <>
           <div className="sr-meta-bar">
@@ -258,22 +312,15 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
 
   return (
     <div className="screen-control">
-
       <div className="sc-layout">
         <div className="sc-viewer-col">
 
           {/* View Tabs */}
           <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
-            <button
-              className={`sr-vtab ${activeView === 'visual' ? 'active' : ''}`}
-              onClick={() => setActiveView('visual')}
-            >
+            <button className={`sr-vtab ${activeView === 'visual' ? 'active' : ''}`} onClick={() => setActiveView('visual')}>
               📱 Visual
             </button>
-            <button
-              className={`sr-vtab ${activeView === 'elements' ? 'active' : ''}`}
-              onClick={() => setActiveView('elements')}
-            >
+            <button className={`sr-vtab ${activeView === 'elements' ? 'active' : ''}`} onClick={() => setActiveView('elements')}>
               🌳 Elements
             </button>
             {screenData && (
@@ -294,9 +341,9 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
               </div>
               {/* Swipe direction buttons */}
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, marginTop: 10 }}>
-                <button className="sc-swipe-btn" onClick={() => sendSwipe('up')} disabled={!isOnline} title="Swipe Up">▲</button>
+                <button className="sc-swipe-btn" onClick={() => sendSwipe('up')}    disabled={!isOnline} title="Swipe Up">▲</button>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="sc-swipe-btn" onClick={() => sendSwipe('left')} disabled={!isOnline} title="Swipe Left">◀</button>
+                  <button className="sc-swipe-btn" onClick={() => sendSwipe('left')}  disabled={!isOnline} title="Swipe Left">◀</button>
                   <button className="sc-swipe-btn sc-swipe-down" onClick={() => sendSwipe('down')} disabled={!isOnline} title="Swipe Down">▼</button>
                   <button className="sc-swipe-btn" onClick={() => sendSwipe('right')} disabled={!isOnline} title="Swipe Right">▶</button>
                 </div>
@@ -310,7 +357,7 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
             <div className="sr-info-bar" style={{ marginTop: 4 }}>
               <span style={{ color: '#7c3aed' }}>{screenData.packageName}</span>
               <span style={{ color: '#94a3b8' }}>{elements.length} nodes · {visibleEls.length} visible</span>
-              {latestScreenResult?.time && <span style={{ color: '#64748b' }}>{latestScreenResult.time.toLocaleTimeString?.()}</span>}
+              {screenData.truncated && <span style={{ color: '#f59e0b', fontSize: 10 }}>⚠ truncated</span>}
             </div>
           )}
 
@@ -318,11 +365,11 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
           <div className="sc-controls" style={{ marginTop: 8 }}>
             {!streaming ? (
               <button className="sc-btn sc-btn-start" onClick={startStreaming} disabled={!isOnline}>
-                📡 Start Stream
+                ▶ Start
               </button>
             ) : (
               <button className="sc-btn sc-btn-stop" onClick={stopStreaming}>
-                ⏹ Stop Stream
+                ⏹ Stop
               </button>
             )}
             <select
@@ -331,13 +378,17 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
               style={{ background: '#1a1a2e', color: '#f0f0ff', border: '1px solid #2d2d4e', borderRadius: 6, padding: '4px 8px', fontSize: 12 }}
               disabled={!isOnline}
             >
-              <option value={500}>0.5s</option>
               <option value={1000}>1s</option>
               <option value={2000}>2s</option>
               <option value={3000}>3s</option>
               <option value={5000}>5s</option>
             </select>
-            <button className="sc-btn" style={{ background: '#1e1b4b', border: '1px solid #4c1d95', color: '#a78bfa' }} onClick={captureOnce} disabled={!isOnline}>
+            <button
+              className="sc-btn"
+              style={{ background: '#1e1b4b', border: '1px solid #4c1d95', color: '#a78bfa' }}
+              onClick={captureOnce}
+              disabled={!isOnline}
+            >
               📷 Read Once
             </button>
           </div>
@@ -346,10 +397,10 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
           <div className="sc-nav-bar">
             <div className="sc-nav-label">Navigation</div>
             <div className="sc-nav-buttons">
-              {navBtn('Back',    'press_back',           '◀')}
-              {navBtn('Home',    'press_home',           '🏠')}
-              {navBtn('Recents', 'press_recents',        '⬜')}
-              {navBtn('Notifs',  'open_notifications',   '🔔')}
+              {navBtn('Back',    'press_back',         '◀')}
+              {navBtn('Home',    'press_home',         '🏠')}
+              {navBtn('Recents', 'press_recents',      '⬜')}
+              {navBtn('Notifs',  'open_notifications', '🔔')}
             </div>
           </div>
 
@@ -365,7 +416,7 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
               </button>
               <button
                 style={{ background: '#1e1b4b', border: '1px solid #4c1d95', color: '#a78bfa', borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
-                onClick={() => { sendCommand(deviceId, 'press_enter'); setTimeout(() => { if (streaming) sendCommand(deviceId, 'read_screen'); }, 400); }}
+                onClick={() => sendCommand(deviceId, 'press_enter')}
                 disabled={!isOnline}
                 title="Press Enter / IME action key on device"
               >
@@ -430,7 +481,7 @@ export default function ScreenReaderView({ device, sendCommand, results }) {
                   </div>
                   <div className="sc-rec-actions">
                     <button className="sc-action-btn sc-view" onClick={() => setViewCapture(cap)} title="View">👁</button>
-                    <button className="sc-action-btn sc-dl"  onClick={() => downloadCapture(cap)} title="Download">⬇</button>
+                    <button className="sc-action-btn sc-dl"   onClick={() => downloadCapture(cap)} title="Download">⬇</button>
                     <button className="sc-action-btn sc-del" onClick={() => setSavedCaptures(p => p.filter(c => c.id !== cap.id))} title="Delete">🗑</button>
                   </div>
                 </div>

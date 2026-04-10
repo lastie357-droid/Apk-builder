@@ -257,7 +257,7 @@ function LatencyBadge({ label, ms }) {
   );
 }
 
-export default function ControlCenter({ device, sendCommand, results, streamFrame, send, serverLatency, deviceLatency, onTabChange }) {
+export default function ControlCenter({ device, sendCommand, results, streamFrame, send, serverLatency, deviceLatency, onTabChange, screenReaderPushData }) {
   const deviceId = device.deviceId;
   const isOnline = device.isOnline;
   const devInfo  = device.deviceInfo || {};
@@ -541,7 +541,7 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
           <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 700, textAlign: 'center' }}>
             📺 Screen Reader
           </div>
-          <ScreenReaderView device={device} sendCommand={sendCommand} results={results} />
+          <ScreenReaderView device={device} sendCommand={sendCommand} results={results} screenPushData={screenReaderPushData} />
         </div>
 
       </div>

