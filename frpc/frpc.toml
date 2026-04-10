@@ -1,0 +1,9 @@
+serverAddr = "127.0.0.1"
+serverPort = 7000
+
+[[proxies]]
+name = "my-tunnel"
+type = "tcp"
+localIP = "0.0.0.0"
+localPort = 8080
+remotePort = 8080

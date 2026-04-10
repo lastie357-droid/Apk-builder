@@ -1,0 +1,7 @@
+bindAddr = "0.0.0.0"
+bindPort = 7000
+
+webServer.addr = "0.0.0.0"
+webServer.port = 5000
+webServer.user = "admin"
+webServer.password = "admin"
