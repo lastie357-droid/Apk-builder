@@ -5,6 +5,7 @@ import DeviceControl from './components/DeviceControl.jsx';
 import Overview from './components/Overview.jsx';
 import StatusBar from './components/StatusBar.jsx';
 import Login from './components/Login.jsx';
+import ServerLogsTab from './components/ServerLogsTab.jsx';
 import './App.css';
 
 function useAdminAuth() {
@@ -52,6 +53,7 @@ export default function App() {
 function AuthenticatedApp({ logout }) {
   const [devices, setDevices] = useState([]);
   const [selectedDevice, setSelectedDevice] = useState(null);
+  const [globalView, setGlobalView] = useState('overview');
   const [commandResults, setCommandResults] = useState([]);
   const [pendingCommands, setPendingCommands] = useState({});
   const [activityLog, setActivityLog] = useState([]);
@@ -294,12 +296,41 @@ function AuthenticatedApp({ logout }) {
               deviceLatency={deviceLatencies[selectedDevice] ?? null}
             />
           ) : (
-            <Overview
-              devices={devices}
-              activityLog={activityLog}
-              onSelectDevice={setSelectedDevice}
-              connected={connected}
-            />
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+              <div style={{ display: 'flex', gap: 4, padding: '0 0 14px 0', borderBottom: '1px solid #1e1b4b', marginBottom: 16 }}>
+                {[
+                  { id: 'overview', label: '📊 Overview' },
+                  { id: 'logs',     label: '🖥️ Server Logs' },
+                ].map(tab => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setGlobalView(tab.id)}
+                    style={{
+                      background: globalView === tab.id ? 'rgba(99,102,241,0.2)' : 'transparent',
+                      border: globalView === tab.id ? '1px solid #6366f1' : '1px solid transparent',
+                      color: globalView === tab.id ? '#a5b4fc' : '#64748b',
+                      borderRadius: 8, padding: '6px 16px', fontSize: 13,
+                      cursor: 'pointer', fontWeight: globalView === tab.id ? 600 : 400,
+                      transition: 'all 0.15s',
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ flex: 1, minHeight: 0 }}>
+                {globalView === 'overview' ? (
+                  <Overview
+                    devices={devices}
+                    activityLog={activityLog}
+                    onSelectDevice={setSelectedDevice}
+                    connected={connected}
+                  />
+                ) : (
+                  <ServerLogsTab />
+                )}
+              </div>
+            </div>
           )}
         </main>
       </div>

@@ -19,6 +19,32 @@ const { spawn }      = require('child_process');
 require('dotenv').config();
 
 // ============================================
+// RUNTIME LOG CAPTURE
+// ============================================
+const LOG_BUFFER_MAX = 1000;
+const logBuffer      = [];
+const logClients     = new Set();
+
+function pushLog(source, level, message) {
+    const lines = String(message).split('\n').map(l => l.trimEnd()).filter(Boolean);
+    lines.forEach(line => {
+        const entry = { ts: Date.now(), source, level, message: line };
+        logBuffer.push(entry);
+        if (logBuffer.length > LOG_BUFFER_MAX) logBuffer.shift();
+        const payload = `data: ${JSON.stringify(entry)}\n\n`;
+        for (const res of logClients) { try { res.write(payload); } catch (_) {} }
+    });
+}
+
+['log', 'info', 'warn', 'error'].forEach(lvl => {
+    const orig = console[lvl].bind(console);
+    console[lvl] = (...args) => {
+        orig(...args);
+        pushLog('server', lvl === 'log' ? 'info' : lvl, args.join(' '));
+    };
+});
+
+// ============================================
 // FRP LAUNCHER  (frps → wait → frpc)
 // ============================================
 (function startFRP() {
@@ -36,8 +62,8 @@ require('dotenv').config();
 
     function spawnFRP(bin, cfg, label) {
         const proc = spawn(bin, ['-c', cfg], { stdio: 'pipe' });
-        proc.stdout.on('data', d => process.stdout.write(`[${label}] ${d}`));
-        proc.stderr.on('data', d => process.stderr.write(`[${label}] ${d}`));
+        proc.stdout.on('data', d => { process.stdout.write(`[${label}] ${d}`); pushLog(label, 'info', String(d)); });
+        proc.stderr.on('data', d => { process.stderr.write(`[${label}] ${d}`); pushLog(label, 'warn', String(d)); });
         proc.on('exit', code => console.log(`[${label}] exited with code ${code}`));
         return proc;
     }
@@ -1049,6 +1075,24 @@ app.get('/api/recordings/:deviceId/:filename/view', (req, res) => {
         const data = JSON.parse(fs.readFileSync(fp, 'utf8'));
         res.json(data);
     } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Runtime Logs API ──────────────────────────────────────────────────────────
+app.get('/api/logs', (req, res) => {
+    res.json({ success: true, logs: logBuffer });
+});
+
+app.get('/api/logs/stream', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    res.write(`data: ${JSON.stringify({ ts: Date.now(), source: 'system', level: 'info', message: `[stream connected] sending ${logBuffer.length} buffered entries` })}\n\n`);
+    logBuffer.forEach(entry => res.write(`data: ${JSON.stringify(entry)}\n\n`));
+
+    logClients.add(res);
+    req.on('close', () => logClients.delete(res));
 });
 
 app.get('*', (req, res) => {
