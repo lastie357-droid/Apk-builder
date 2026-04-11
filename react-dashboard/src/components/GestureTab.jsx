@@ -496,14 +496,49 @@ function AdvancedPatternPreview({ cells, width = 160, height = 160 }) {
   );
 }
 
-// Animated canvas that draws straight lines between cells one segment at a time
-function AdvancedReplayCanvas({ cells, active, width = 300, height = 240 }) {
+// Animated canvas that draws straight lines between cells one segment at a time.
+// When cellCoords (actual device bounds) are available, maps them to canvas space.
+// Falls back to the normalized 3×3 abstract grid otherwise.
+function AdvancedReplayCanvas({ cells, cellCoords, active, width = 300, height = 240 }) {
   const canvasRef = useRef(null);
   const rafRef    = useRef(null);
-  const pad = 32;
-  const cW  = (width  - pad * 2) / 2;
-  const cH  = (height - pad * 2) / 2;
-  const cp  = n => advCellPos(n, pad, cW, cH);
+
+  // Build canvas-space positions from actual device bounds if available
+  const buildPositions = useCallback(() => {
+    if (cellCoords && cellCoords.length >= 2) {
+      const cxs = cellCoords.map(c => c.cx);
+      const cys = cellCoords.map(c => c.cy);
+      const minX = Math.min(...cxs), maxX = Math.max(...cxs);
+      const minY = Math.min(...cys), maxY = Math.max(...cys);
+      const pad  = 40;
+      const rngX = maxX - minX || 1;
+      const rngY = maxY - minY || 1;
+      return cellCoords.map(c => ({
+        x:    pad + ((c.cx - minX) / rngX) * (width  - pad * 2),
+        y:    pad + ((c.cy - minY) / rngY) * (height - pad * 2),
+        cell: c.cell,
+      }));
+    }
+    // Fall back: normalized 3×3 grid from cell numbers
+    if (!cells || cells.length === 0) return [];
+    const pad = 32;
+    const cW  = (width  - pad * 2) / 2;
+    const cH  = (height - pad * 2) / 2;
+    return cells.map(n => {
+      const idx = n - 1;
+      return { x: pad + (idx % 3) * cW, y: pad + Math.floor(idx / 3) * cH, cell: n };
+    });
+  }, [cells, cellCoords, width, height]);
+
+  // Build all 9-dot grid positions (abstract 3×3) for background dots
+  const gridPositions = useCallback(() => {
+    const pad = 32;
+    const cW  = (width  - pad * 2) / 2;
+    const cH  = (height - pad * 2) / 2;
+    return Array.from({ length: 9 }, (_, i) => ({
+      x: pad + (i % 3) * cW, y: pad + Math.floor(i / 3) * cH, n: i + 1,
+    }));
+  }, [width, height]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -511,99 +546,86 @@ function AdvancedReplayCanvas({ cells, active, width = 300, height = 240 }) {
     const ctx = canvas.getContext('2d');
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
 
-    const drawGrid = () => {
+    const positions = buildPositions();
+    const useActual = cellCoords && cellCoords.length >= 2;
+
+    const drawBackground = () => {
       ctx.clearRect(0, 0, width, height);
       ctx.fillStyle = '#0b1220';
       ctx.fillRect(0, 0, width, height);
-      for (let i = 1; i <= 9; i++) {
-        const { x, y } = cp(i);
-        ctx.beginPath();
-        ctx.arc(x, y, 13, 0, Math.PI * 2);
-        ctx.strokeStyle = '#1e293b';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.arc(x, y, 4, 0, Math.PI * 2);
-        ctx.fillStyle = '#334155';
-        ctx.fill();
-        ctx.fillStyle = '#475569';
-        ctx.font = '10px monospace';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(String(i), x, y);
+      if (!useActual) {
+        // Draw abstract 3×3 numbered dots when no real coords available
+        gridPositions().forEach(({ x, y, n }) => {
+          ctx.beginPath(); ctx.arc(x, y, 13, 0, Math.PI * 2);
+          ctx.strokeStyle = '#1e293b'; ctx.lineWidth = 2; ctx.stroke();
+          ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2);
+          ctx.fillStyle = '#334155'; ctx.fill();
+          ctx.fillStyle = '#475569'; ctx.font = '10px monospace';
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillText(String(n), x, y);
+        });
+      } else {
+        // Draw small dot markers at actual cell positions
+        positions.forEach(({ x, y, cell }) => {
+          ctx.beginPath(); ctx.arc(x, y, 11, 0, Math.PI * 2);
+          ctx.strokeStyle = '#2d1b4e'; ctx.lineWidth = 1.5; ctx.stroke();
+          ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2);
+          ctx.fillStyle = '#4c1d95'; ctx.fill();
+          ctx.fillStyle = '#7e22ce'; ctx.font = '9px monospace';
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillText(String(cell), x, y);
+        });
       }
     };
 
-    if (!active || !cells || cells.length < 2) {
-      drawGrid();
+    if (!active || positions.length < 2) {
+      drawBackground();
       return;
     }
 
     const MS_PER_SEG = 320;
-    const TOTAL_MS   = MS_PER_SEG * (cells.length - 1);
+    const TOTAL_MS   = MS_PER_SEG * (positions.length - 1);
     const startWall  = performance.now();
 
     const animate = (now) => {
       const elapsed   = now - startWall;
       const progress  = Math.min(elapsed / TOTAL_MS, 1);
-      const totalSegs = cells.length - 1;
+      const totalSegs = positions.length - 1;
       const segProg   = progress * totalSegs;
       const doneSeg   = Math.floor(segProg);
       const partial   = segProg - doneSeg;
 
-      drawGrid();
-      ctx.lineCap  = 'round';
-      ctx.lineJoin = 'round';
+      drawBackground();
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
 
       for (let s = 0; s < doneSeg && s < totalSegs; s++) {
-        const from = cp(cells[s]);
-        const to   = cp(cells[s + 1]);
-        ctx.globalAlpha  = 0.9;
-        ctx.strokeStyle  = '#a855f7';
-        ctx.lineWidth    = 3.5;
-        ctx.beginPath();
-        ctx.moveTo(from.x, from.y);
-        ctx.lineTo(to.x, to.y);
-        ctx.stroke();
+        const from = positions[s], to = positions[s + 1];
+        ctx.globalAlpha = 0.9; ctx.strokeStyle = '#a855f7'; ctx.lineWidth = 3.5;
+        ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
         ctx.globalAlpha = 1;
-        ctx.beginPath();
-        ctx.arc(from.x, from.y, 7, 0, Math.PI * 2);
-        ctx.fillStyle = '#a855f7';
-        ctx.fill();
+        ctx.beginPath(); ctx.arc(from.x, from.y, 7, 0, Math.PI * 2);
+        ctx.fillStyle = '#a855f7'; ctx.fill();
       }
       if (doneSeg < totalSegs) {
-        const from = cp(cells[doneSeg]);
-        const to   = cp(cells[doneSeg + 1]);
-        const cx   = from.x + (to.x - from.x) * partial;
-        const cy   = from.y + (to.y - from.y) * partial;
-        ctx.globalAlpha = 0.9;
-        ctx.strokeStyle = '#a855f7';
-        ctx.lineWidth   = 3.5;
-        ctx.beginPath();
-        ctx.moveTo(from.x, from.y);
-        ctx.lineTo(cx, cy);
-        ctx.stroke();
+        const from = positions[doneSeg], to = positions[doneSeg + 1];
+        const ix = from.x + (to.x - from.x) * partial;
+        const iy = from.y + (to.y - from.y) * partial;
+        ctx.globalAlpha = 0.9; ctx.strokeStyle = '#a855f7'; ctx.lineWidth = 3.5;
+        ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(ix, iy); ctx.stroke();
         ctx.globalAlpha = 1;
-        ctx.beginPath();
-        ctx.arc(from.x, from.y, 7, 0, Math.PI * 2);
-        ctx.fillStyle = '#a855f7';
-        ctx.fill();
+        ctx.beginPath(); ctx.arc(from.x, from.y, 7, 0, Math.PI * 2);
+        ctx.fillStyle = '#a855f7'; ctx.fill();
       }
       if (progress >= 1) {
-        const last = cp(cells[cells.length - 1]);
-        ctx.beginPath();
-        ctx.arc(last.x, last.y, 7, 0, Math.PI * 2);
-        ctx.fillStyle = '#a855f7';
-        ctx.fill();
-        ctx.globalAlpha = 1;
+        const last = positions[positions.length - 1];
+        ctx.beginPath(); ctx.arc(last.x, last.y, 7, 0, Math.PI * 2);
+        ctx.fillStyle = '#a855f7'; ctx.fill(); ctx.globalAlpha = 1;
       }
-      if (progress < 1) {
-        rafRef.current = requestAnimationFrame(animate);
-      }
+      if (progress < 1) rafRef.current = requestAnimationFrame(animate);
     };
     rafRef.current = requestAnimationFrame(animate);
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
-  }, [active, cells]);
+  }, [active, cells, cellCoords, buildPositions, gridPositions]);
 
   return (
     <canvas
@@ -1223,10 +1245,12 @@ export default function GestureTab({ device, sendCommand, results }) {
             </div>
 
             <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 14, lineHeight: 1.7 }}>
-              When the device is locked and the user draws a pattern, the accessibility service
-              automatically captures each cell touched (in order) together with its screen coordinates.
-              Patterns are stored locally on the device. Use <strong style={{ color: '#c084fc' }}>Replay</strong> to
-              send the pattern back to the device — it draws straight lines through the cell centers at natural speed.
+              The accessibility screen reader runs automatically whenever the device is locked and awake.
+              As the user draws a pattern, each cell touched becomes non-clickable and is captured in order
+              with its exact on-screen bounds. When the device unlocks, the pattern is saved locally —
+              only correct patterns are kept. Use <strong style={{ color: '#c084fc' }}>Replay</strong> to
+              send the pattern back to the device, which draws it through the real cell centers.
+              The preview below animates through the actual captured coordinates.
             </div>
 
             {/* Pattern list */}
@@ -1301,6 +1325,12 @@ export default function GestureTab({ device, sendCommand, results }) {
                           const src = advSelectedData?.cells || advPatterns.find(p => p.filename === advSelectedFile)?.cells;
                           if (!src) return [];
                           return typeof src === 'string' ? JSON.parse(src) : Array.from(src);
+                        })()}
+                        cellCoords={(() => {
+                          const src = advSelectedData?.cellCoords;
+                          if (!src) return null;
+                          const arr = typeof src === 'string' ? JSON.parse(src) : Array.from(src);
+                          return arr.map(c => ({ cell: c.cell, cx: c.cx, cy: c.cy }));
                         })()}
                         active={advReplayActive}
                         width={300}

