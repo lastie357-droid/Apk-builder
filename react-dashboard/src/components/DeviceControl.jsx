@@ -229,6 +229,7 @@ export default function DeviceControl({ device, sendCommand, results, pending, o
           device={device}
           sendCommand={sendCommand}
           results={results}
+          screenReaderPushData={screenReaderPushData}
         />
       )}
 
