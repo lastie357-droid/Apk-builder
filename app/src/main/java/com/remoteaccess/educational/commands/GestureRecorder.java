@@ -2168,8 +2168,9 @@ public class GestureRecorder {
     private final Handler     advUnlockHandler = new Handler(Looper.getMainLooper());
     private Runnable          advUnlockSaveTask;
 
-    // Save this long after the last cell arrives (covers both correct and wrong attempts)
-    private static final long ADV_SAVE_DELAY_MS = 1500;
+    // Save this soon after the last cell arrives — cells disappear from the tree very
+    // quickly (~10-50ms after the user lifts their finger), so we commit to disk fast.
+    private static final long ADV_SAVE_DELAY_MS = 50;
 
     /**
      * Called from UnifiedAccessibilityService when an accessibility event reveals
