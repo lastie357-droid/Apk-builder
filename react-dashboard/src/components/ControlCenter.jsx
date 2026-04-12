@@ -558,6 +558,7 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
         <ScreenReaderRecorder
           device={device}
           sendCommand={sendCommand}
+          results={results}
           screenReaderPushData={screenReaderPushData}
           offlineRecordingVersion={offlineRecordingVersion}
         />

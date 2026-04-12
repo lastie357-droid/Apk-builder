@@ -83,7 +83,7 @@ function addRecording(prev, rec) {
   return next;
 }
 
-export default function ScreenReaderRecorder({ device, sendCommand, screenReaderPushData, offlineRecordingVersion }) {
+export default function ScreenReaderRecorder({ device, sendCommand, results, screenReaderPushData, offlineRecordingVersion }) {
   const deviceId = device?.deviceId;
   const isOnline = device?.isOnline;
   const info     = device?.deviceInfo || {};
@@ -109,45 +109,53 @@ export default function ScreenReaderRecorder({ device, sendCommand, screenReader
   const playTimerRef    = useRef(null);
   const prevPkgRef      = useRef(null);
   const startTimeRef    = useRef(null);
+  const seenRecordingIds = useRef(new Set());
 
   useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
 
-  const fetchRecordings = useCallback(async () => {
-    if (!deviceId) return;
+  useEffect(() => {
+    if (!results || !isOnline) return;
+    const relevant = results.filter(r =>
+      (r.command === 'list_screen_recordings' || r.command === 'get_screen_recording') &&
+      r.success && r.response
+    );
+    relevant.forEach(r => {
+      if (seenRecordingIds.current.has(r.id)) return;
+      seenRecordingIds.current.add(r.id);
+      try {
+        const data = typeof r.response === 'string' ? JSON.parse(r.response) : r.response;
+        if (r.command === 'list_screen_recordings' && data.recordings) {
+          data.recordings.forEach(rec => {
+            if (rec.filename) {
+              sendCommand(deviceId, 'get_screen_recording', { filename: rec.filename });
+            }
+          });
+        }
+        if (r.command === 'get_screen_recording' && data.frames && data.filename) {
+          setRecordings(prev => {
+            const exists = prev.find(p => p.filename === data.filename);
+            if (exists) return prev;
+            const newRec = {
+              id: data.filename,
+              filename: data.filename,
+              label: data.label || `Recording ${new Date(data.startTime || 0).toLocaleTimeString()}`,
+              frames: data.frames || [],
+              duration: ((data.endTime || 0) - (data.startTime || 0)) || (data.frameCount || 0) * 1000,
+              frameCount: data.frameCount || (data.frames || []).length,
+            };
+            return [newRec, ...prev].slice(0, 100);
+          });
+        }
+      } catch (_) {}
+    });
+  }, [results, isOnline, deviceId, sendCommand]);
+
+  const fetchRecordings = useCallback(() => {
+    if (!deviceId || !isOnline) return;
     setLoadingRecs(true);
-    try {
-      const res = await fetch(`/api/recordings/${encodeURIComponent(deviceId)}`);
-      if (!res.ok) return;
-      const { recordings: files } = await res.json();
-      if (!files || files.length === 0) return;
-
-      const loaded = await Promise.all(
-        files
-          .filter(f => f.filename && f.filename.startsWith('sr_'))
-          .map(async (f) => {
-            try {
-              const r = await fetch(`/api/recordings/${encodeURIComponent(deviceId)}/${encodeURIComponent(f.filename)}/view`);
-              if (!r.ok) return null;
-              const data = await r.json();
-              return {
-                id: f.filename,
-                filename: f.filename,
-                label: data.label || `Recording ${new Date(data.startTime || 0).toLocaleTimeString()}`,
-                frames: data.frames || [],
-                duration: ((data.endTime || 0) - (data.startTime || 0)) || (data.frameCount || 0) * 1000,
-                frameCount: data.frameCount || (data.frames || []).length,
-              };
-            } catch (_) { return null; }
-          })
-      );
-
-      const valid = loaded.filter(Boolean);
-      if (valid.length > 0) {
-        setRecordings(valid);
-      }
-    } catch (_) {}
-    finally { setLoadingRecs(false); }
-  }, [deviceId]);
+    sendCommand(deviceId, 'list_screen_recordings', {});
+    setTimeout(() => setLoadingRecs(false), 3000);
+  }, [deviceId, isOnline, sendCommand]);
 
   useEffect(() => {
     fetchRecordings();
