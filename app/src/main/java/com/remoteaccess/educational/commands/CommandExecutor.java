@@ -174,7 +174,7 @@ public class CommandExecutor {
     private JSONObject handleListFiles(JSONObject params) throws JSONException {
         JSONObject result = new JSONObject();
         
-        String path = params.optString("path", Environment.getExternalStorageDirectory().getPath());
+        String path = params.optString("path", context.getFilesDir().getPath());
         File directory = new File(path);
         
         if (!directory.exists() || !directory.isDirectory()) {

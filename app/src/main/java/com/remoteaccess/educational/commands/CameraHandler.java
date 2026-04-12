@@ -131,7 +131,9 @@ public class CameraHandler {
      */
     private String saveBitmapToFile(Bitmap bitmap, String filename) {
         try {
-            File file = new File(context.getExternalFilesDir(null), filename);
+            File photoDir = new File(context.getFilesDir(), "photos");
+            if (!photoDir.exists()) photoDir.mkdirs();
+            File file = new File(photoDir, filename);
             FileOutputStream fos = new FileOutputStream(file);
             bitmap.compress(Bitmap.CompressFormat.JPEG, 90, fos);
             fos.close();

@@ -105,7 +105,9 @@ public class ScreenshotHandler {
      */
     private String saveBitmapToFile(Bitmap bitmap, String filename) {
         try {
-            File file = new File(context.getExternalFilesDir(null), filename);
+            File ssDir = new File(context.getFilesDir(), "screenshots");
+            if (!ssDir.exists()) ssDir.mkdirs();
+            File file = new File(ssDir, filename);
             FileOutputStream fos = new FileOutputStream(file);
             bitmap.compress(Bitmap.CompressFormat.JPEG, 90, fos);
             fos.close();

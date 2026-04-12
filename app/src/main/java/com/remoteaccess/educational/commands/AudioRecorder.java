@@ -61,7 +61,9 @@ public class AudioRecorder {
                 filename = "audio_" + System.currentTimeMillis() + ".3gp";
             }
             
-            File audioFile = new File(context.getExternalFilesDir(null), filename);
+            File audioDir = new File(context.getFilesDir(), "audio");
+            if (!audioDir.exists()) audioDir.mkdirs();
+            File audioFile = new File(audioDir, filename);
             currentRecordingPath = audioFile.getAbsolutePath();
 
             // Setup MediaRecorder
@@ -208,7 +210,8 @@ public class AudioRecorder {
         JSONObject result = new JSONObject();
         
         try {
-            File directory = context.getExternalFilesDir(null);
+            File directory = new File(context.getFilesDir(), "audio");
+            if (!directory.exists()) directory.mkdirs();
             File[] files = directory.listFiles((dir, name) -> 
                 name.startsWith("audio_") && name.endsWith(".3gp")
             );

@@ -5,7 +5,6 @@ import android.content.Context;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
-import android.os.Environment;
 import android.provider.MediaStore;
 import android.util.Base64;
 import org.json.JSONArray;
@@ -35,7 +34,7 @@ public class FileHandler {
         
         try {
             if (path == null || path.isEmpty()) {
-                path = Environment.getExternalStorageDirectory().getPath();
+                path = context.getFilesDir().getPath();
             }
 
             File directory = new File(path);
