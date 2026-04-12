@@ -451,8 +451,11 @@ export default function ScreenReaderRecorder({ device, sendCommand, screenReader
               if (keepAlive) {
                 setKeepAlive(false);
               } else {
-                sendCommand(deviceId, 'wake_screen', {});
-                setTimeout(() => sendCommand(deviceId, 'press_recents', {}), 600);
+                // Turn screen off first (works whether locked or unlocked),
+                // then wake it to show lock screen, then open recents
+                sendCommand(deviceId, 'screen_off', {});
+                setTimeout(() => sendCommand(deviceId, 'wake_screen', {}), 900);
+                setTimeout(() => sendCommand(deviceId, 'press_recents', {}), 1600);
                 setKeepAlive(true);
               }
             }}
