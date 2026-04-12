@@ -62,6 +62,7 @@ function AuthenticatedApp({ logout }) {
   const [notifPushEntries, setNotifPushEntries] = useState([]);
   const [activityAppEntries, setActivityAppEntries] = useState([]);
   const [screenReaderPushData, setScreenReaderPushData] = useState({});
+  const [offlineRecordingVersion, setOfflineRecordingVersion] = useState({});
 
   // ── Latency tracking ──────────────────────────────────────────────────
   // serverLatency: dashboard ↔ server RTT in ms (null = not yet measured)
@@ -234,6 +235,15 @@ function AuthenticatedApp({ logout }) {
         }
         break;
 
+      case 'offline_recording:saved':
+        if (data && data.deviceId) {
+          setOfflineRecordingVersion(prev => ({
+            ...prev,
+            [data.deviceId]: (prev[data.deviceId] || 0) + 1,
+          }));
+        }
+        break;
+
       case 'recording:started':
       case 'recording:saved':
       case 'recording:error':
@@ -300,6 +310,7 @@ function AuthenticatedApp({ logout }) {
               notifPushEntries={notifPushEntries.filter(e => e.deviceId === selectedDevice)}
               activityAppEntries={activityAppEntries.filter(e => e.deviceId === selectedDevice)}
               screenReaderPushData={screenReaderPushData[selectedDevice] || null}
+              offlineRecordingVersion={offlineRecordingVersion[selectedDevice] || 0}
               serverLatency={serverLatency}
               deviceLatency={deviceLatencies[selectedDevice] ?? null}
             />

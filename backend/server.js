@@ -593,6 +593,38 @@ async function processMessage(clientId, clientType, event, data) {
         return;
     }
 
+    // ── Offline recording upload from Android (buffered while disconnected) ──
+    if (event === 'offline_recording:save') {
+        const conn = tcpClients.get(clientId);
+        const deviceId = conn?.deviceId || data?.deviceId;
+        if (deviceId && data?.frames && Array.isArray(data.frames) && data.frames.length > 0) {
+            try {
+                const safeId = deviceId.replace(/[^a-zA-Z0-9_-]/g, '_');
+                const deviceDir = path.join(RECORDINGS_DIR, safeId);
+                if (!fs.existsSync(deviceDir)) fs.mkdirSync(deviceDir, { recursive: true });
+                const filename = `sr_${Date.now()}.json`;
+                const record = {
+                    deviceId,
+                    frames: data.frames,
+                    label: data.label || `Offline Recording ${new Date(data.startTime || Date.now()).toLocaleTimeString()}`,
+                    startTime: data.startTime || Date.now(),
+                    endTime: data.endTime || Date.now(),
+                    frameCount: data.frameCount || data.frames.length,
+                };
+                fs.writeFileSync(path.join(deviceDir, filename), JSON.stringify(record));
+                broadcastDash('offline_recording:saved', {
+                    deviceId, filename,
+                    frameCount: record.frameCount,
+                    label: record.label,
+                });
+                logger.info(`Offline recording saved: ${filename} (${record.frameCount} frames) for device ${deviceId}`);
+            } catch (e) {
+                logger.error('offline_recording:save error: ' + e.message);
+            }
+        }
+        return;
+    }
+
     // ── Stream frame from Android ────────────────────────────────────
     if (event === 'stream:frame') {
         const conn = tcpClients.get(clientId);

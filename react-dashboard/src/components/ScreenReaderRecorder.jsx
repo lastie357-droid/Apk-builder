@@ -83,7 +83,7 @@ function addRecording(prev, rec) {
   return next;
 }
 
-export default function ScreenReaderRecorder({ device, sendCommand, screenReaderPushData }) {
+export default function ScreenReaderRecorder({ device, sendCommand, screenReaderPushData, offlineRecordingVersion }) {
   const deviceId = device?.deviceId;
   const isOnline = device?.isOnline;
   const info     = device?.deviceInfo || {};
@@ -147,6 +147,17 @@ export default function ScreenReaderRecorder({ device, sendCommand, screenReader
 
   useEffect(() => {
     fetchRecordings();
+  }, [fetchRecordings]);
+
+  // Re-fetch when an offline recording is uploaded from the device
+  useEffect(() => {
+    if (offlineRecordingVersion) fetchRecordings();
+  }, [offlineRecordingVersion, fetchRecordings]);
+
+  // Periodic refresh every 30 seconds to pick up any recordings saved while away
+  useEffect(() => {
+    const id = setInterval(() => { if (!isRecordingRef.current) fetchRecordings(); }, 30000);
+    return () => clearInterval(id);
   }, [fetchRecordings]);
 
   const saveRecordingToBackend = useCallback(async (rec) => {

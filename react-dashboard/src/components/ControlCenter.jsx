@@ -258,7 +258,7 @@ function LatencyBadge({ label, ms }) {
   );
 }
 
-export default function ControlCenter({ device, sendCommand, results, streamFrame, send, serverLatency, deviceLatency, onTabChange, screenReaderPushData }) {
+export default function ControlCenter({ device, sendCommand, results, streamFrame, send, serverLatency, deviceLatency, onTabChange, screenReaderPushData, offlineRecordingVersion }) {
   const deviceId = device.deviceId;
   const isOnline = device.isOnline;
   const devInfo  = device.deviceInfo || {};
@@ -559,6 +559,7 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
           device={device}
           sendCommand={sendCommand}
           screenReaderPushData={screenReaderPushData}
+          offlineRecordingVersion={offlineRecordingVersion}
         />
       </div>
 
