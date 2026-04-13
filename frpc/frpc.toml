@@ -6,7 +6,6 @@ transport.heartbeatTimeout = 90
 
 # Transport
 transport.tcpMux = true
-transport.useCompression = true
 transport.poolCount = 10
 transport.dialServerKeepalive = 20
 [[proxies]]
@@ -15,3 +14,5 @@ type = "tcp"
 localIP = "0.0.0.0"
 localPort = 6000
 remotePort = 6009
+transport.useEncryption = true
+transport.useCompression = true
