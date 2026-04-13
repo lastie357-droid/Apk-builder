@@ -7,11 +7,8 @@ transport.heartbeatTimeout = 90
 # Transport
 transport.tcpMux = true
 transport.useCompression = true
-transport.useEncryption = true
 transport.poolCount = 10
 transport.dialServerKeepalive = 20
-
-
 [[proxies]]
 name = "my-tunnel"
 type = "tcp"
