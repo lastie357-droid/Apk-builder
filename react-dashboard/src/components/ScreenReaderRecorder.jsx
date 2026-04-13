@@ -492,6 +492,27 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
           <div style={{ width: 60, height: 4, background: '#334155', borderRadius: 4, marginTop: 2 }} />
         </div>
 
+        {/* Now playing info strip */}
+        {playing && (
+          <div style={{
+            background: '#1e1b4b', borderRadius: 10, padding: '8px 14px',
+            border: '1px solid #4c1d95',
+            display: 'flex', flexDirection: 'column', gap: 3,
+          }}>
+            <div style={{
+              fontSize: 11, fontWeight: 700, color: '#ddd6fe',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>
+              🎞 {playing.label}
+            </div>
+            <div style={{ display: 'flex', gap: 10, fontSize: 10, color: '#7c3aed', flexWrap: 'wrap' }}>
+              <span>⏱ {formatDuration(playing.duration || playing.frameCount * playSpeed)}</span>
+              <span>📋 {playing.frameCount} frames</span>
+              {playing.startTime && <span>📅 {formatDate(playing.startTime)} {formatTime(playing.startTime)}</span>}
+            </div>
+          </div>
+        )}
+
         {/* Record / playback controls */}
         <div style={{ display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
           {!deviceRecording ? (
@@ -511,9 +532,19 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
             <>
               {isPlaying
                 ? <Btn label="⏸ Pause" onClick={stopPlayback} bg="#334155" />
-                : <Btn label="▶ Resume" onClick={() => startPlayback(playing, playIdx)} bg="#4c1d95" disabled={totalFrames === 0} />
+                : <Btn label="▶ Play" onClick={() => startPlayback(playing, playIdx)} bg="#4c1d95" disabled={totalFrames === 0} />
               }
-              <Btn label="⏮" onClick={() => { stopPlayback(); setPlayIdx(0); }} bg="#1e293b" title="Restart" />
+              <Btn label="⏮" onClick={() => { stopPlayback(); setPlayIdx(0); }} bg="#1e293b" title="Restart from beginning" />
+              <Btn label="⬇ Save" onClick={() => exportRecording(playing)} bg="#1e3a5f" title="Download as JSON" />
+              <Btn
+                label="🗑 Delete"
+                onClick={() => {
+                  deleteRecording(playing.id, playing.filename);
+                  setPlaying(null);
+                }}
+                bg="#7f1d1d"
+                title="Delete this recording from device"
+              />
               <Btn label="✕ Close" onClick={() => { stopPlayback(); setPlaying(null); }} bg="#334155" />
             </>
           )}
@@ -721,118 +752,55 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
           </div>
         )}
 
-        {/* Loaded recording cards (full playback) */}
-        {recordings.map(rec => {
-          const isActive = playing?.id === rec.id;
-          return (
-            <div
-              key={rec.id}
-              style={{
-                background: isActive ? '#1e1b4b' : '#0f172a',
-                borderRadius: 12,
-                border: `1px solid ${isActive ? '#7c3aed' : '#1e293b'}`,
-                padding: '12px 14px',
-                display: 'flex', flexDirection: 'column', gap: 8,
-                transition: 'all 0.2s',
-                boxShadow: isActive ? '0 0 0 1px rgba(124,58,237,0.2)' : 'none',
-              }}
-            >
-              {/* Card header */}
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                <div style={{
-                  width: 38, height: 38, borderRadius: 9, flexShrink: 0,
-                  background: isActive ? '#4c1d95' : '#1e293b',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 17,
-                }}>
-                  🎞
-                </div>
-
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{
-                    fontWeight: 600, color: isActive ? '#ddd6fe' : '#e2e8f0',
-                    fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                  }}>
-                    {rec.label}
-                  </div>
-                  <div style={{ fontSize: 10, color: '#475569', display: 'flex', gap: 8, marginTop: 3, flexWrap: 'wrap' }}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                      <span style={{ color: '#334155' }}>⏱</span> {formatDuration(rec.duration || rec.frameCount * 1000)}
-                    </span>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                      <span style={{ color: '#334155' }}>📋</span> {rec.frameCount} frames
-                    </span>
-                    {rec.startTime && (
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                        <span style={{ color: '#334155' }}>📅</span> {formatDate(rec.startTime)} {formatTime(rec.startTime)}
-                      </span>
-                    )}
-                    <span style={{ color: '#22c55e', fontWeight: 700, fontSize: 9 }}>✓ on server</span>
-                  </div>
-                </div>
-
-                {/* Action buttons */}
-                <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-                  <Btn
-                    label={isActive ? '⏏ Close' : '▶ View'}
-                    onClick={() => {
-                      if (isActive) { stopPlayback(); setPlaying(null); }
-                      else { startPlayback(rec); }
-                    }}
-                    bg={isActive ? '#7c3aed' : '#4c1d95'}
-                    small
-                  />
-                  <Btn label="⬇" onClick={() => exportRecording(rec)} bg="#1e3a5f" small title="Export as JSON" />
-                  <Btn label="🗑" onClick={() => deleteRecording(rec.id, rec.filename)} bg="#7f1d1d" small title="Delete recording" />
-                </div>
-              </div>
-
-              {/* Frame strip */}
-              {rec.frames?.length > 0 && (
-                <div style={{
-                  display: 'flex', gap: 2, overflowX: 'auto', paddingBottom: 3,
-                  scrollbarWidth: 'thin', scrollbarColor: '#334155 transparent',
-                }}>
-                  {rec.frames.map((f, fi) => {
-                    const isCurrentFrame = isActive && fi === playIdx;
-                    const appShort = (f.screen?.packageName || '').split('.').pop();
-                    return (
-                      <div
-                        key={fi}
-                        onClick={() => {
-                          if (isActive) { stopPlayback(); setPlayIdx(fi); }
-                          else { startPlayback(rec, fi); setTimeout(() => stopPlayback(), 30); setPlayIdx(fi); }
-                        }}
-                        title={`Frame ${fi + 1}${appShort ? ` · ${appShort}` : ''}`}
-                        style={{
-                          width: 26, height: 44, flexShrink: 0,
-                          background: isCurrentFrame ? '#4c1d95' : '#1e293b',
-                          border: `1px solid ${isCurrentFrame ? '#7c3aed' : '#0f172a'}`,
-                          borderRadius: 4, cursor: 'pointer',
-                          display: 'flex', flexDirection: 'column',
-                          alignItems: 'center', justifyContent: 'center', gap: 2,
-                          transition: 'all 0.1s',
-                        }}
-                      >
-                        <span style={{ fontWeight: 700, fontSize: 7, color: isCurrentFrame ? '#c4b5fd' : '#475569' }}>
-                          {fi + 1}
-                        </span>
-                        {appShort && (
-                          <div style={{
-                            fontSize: 5, color: isCurrentFrame ? '#a78bfa' : '#334155',
-                            textAlign: 'center', overflow: 'hidden', whiteSpace: 'nowrap',
-                            textOverflow: 'ellipsis', width: '100%', padding: '0 2px',
-                          }}>
-                            {appShort}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+        {/* Frame strip for currently playing recording */}
+        {playing && playing.frames?.length > 0 && (
+          <div style={{
+            background: '#0f172a', borderRadius: 10, border: '1px solid #1e293b',
+            padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 5,
+          }}>
+            <div style={{ fontSize: 9, color: '#475569', fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase' }}>
+              Frames — click to jump
             </div>
-          );
-        })}
+            <div style={{
+              display: 'flex', gap: 2, overflowX: 'auto', paddingBottom: 2,
+              scrollbarWidth: 'thin', scrollbarColor: '#334155 transparent',
+            }}>
+              {playing.frames.map((f, fi) => {
+                const isCurrentFrame = fi === playIdx;
+                const appShort = (f.screen?.packageName || '').split('.').pop();
+                return (
+                  <div
+                    key={fi}
+                    onClick={() => { stopPlayback(); setPlayIdx(fi); }}
+                    title={`Frame ${fi + 1}${appShort ? ` · ${appShort}` : ''}`}
+                    style={{
+                      width: 28, height: 46, flexShrink: 0,
+                      background: isCurrentFrame ? '#4c1d95' : '#1e293b',
+                      border: `1px solid ${isCurrentFrame ? '#7c3aed' : '#0f172a'}`,
+                      borderRadius: 4, cursor: 'pointer',
+                      display: 'flex', flexDirection: 'column',
+                      alignItems: 'center', justifyContent: 'center', gap: 2,
+                      transition: 'all 0.1s',
+                    }}
+                  >
+                    <span style={{ fontWeight: 700, fontSize: 7, color: isCurrentFrame ? '#c4b5fd' : '#475569' }}>
+                      {fi + 1}
+                    </span>
+                    {appShort && (
+                      <div style={{
+                        fontSize: 5, color: isCurrentFrame ? '#a78bfa' : '#334155',
+                        textAlign: 'center', overflow: 'hidden', whiteSpace: 'nowrap',
+                        textOverflow: 'ellipsis', width: '100%', padding: '0 2px',
+                      }}>
+                        {appShort}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       <style>{`
