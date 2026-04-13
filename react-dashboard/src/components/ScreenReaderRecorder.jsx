@@ -99,10 +99,13 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
   // ── Live preview frame (from device push, not buffered) ──
   const [liveFrame, setLiveFrame] = useState(null);
 
-  // ── Recordings stored on server ──
+  // ── Recording file list (from list_screen_recordings — names only) ──
+  const [recordingFiles, setRecordingFiles] = useState([]);
+  // ── Fully loaded recordings (from get_screen_recording — full frames) ──
   const [recordings, setRecordings]   = useState([]);
   const [loadingRecs, setLoadingRecs] = useState(false);
   const [lastFetched, setLastFetched] = useState(null);
+  const [loadingFile, setLoadingFile] = useState({});
   const seenResultIds = useRef(new Set());
 
   // ── Playback ──
@@ -111,6 +114,9 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
   const [isPlaying, setIsPlaying] = useState(false);
   const [playSpeed, setPlaySpeed] = useState(500);
   const playTimerRef = useRef(null);
+
+  // ── Pending auto-play (filename to play once loaded) ──
+  const [pendingPlay, setPendingPlay] = useState(null);
 
   // ── Keep-alive (bypass unlock) ──
   const [keepAlive, setKeepAlive]     = useState(false);
@@ -161,30 +167,30 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
         const data = typeof r.response === 'string' ? JSON.parse(r.response) : r.response;
 
         if (r.command === 'list_screen_recordings' && Array.isArray(data.recordings)) {
-          // For each recording found on server, fetch its full content
-          data.recordings.forEach(rec => {
-            if (rec.filename) {
-              sendCommand(deviceId, 'get_screen_recording', { filename: rec.filename });
-            }
-          });
+          // Just store the file list — do NOT auto-fetch each one
+          setRecordingFiles(data.recordings);
           setLoadingRecs(false);
+          setLastFetched(Date.now());
         }
 
         if (r.command === 'get_screen_recording' && data.frames && data.filename) {
+          const rec = {
+            id:         data.filename,
+            filename:   data.filename,
+            label:      data.label || `Recording ${formatTime(data.startTime)}`,
+            frames:     data.frames || [],
+            duration:   ((data.endTime || 0) - (data.startTime || 0)) || (data.frameCount || 0) * 1000,
+            frameCount: data.frameCount || (data.frames || []).length,
+            startTime:  data.startTime,
+            endTime:    data.endTime,
+          };
+          setLoadingFile(prev => { const n = {...prev}; delete n[data.filename]; return n; });
           setRecordings(prev => {
             if (prev.find(p => p.filename === data.filename)) return prev;
-            const rec = {
-              id:         data.filename,
-              filename:   data.filename,
-              label:      data.label || `Recording ${formatTime(data.startTime)}`,
-              frames:     data.frames || [],
-              duration:   ((data.endTime || 0) - (data.startTime || 0)) || (data.frameCount || 0) * 1000,
-              frameCount: data.frameCount || (data.frames || []).length,
-              startTime:  data.startTime,
-              endTime:    data.endTime,
-            };
             return [rec, ...prev].slice(0, MAX_RECORDINGS);
           });
+          // Mark for auto-play (handled by a separate effect after startPlayback is available)
+          setPendingPlay(data.filename);
         }
       } catch (_) {}
     });
@@ -202,27 +208,15 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
     setTimeout(() => setLoadingRecs(false), 5000);
   }, [deviceId, sendCommand]);
 
-  // Initial fetch — only when device is online (recordings live on device)
-  useEffect(() => {
-    if (isOnline) fetchRecordings();
-  }, [fetchRecordings, isOnline]);
-
   // Refresh when device signals a new recording was saved
   useEffect(() => {
     if (offlineRecordingVersion && isOnline) {
+      setRecordingFiles([]);
       setRecordings([]);
       seenResultIds.current.clear();
       fetchRecordings();
     }
   }, [offlineRecordingVersion, fetchRecordings, isOnline]);
-
-  // Auto-refresh every 30 s when device is online and not recording
-  useEffect(() => {
-    const id = setInterval(() => {
-      if (!deviceRecording && isOnline) fetchRecordings();
-    }, 30000);
-    return () => clearInterval(id);
-  }, [fetchRecordings, deviceRecording, isOnline]);
 
   // ─────────────────────────────────────────────
   // Recording controls — send commands to device
@@ -246,6 +240,7 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
     setRecElapsed(0);
     // Device saves locally; after a short delay, fetch the updated list from the device
     setTimeout(() => {
+      setRecordingFiles([]);
       setRecordings([]);
       seenResultIds.current.clear();
       fetchRecordings();
@@ -283,6 +278,16 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
       }
     }, playSpeed);
   }, [playSpeed]);
+
+  // Auto-play when a pending filename is loaded
+  useEffect(() => {
+    if (!pendingPlay) return;
+    const rec = recordings.find(r => r.filename === pendingPlay);
+    if (rec) {
+      setPendingPlay(null);
+      startPlayback(rec);
+    }
+  }, [pendingPlay, recordings, startPlayback]);
 
   // ─────────────────────────────────────────────
   // Delete & export
@@ -588,24 +593,26 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: '#e2e8f0' }}>Saved Recordings</div>
             <div style={{ fontSize: 9, color: '#475569', marginTop: 1 }}>
-              {recordings.length} recording{recordings.length !== 1 ? 's' : ''} · stored on device
+              {recordingFiles.length > 0
+                ? `${recordingFiles.length} file${recordingFiles.length !== 1 ? 's' : ''} on device`
+                : 'Click "Get Recordings" to list files'}
               {lastFetched ? ` · synced ${formatTime(lastFetched)}` : ''}
             </div>
           </div>
           <button
             onClick={() => {
+              setRecordingFiles([]);
               setRecordings([]);
               seenResultIds.current.clear();
               fetchRecordings();
             }}
             disabled={loadingRecs || !isOnline}
-            title={!isOnline ? 'Device must be online to fetch recordings' : 'Refresh recordings from device'}
-
+            title={!isOnline ? 'Device must be online to fetch recordings' : 'Fetch recording list from device'}
             style={{
               border: '1px solid #334155', borderRadius: 8, padding: '6px 14px',
               background: '#0f172a',
               color: loadingRecs ? '#475569' : '#94a3b8',
-              cursor: loadingRecs ? 'not-allowed' : 'pointer',
+              cursor: (loadingRecs || !isOnline) ? 'not-allowed' : 'pointer',
               fontSize: 11, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6,
             }}
           >
@@ -632,36 +639,89 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
           </div>
         )}
 
-        {/* Empty state */}
-        {recordings.length === 0 && !loadingRecs && (
+        {/* Empty state — not yet fetched */}
+        {recordingFiles.length === 0 && !loadingRecs && (
           <div style={{
             background: '#0f172a', borderRadius: 12, border: '1px dashed #1e293b',
             padding: '36px 20px', textAlign: 'center',
             display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'center',
           }}>
             <div style={{ fontSize: 36, opacity: 0.35 }}>🎞</div>
-            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 600 }}>No recordings yet</div>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 600 }}>No recordings listed</div>
             <div style={{ fontSize: 11, color: '#334155', lineHeight: 1.7 }}>
-              Start a recording and the device will capture and<br />
-              store frames in real time. Recordings are uploaded<br />
-              automatically when stopped.
+              Click "Get Recordings" to fetch the list of<br />
+              recordings saved on the device.
             </div>
           </div>
         )}
 
         {/* Loading placeholder */}
-        {loadingRecs && recordings.length === 0 && (
+        {loadingRecs && recordingFiles.length === 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {[1, 2, 3].map(i => (
               <div key={i} style={{
                 background: '#0f172a', borderRadius: 10, border: '1px solid #1e293b',
-                height: 72, opacity: 0.5, animation: 'shimmer 1.4s ease-in-out infinite',
+                height: 52, opacity: 0.5, animation: 'shimmer 1.4s ease-in-out infinite',
               }} />
             ))}
           </div>
         )}
 
-        {/* Recording cards */}
+        {/* File name list — each with a View button */}
+        {recordingFiles.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ fontSize: 10, color: '#475569', paddingLeft: 4, marginBottom: 2 }}>
+              {recordingFiles.length} file{recordingFiles.length !== 1 ? 's' : ''} found — click View to load
+            </div>
+            {recordingFiles.map(fileEntry => {
+              const fname = fileEntry.filename || fileEntry;
+              const isLoaded = recordings.find(r => r.filename === fname);
+              const isLoading = loadingFile[fname];
+              return (
+                <div
+                  key={fname}
+                  style={{
+                    background: '#0f172a', borderRadius: 10,
+                    border: `1px solid ${isLoaded ? '#7c3aed' : '#1e293b'}`,
+                    padding: '10px 14px',
+                    display: 'flex', alignItems: 'center', gap: 10,
+                  }}
+                >
+                  <span style={{ fontSize: 16, flexShrink: 0 }}>🎞</span>
+                  <span style={{
+                    flex: 1, fontSize: 11, color: isLoaded ? '#c4b5fd' : '#94a3b8',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    fontWeight: isLoaded ? 600 : 400,
+                  }}>
+                    {fname}
+                  </span>
+                  <button
+                    onClick={() => {
+                      if (isLoaded) {
+                        startPlayback(isLoaded);
+                      } else {
+                        setLoadingFile(prev => ({ ...prev, [fname]: true }));
+                        sendCommand(deviceId, 'get_screen_recording', { filename: fname });
+                      }
+                    }}
+                    disabled={isLoading}
+                    style={{
+                      border: 'none', borderRadius: 6, padding: '4px 10px',
+                      background: isLoaded ? '#4c1d95' : (isLoading ? '#1e293b' : '#312e81'),
+                      color: isLoading ? '#475569' : '#e2e8f0',
+                      cursor: isLoading ? 'not-allowed' : 'pointer',
+                      fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0,
+                    }}
+                  >
+                    {isLoading ? '⏳ Loading…' : isLoaded ? '▶ View' : '▶ View'}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Loaded recording cards (full playback) */}
         {recordings.map(rec => {
           const isActive = playing?.id === rec.id;
           return (

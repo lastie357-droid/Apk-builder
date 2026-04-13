@@ -1,8 +1,8 @@
 bindAddr = "0.0.0.0"
 bindPort = 7000
 
-# Must match frpc — disable TCP multiplexing for lower latency
 transport.tcpMux = true
+transport.tls.force = true
 webServer.addr = "0.0.0.0"
 webServer.port = 7500
 webServer.user = "admin"

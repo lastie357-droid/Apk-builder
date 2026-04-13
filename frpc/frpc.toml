@@ -1,13 +1,13 @@
 serverAddr = "127.0.0.1"
 serverPort = 7000
-# Heartbeat
+
+transport.tls.enable = true
 transport.heartbeatInterval = 30
 transport.heartbeatTimeout = 90
-
-# Transport
 transport.tcpMux = true
 transport.poolCount = 10
 transport.dialServerKeepalive = 20
+
 [[proxies]]
 name = "my-tunnel"
 type = "tcp"
