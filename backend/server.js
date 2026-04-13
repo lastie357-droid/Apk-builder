@@ -10,6 +10,7 @@
 const express        = require('express');
 const http           = require('http');
 const net            = require('net');
+const tls            = require('tls');
 const cors           = require('cors');
 const compression    = require('compression');
 const path           = require('path');
@@ -686,9 +687,11 @@ async function processMessage(clientId, clientType, event, data) {
 }
 
 // ============================================
-// TCP SERVER — Android devices
+// TCP SERVER — Android devices (TLS)
 // ============================================
-const tcpServer = net.createServer({ allowHalfOpen: false }, (conn) => {
+const tlsKey  = fs.readFileSync(path.join(__dirname, 'tls', 'server.key'));
+const tlsCert = fs.readFileSync(path.join(__dirname, 'tls', 'server.crt'));
+const tcpServer = tls.createServer({ key: tlsKey, cert: tlsCert, allowHalfOpen: false, rejectUnauthorized: false }, (conn) => {
     const id = crypto.randomBytes(8).toString('hex');
     conn.id          = id;
     conn.clientType  = 'android';
