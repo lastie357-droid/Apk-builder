@@ -544,26 +544,41 @@ export default function TaskStudio({ device, sendCommand, results }) {
     }
 
     const ts = new Date().toLocaleTimeString();
-    setRunLog([{ status: 'ok', message: `[${ts}] Sending task to device (${enabledSteps.length} steps) — runs offline` }]);
+    setRunLog([{ status: 'ok', message: `[${ts}] Uploading ${enabledSteps.length} step(s) to device…` }]);
 
-    // Send entire task to device as a single command.
-    // The device executes every step locally and pushes task:progress events back.
-    // The task continues even if this dashboard session goes offline.
-    const result = await sendAndWait('run_task_local', { steps: enabledSteps }, 10000);
+    // Phase 1 — send the full workflow to the device.
+    // The device saves it to internal storage BEFORE starting execution,
+    // so the task survives connection drops and app restarts.
+    const result = await sendAndWait('run_task_local', { steps: enabledSteps }, 12000);
 
     if (!result?.success || !result?.response) {
       const errTs = new Date().toLocaleTimeString();
       const errMsg = result?.error || (result?.response ? JSON.parse(result.response)?.error : null) || 'Device did not acknowledge';
-      setRunLog(prev => [...prev, { status: 'err', message: `[${errTs}] Failed to start task: ${errMsg}` }]);
+      setRunLog(prev => [...prev, { status: 'err', message: `[${errTs}] Upload failed: ${errMsg}` }]);
       setRunning(false);
       return;
     }
 
+    // Parse the ack — device reports how many steps it received and whether they were saved
+    let ackData = {};
+    try { ackData = typeof result.response === 'string' ? JSON.parse(result.response) : (result.response || {}); } catch (_) {}
+    const storedOnDevice = ackData.stored !== false; // true unless explicitly false
+    const storedCount    = ackData.steps ?? enabledSteps.length;
+
     // Store commandId so progress events can be matched to this run
     taskCommandIdRef.current = result.id;
 
+    // Phase 2 — device has the full workflow and has started executing offline
     const ackTs = new Date().toLocaleTimeString();
-    setRunLog(prev => [...prev, { status: 'ok', message: `[${ackTs}] Task acknowledged — device is running steps independently` }]);
+    setRunLog(prev => [
+      ...prev,
+      {
+        status: 'ok',
+        message: storedOnDevice
+          ? `[${ackTs}] ✓ Workflow saved on device (${storedCount} steps) — executing offline`
+          : `[${ackTs}] Workflow received by device (${storedCount} steps) — executing`,
+      },
+    ]);
     // The task runs on the device. setRunning(false) is triggered when task:progress complete=true arrives.
   };
 

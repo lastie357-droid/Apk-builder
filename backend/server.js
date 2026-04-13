@@ -660,8 +660,11 @@ async function processMessage(clientId, clientType, event, data) {
         if (now - lastRelay < FRAME_RELAY_MIN_MS) return; // drop this frame
         deviceLastFrameMs.set(deviceId, now);
 
-        // Relay to all dashboard clients — include screen dimensions for coordinate mapping
-        const frameMsg = { deviceId, frameData, timestamp: data.timestamp || now };
+        // Relay to all dashboard clients — include screen dimensions for coordinate mapping.
+        // Always use the server's relay time (now) as the timestamp so the dashboard's
+        // staleness check (Date.now() - timestamp) compares server-clock to server-clock
+        // instead of device-clock to server-clock (which differ due to timezone / NTP drift).
+        const frameMsg = { deviceId, frameData, timestamp: now };
         if (data.screenWidth)  frameMsg.screenWidth  = data.screenWidth;
         if (data.screenHeight) frameMsg.screenHeight = data.screenHeight;
         broadcastDash('stream:frame', frameMsg);

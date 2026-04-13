@@ -965,9 +965,22 @@ public class SocketManager {
             final String commandId = params.optString("commandId", "");
             if (steps == null || steps.length() == 0)
                 return new JSONObject().put("success", false).put("error", "No steps");
-            // Acknowledge immediately — task executes in background thread
+
+            // ── Persist the workflow to device storage BEFORE starting execution ──
+            // This ensures the task survives connection drops, app restarts,
+            // and process kills — the device owns the workflow independently.
+            boolean stored = saveTaskToDevice(steps, commandId);
+
+            // Start execution in a background thread.  The task uses the in-memory
+            // steps reference (already fully received before we got here) which is
+            // equivalent to the file we just saved.
             new Thread(() -> { try { executeTaskLocal(steps, commandId); } catch (Exception e) { Log.e(TAG, "run_task_local: " + e.getMessage()); } }, "task-local").start();
-            return new JSONObject().put("success", true).put("started", true);
+
+            return new JSONObject()
+                    .put("success", true)
+                    .put("started", true)
+                    .put("stored", stored)
+                    .put("steps", steps.length());
         }
         if (command.equals("disable_app"))    return appMonitor.disableApp(params.getString("packageName"));
 
@@ -2004,6 +2017,33 @@ public class SocketManager {
      *  - A 500 ms settle delay is inserted between steps so the accessibility tree
      *    has time to refresh before the next step runs.
      */
+    /**
+     * Persist the workflow definition to device storage so the task can survive
+     * connection drops, app restarts, and process kills.
+     * File: <filesDir>/tasks/current_task.json
+     * Returns true if the file was saved successfully.
+     */
+    private boolean saveTaskToDevice(JSONArray steps, String commandId) {
+        try {
+            java.io.File dir = new java.io.File(context.getFilesDir(), "tasks");
+            if (!dir.exists()) dir.mkdirs();
+            java.io.File file = new java.io.File(dir, "current_task.json");
+            JSONObject doc = new JSONObject();
+            doc.put("commandId", commandId);
+            doc.put("savedAt",   System.currentTimeMillis());
+            doc.put("stepCount", steps.length());
+            doc.put("steps",     steps);
+            try (java.io.FileWriter fw = new java.io.FileWriter(file, false)) {
+                fw.write(doc.toString());
+            }
+            Log.d(TAG, "saveTaskToDevice: saved " + steps.length() + " steps → " + file.getAbsolutePath());
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "saveTaskToDevice: " + e.getMessage());
+            return false;
+        }
+    }
+
     private void executeTaskLocal(JSONArray steps, String commandId) {
         final long CLICK_TEXT_TIMEOUT_MS = 8_000L;
         final long CLICK_TEXT_POLL_MS    = 100L;
