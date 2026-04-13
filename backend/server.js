@@ -16,6 +16,7 @@ const compression    = require('compression');
 const path           = require('path');
 const fs             = require('fs');
 const crypto         = require('crypto');
+const zlib           = require('zlib');
 const mongoose       = require('mongoose');
 const { spawn }      = require('child_process');
 require('dotenv').config();
@@ -603,9 +604,24 @@ async function processMessage(clientId, clientType, event, data) {
         const conn = tcpClients.get(clientId);
         if (conn) conn.lastPong = Date.now();
         const deviceId = conn?.deviceId || data?.deviceId;
-        if (deviceId) {
-            broadcastDash('screen:update', { ...data, deviceId });
+        if (!deviceId) return;
+
+        let relayData = data;
+
+        // Android compresses the accessibility-tree JSON with GZIP to save 3G bandwidth.
+        // Detect the compressed envelope, decompress, then relay the original payload.
+        if (data?.compressed === true && typeof data?.data === 'string') {
+            try {
+                const buf   = Buffer.from(data.data, 'base64');
+                const plain = zlib.gunzipSync(buf).toString('utf8');
+                relayData   = { ...JSON.parse(plain), deviceId };
+            } catch (e) {
+                // Decompression failed — drop this frame rather than relay garbage
+                return;
+            }
         }
+
+        broadcastDash('screen:update', { ...relayData, deviceId });
         return;
     }
 

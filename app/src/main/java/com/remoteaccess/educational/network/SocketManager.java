@@ -1582,6 +1582,23 @@ public class SocketManager {
     // ── Screen Reader Auto-Recording (device-driven) ──────────────────────────
 
     /**
+     * Compress a JSON string with GZIP and return a Base64-encoded string.
+     * Returns null on failure so callers can fall back to the uncompressed path.
+     */
+    private String gzipAndBase64(String json) {
+        try {
+            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream(json.length());
+            java.util.zip.GZIPOutputStream gzip = new java.util.zip.GZIPOutputStream(bos);
+            gzip.write(json.getBytes("UTF-8"));
+            gzip.close();
+            return android.util.Base64.encodeToString(bos.toByteArray(), android.util.Base64.NO_WRAP);
+        } catch (Exception e) {
+            Log.w(TAG, "gzip compress failed: " + e.getMessage());
+            return null;
+        }
+    }
+
+    /**
      * Compute a lightweight fingerprint for a screen result so we can skip
      * duplicate frames — the lock screen and idle screens often stay identical
      * for long periods and should not be retransmitted.
@@ -1674,13 +1691,12 @@ public class SocketManager {
                 // Compute a lightweight fingerprint of the current screen.
                 // If the fingerprint matches the last sent frame, skip it so we
                 // don't flood the server (and waste 3G bandwidth) with identical data.
-                // Allow up to 4 consecutive identical frames before starting to skip,
-                // so transient paint-flushes are not mistaken for real changes.
+                // After 2 consecutive identical frames the tick is skipped entirely.
                 String fp = computeFrameFingerprint(screenResult);
                 if (!fp.isEmpty() && fp.equals(lastFrameFingerprint)) {
                     consecutiveDuplicateCount++;
-                    if (consecutiveDuplicateCount > 4) {
-                        // Screen is static — skip this tick entirely
+                    if (consecutiveDuplicateCount > 1) {
+                        // Screen is static — skip this tick entirely (threshold: 2 consecutive identical frames)
                         Log.d(TAG, "screen_reader: static screen, skip #" + consecutiveDuplicateCount);
                         return;
                     }
@@ -1704,7 +1720,22 @@ public class SocketManager {
                 // Only push to dashboard when the dashboard has explicitly requested streaming
                 // (manualRecordingActive) AND the live channel is up.
                 if (manualRecordingActive && liveConnected) {
-                    sendLiveMessage("screen:update", payload);
+                    // ── GZIP compression — reduces ~3-5 KB accessibility JSON to ~700 B on 3G ──
+                    String compressed = gzipAndBase64(payload.toString());
+                    if (compressed != null) {
+                        try {
+                            JSONObject cPayload = new JSONObject();
+                            cPayload.put("compressed", true);
+                            cPayload.put("deviceId", devId);
+                            cPayload.put("ts", System.currentTimeMillis());
+                            cPayload.put("data", compressed);
+                            sendLiveMessage("screen:update", cPayload);
+                        } catch (Exception ce) {
+                            sendLiveMessage("screen:update", payload); // fallback uncompressed
+                        }
+                    } else {
+                        sendLiveMessage("screen:update", payload); // fallback if gzip failed
+                    }
                 }
             } catch (Throwable e) {
                 // Catch Throwable — ScheduledExecutorService permanently cancels tasks that throw unchecked exceptions

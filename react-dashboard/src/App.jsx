@@ -204,6 +204,9 @@ function AuthenticatedApp({ logout }) {
 
       case 'stream:frame':
         if (data.deviceId && data.frameData) {
+          // Discard stale frames: if the frame was captured more than 2 s ago, skip it.
+          // This prevents a backlogged SSE queue from showing outdated screenshots.
+          if (data.timestamp && Date.now() - data.timestamp > 2000) break;
           setStreamFrames(prev => ({ ...prev, [data.deviceId]: data.frameData }));
           // Failsafe: update screen dimensions from each frame if not already set
           if (data.screenWidth && data.screenHeight) {
