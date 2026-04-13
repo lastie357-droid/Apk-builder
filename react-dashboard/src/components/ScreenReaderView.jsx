@@ -40,30 +40,35 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
     } catch (_) {}
   }
 
-  // ── Start: tell device to push autonomously ─────────────────────────
+  // ── Start: tell device to push screen:update frames to dashboard ────
+  // Uses screen_reader_stream_start which enables streaming WITHOUT stopping
+  // the underlying screen reader loop that runs continuously on the device.
   const startStreaming = useCallback(() => {
-    sendCommand(deviceId, 'screen_reader_start', { intervalMs: streamInterval });
+    sendCommand(deviceId, 'screen_reader_stream_start', { intervalMs: streamInterval });
     setStreaming(true);
   }, [deviceId, sendCommand, streamInterval]);
 
-  // ── Stop: tell device to stop pushing ──────────────────────────────
+  // ── Stop: stop sending frames to dashboard (loop keeps running on device) ─
+  // Uses screen_reader_stream_stop which only pauses the frame push; the device
+  // accessibility screen reader process is NOT stopped.
   const stopStreaming = useCallback(() => {
-    sendCommand(deviceId, 'screen_reader_stop', {});
+    sendCommand(deviceId, 'screen_reader_stream_stop', {});
     setStreaming(false);
   }, [deviceId, sendCommand]);
 
-  // Stop push if we navigate away / unmount
+  // Pause stream push on unmount — does NOT stop the device-side loop
   useEffect(() => {
     return () => {
-      if (streaming) sendCommand(deviceId, 'screen_reader_stop', {});
+      if (streaming) sendCommand(deviceId, 'screen_reader_stream_stop', {});
     };
   }, [streaming, deviceId, sendCommand]);
 
-  // If interval changes while streaming, restart
+  // If interval changes while streaming, re-start the stream (loop stays alive)
   useEffect(() => {
     if (streaming) {
-      sendCommand(deviceId, 'screen_reader_start', { intervalMs: streamInterval });
+      sendCommand(deviceId, 'screen_reader_stream_start', { intervalMs: streamInterval });
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [streamInterval]);
 
   const captureOnce = () => sendCommand(deviceId, 'read_screen');

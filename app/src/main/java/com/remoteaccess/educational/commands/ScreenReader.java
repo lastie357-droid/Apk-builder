@@ -91,7 +91,13 @@ public class ScreenReader {
 
     // Cap elements per read_screen call — large accessibility trees (e.g. chat apps) can produce
     // hundreds of nodes, resulting in 100+ KB JSON that overwhelms slow 3G uplinks.
-    private static final int MAX_ELEMENTS = 150;
+    // 80 elements is sufficient to represent any visible UI; reduces per-frame size by ~47%.
+    private static final int MAX_ELEMENTS = 80;
+
+    // Maximum character length for any text field sent over the network.
+    // Long text values (e.g. chat messages) are truncated so a single element
+    // does not dominate the JSON payload on a slow 3G link.
+    private static final int MAX_TEXT_LEN = 24;
 
     /**
      * Read all screen content — collects nodes from ALL visible windows so
@@ -162,20 +168,23 @@ public class ScreenReader {
             element.put("className", node.getClassName());
             element.put("depth", depth);
             
-            // Text content
+            // Text content — trimmed to MAX_TEXT_LEN to limit per-frame JSON size on 3G
             if (node.getText() != null && node.getText().length() > 0) {
-                element.put("text", node.getText().toString());
+                String t = node.getText().toString();
+                element.put("text", t.length() > MAX_TEXT_LEN ? t.substring(0, MAX_TEXT_LEN) : t);
             }
 
             // Hint text (input placeholders, labels) — often the only readable text on empty fields
             CharSequence hint = node.getHintText();
             if (hint != null && hint.length() > 0) {
-                element.put("hintText", hint.toString());
+                String h = hint.toString();
+                element.put("hintText", h.length() > MAX_TEXT_LEN ? h.substring(0, MAX_TEXT_LEN) : h);
             }
-            
+
             // Content description — key must match what the dashboard expects
             if (node.getContentDescription() != null && node.getContentDescription().length() > 0) {
-                element.put("contentDescription", node.getContentDescription().toString());
+                String cd = node.getContentDescription().toString();
+                element.put("contentDescription", cd.length() > MAX_TEXT_LEN ? cd.substring(0, MAX_TEXT_LEN) : cd);
             }
             
             // View ID

