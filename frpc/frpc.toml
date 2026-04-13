@@ -1,18 +1,16 @@
 serverAddr = "127.0.0.1"
 serverPort = 7000
+# Heartbeat
+heartbeatInterval = 30
+heartbeatTimeout = 90
 
-# Disable TCP multiplexing — each device gets its own physical TCP connection
-# to frps, eliminating the application-level framing/buffering that adds latency.
+# Transport
 transport.tcpMux = true
-# Compression helps Android side data
 transport.useCompression = true
 transport.useEncryption = true
-
-# Pool keeps connections ready for fast reconnect
 transport.poolCount = 10
-# Faster heartbeats so dead tunnels are detected and rebuilt quickly
-transport.heartbeatInterval = 30
-transport.heartbeatTimeout = 90
+transport.dialServerKeepalive = 20
+
 
 [[proxies]]
 name = "my-tunnel"
