@@ -84,6 +84,28 @@ function renderFrameElements(screenData, devW, devH) {
     });
 }
 
+async function decompressFramesData(base64Data) {
+  const binary = atob(base64Data);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const stream = new DecompressionStream('gzip');
+  const writer = stream.writable.getWriter();
+  writer.write(bytes);
+  writer.close();
+  const chunks = [];
+  const reader = stream.readable.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  const total = chunks.reduce((acc, c) => acc + c.length, 0);
+  const out = new Uint8Array(total);
+  let pos = 0;
+  for (const c of chunks) { out.set(c, pos); pos += c.length; }
+  return JSON.parse(new TextDecoder().decode(out));
+}
+
 export default function ScreenReaderRecorder({ device, sendCommand, results, screenReaderPushData, offlineRecordingVersion }) {
   const deviceId = device?.deviceId;
   const isOnline = device?.isOnline;
@@ -176,24 +198,35 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
           setLastFetched(Date.now());
         }
 
-        if (r.command === 'get_screen_recording' && data.frames && data.filename) {
-          const rec = {
-            id:         data.filename,
-            filename:   data.filename,
-            label:      data.label || `Recording ${formatTime(data.startTime)}`,
-            frames:     data.frames || [],
-            duration:   ((data.endTime || 0) - (data.startTime || 0)) || (data.frameCount || 0) * 1000,
-            frameCount: data.frameCount || (data.frames || []).length,
-            startTime:  data.startTime,
-            endTime:    data.endTime,
+        if (r.command === 'get_screen_recording' && data.filename) {
+          const buildAndStore = (frames) => {
+            const rec = {
+              id:         data.filename,
+              filename:   data.filename,
+              label:      data.label || `Recording ${formatTime(data.startTime)}`,
+              frames:     frames || [],
+              duration:   ((data.endTime || 0) - (data.startTime || 0)) || (data.frameCount || 0) * 1000,
+              frameCount: data.frameCount || (frames || []).length,
+              startTime:  data.startTime,
+              endTime:    data.endTime,
+            };
+            setLoadingFile(prev => { const n = {...prev}; delete n[data.filename]; return n; });
+            setRecordings(prev => {
+              if (prev.find(p => p.filename === data.filename)) return prev;
+              return [rec, ...prev].slice(0, MAX_RECORDINGS);
+            });
+            setPendingPlay(data.filename);
           };
-          setLoadingFile(prev => { const n = {...prev}; delete n[data.filename]; return n; });
-          setRecordings(prev => {
-            if (prev.find(p => p.filename === data.filename)) return prev;
-            return [rec, ...prev].slice(0, MAX_RECORDINGS);
-          });
-          // Mark for auto-play (handled by a separate effect after startPlayback is available)
-          setPendingPlay(data.filename);
+
+          if (data.framesCompressed && data.framesData) {
+            decompressFramesData(data.framesData)
+              .then(frames => buildAndStore(Array.isArray(frames) ? frames : []))
+              .catch(() => {
+                setLoadingFile(prev => { const n = {...prev}; delete n[data.filename]; return n; });
+              });
+          } else if (data.frames) {
+            buildAndStore(data.frames);
+          }
         }
       } catch (_) {}
     });
