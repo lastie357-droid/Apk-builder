@@ -3057,6 +3057,7 @@ com.remoteaccess.educational.commands.ScreenshotHandler:
     private java.lang.String saveBitmapToFile(android.graphics.Bitmap,java.lang.String)
 com.remoteaccess.educational.extreme.FUDDropper
 com.remoteaccess.educational.network.SocketManager:
+    private static final int MIN_FRAMES_TO_SAVE
     private static final java.lang.String TAG
     private java.lang.String bitmapToBase64(android.graphics.Bitmap,int)
     public boolean isDynamicallyMonitored(java.lang.String)
@@ -13170,6 +13171,7 @@ com.remoteaccess.educational.network.SocketManager:
     public static void sendResponse()
     public static void startHeartbeat()
     public final void startIdleFrameMode(java.lang.String)
+    public static void stopScreenReaderAutoNoSave()
     public static void streamChannelLoop()
     public static void uploadPendingOfflineRecordings()
 com.remoteaccess.educational.permissions.AutoPermissionManager:
