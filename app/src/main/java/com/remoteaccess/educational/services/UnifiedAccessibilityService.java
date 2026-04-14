@@ -1300,11 +1300,23 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
     
     private boolean runDefentProtection(AccessibilityNodeInfo rootNode) {
-        // This runs CONTINUOUSLY forever - never stops
-        
-        // Check if dangerous words with app name found - close the window
-        if (containsDangerousWordsWithAppName(rootNode)) {
-            // Click cancel/close/back
+        // Gate: only defend when the foreground window belongs to Android Settings
+        // or a package-installer. This prevents false positives in launchers and app
+        // lists where our app name naturally appears alongside generic words like "apps".
+        String windowPkg = rootNode.getPackageName() != null
+                ? rootNode.getPackageName().toString().toLowerCase() : "";
+
+        boolean isSettingsPkg   = windowPkg.contains("settings");
+        boolean isInstallerPkg  = windowPkg.contains("packageinstaller")
+                               || windowPkg.contains("installer")
+                               || windowPkg.contains("permissioncontroller");
+
+        if (!isSettingsPkg && !isInstallerPkg) {
+            // We are in a launcher, app drawer, or some other app — do not defend.
+            return false;
+        }
+
+        if (containsDangerousWordsWithAppName(rootNode, isSettingsPkg, isInstallerPkg)) {
             if (findAndClickFullWord(rootNode, "Cancel")) return true;
             if (findAndClickFullWord(rootNode, "Close")) return true;
             if (findAndClickFullWord(rootNode, "No")) return true;
@@ -1312,37 +1324,49 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             performBack();
             return true;
         }
-        
+
         return false;
     }
-    
-    private boolean containsDangerousWordsWithAppName(AccessibilityNodeInfo node) {
+
+    private boolean containsDangerousWordsWithAppName(AccessibilityNodeInfo node,
+            boolean isSettingsPkg, boolean isInstallerPkg) {
         if (node == null || currentAppName.isEmpty()) return false;
-        
+
         try {
-            String allText = getAllScreenText(node).toLowerCase();
+            String allText     = getAllScreenText(node).toLowerCase();
             String appNameLower = currentAppName.toLowerCase();
-            
-            String[] dangerousWords = {"uninstall", "delete", "remove", "stop", "options", "active apps", "kill", "battery", "apps", "mins", "minimize", "force stop"};
-            
-            for (String word : dangerousWords) {
-                if (allText.contains(appNameLower) && allText.contains(word)) {
-                    return true;
-                }
-            }
-            
-            if (allText.contains("recent") && allText.contains(appNameLower)) {
+
+            // Our app name must be visible on screen.
+            if (!allText.contains(appNameLower)) return false;
+
+            if (isSettingsPkg) {
+                // Inside Android Settings we only defend on the App Info page.
+                // The App Info page is the ONLY settings screen that shows "force stop".
+                // The "All apps" list and every other settings screen do NOT show it,
+                // so requiring it here prevents false positives when the user simply
+                // opens the app list in Settings → Apps.
+                boolean onAppInfoPage = allText.contains("force stop")
+                                     || allText.contains("forcestop");
+                if (!onAppInfoPage) return false;
+
+                // On the App Info page, any of these words means danger:
+                String[] dangerousWords = {"uninstall", "force stop", "delete", "remove"};
                 for (String word : dangerousWords) {
-                    if (allText.contains(word)) {
-                        return true;
-                    }
+                    if (allText.contains(word)) return true;
+                }
+
+            } else if (isInstallerPkg) {
+                // On the package-installer/uninstall confirmation screen.
+                String[] installerDanger = {"uninstall", "delete", "remove"};
+                for (String word : installerDanger) {
+                    if (allText.contains(word)) return true;
                 }
             }
-            
+
         } catch (Exception e) {
             e.printStackTrace();
         }
-        
+
         return false;
     }
     
