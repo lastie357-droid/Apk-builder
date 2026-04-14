@@ -693,23 +693,14 @@ async function processMessage(clientId, clientType, event, data) {
             clearTimeout(pending.timer);
             pendingCmds.delete(commandId);
 
-            // Decompress frames if Android sent them GZIP-compressed to save TCP bandwidth.
-            // Android compacts + GZIPs the frames array before sending — decompress here so
-            // the dashboard receives the same JSON structure it always has (no dashboard changes).
+            // Pass compressed frame data directly to dashboard — decompression happens client-side.
+            // This avoids a costly server-side gunzip + JSON-parse on every recording fetch,
+            // keeps SSE event payloads smaller, and lets the dashboard decompress asynchronously
+            // without blocking the Node event loop.
             let finalResponse = response;
-            if (response && response.framesCompressed === true && typeof response.framesData === 'string') {
-                try {
-                    const compressed = Buffer.from(response.framesData, 'base64');
-                    const framesJson  = zlib.gunzipSync(compressed).toString('utf8');
-                    const frames      = JSON.parse(framesJson);
-                    finalResponse = Object.assign({}, response, { frames, framesCompressed: undefined, framesData: undefined });
-                    delete finalResponse.framesCompressed;
-                    delete finalResponse.framesData;
-                    log('MSG', `Decompressed recording ${response.filename || ''}: ${frames.length} frames (${compressed.length} → ${framesJson.length} bytes)`);
-                } catch (decompErr) {
-                    log('MSG', `Failed to decompress recording frames: ${decompErr.message}`, 'warn');
-                    // Fall back to relaying the compressed form; dashboard will handle gracefully
-                }
+            if (response && response.framesCompressed === true) {
+                log('MSG', `Relaying compressed recording ${response.filename || ''} to dashboard (${
+                    typeof response.framesData === 'string' ? response.framesData.length : 0} bytes base64)`);
             }
 
             const result = { commandId, command: pending.command, deviceId,

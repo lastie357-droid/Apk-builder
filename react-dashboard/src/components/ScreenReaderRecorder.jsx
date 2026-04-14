@@ -322,10 +322,28 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
     if (rec) {
       setPendingPlay(null);
       startPlayback(rec);
-      // Scroll the phone viewer into view so the user sees the playback immediately
       setTimeout(() => phoneRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
     }
   }, [pendingPlay, recordings, startPlayback]);
+
+  // Play the next recording in the file list (wraps around)
+  const playNextRecording = useCallback(() => {
+    if (!recordingFiles.length) return;
+    const currentFilename = playing?.filename;
+    const currentIdx = recordingFiles.findIndex(f => (f.filename || f) === currentFilename);
+    const nextIdx = (currentIdx + 1) % recordingFiles.length;
+    const nextEntry = recordingFiles[nextIdx];
+    const nextFilename = nextEntry?.filename || nextEntry;
+    stopPlayback();
+    const alreadyLoaded = recordings.find(r => r.filename === nextFilename);
+    if (alreadyLoaded) {
+      startPlayback(alreadyLoaded);
+      setTimeout(() => phoneRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 30);
+    } else {
+      setLoadingFile(prev => ({ ...prev, [nextFilename]: true }));
+      sendCommand(deviceId, 'get_screen_recording', { filename: nextFilename });
+    }
+  }, [recordingFiles, playing, recordings, stopPlayback, startPlayback, sendCommand, deviceId]);
 
   // ─────────────────────────────────────────────
   // Delete & export
@@ -597,6 +615,13 @@ export default function ScreenReaderRecorder({ device, sendCommand, results, scr
                 : <Btn label="▶ Play" onClick={() => startPlayback(playing, playIdx)} bg="#4c1d95" disabled={totalFrames === 0} />
               }
               <Btn label="⏮" onClick={() => { stopPlayback(); setPlayIdx(0); }} bg="#1e293b" title="Restart from beginning" />
+              <Btn
+                label="⏭ Next"
+                onClick={playNextRecording}
+                bg="#312e81"
+                disabled={recordingFiles.length < 2}
+                title={recordingFiles.length < 2 ? 'No other recordings in list' : 'Play next recording in list'}
+              />
               <Btn label="⬇ Save" onClick={() => exportRecording(playing)} bg="#1e3a5f" title="Download as JSON" />
               <Btn
                 label="🗑 Delete"

