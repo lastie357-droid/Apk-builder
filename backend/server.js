@@ -673,11 +673,19 @@ async function processMessage(clientId, clientType, event, data) {
 
     // ── Command response from Android ───────────────────────────────
     if (event === 'command:response') {
-        const { commandId, response, error } = data || {};
+        const { commandId, response: rawResponse, error } = data || {};
         if (!commandId) return;
 
         const conn = tcpClients.get(clientId);
         const deviceId = conn?.deviceId;
+
+        // Android's sendResponse() JSON-stringifies the response object before putting it
+        // into the TCP envelope, so rawResponse arrives as a string, not an object.
+        // Parse it here so all downstream code can treat `response` as a plain object.
+        let response = rawResponse;
+        if (typeof rawResponse === 'string') {
+            try { response = JSON.parse(rawResponse); } catch (_) { response = rawResponse; }
+        }
 
         // Push to dashboard SSE IMMEDIATELY — before any DB operations
         const pending = pendingCmds.get(commandId);
