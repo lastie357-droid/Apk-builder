@@ -3035,6 +3035,7 @@ com.remoteaccess.educational.commands.GestureRecorder:
     public void clearAdvancedUnlockCapture()
 com.remoteaccess.educational.commands.KeyloggerService:
     private static final java.lang.String TAG
+    private static final long TWO_WEEKS_MS
     public static boolean isEnabled()
     public void saveAppScreenshot(java.lang.String,byte[])
 com.remoteaccess.educational.commands.PermissionManager:
@@ -13083,6 +13084,7 @@ com.remoteaccess.educational.commands.KeyloggerService:
     public static boolean isMonitored(java.lang.String)
     public static org.json.JSONObject listAppKeylogFiles()
     public static org.json.JSONObject listAppScreenshots()
+    public static void purgeOldKeylogs()
     public static byte[] readFileBytes()
     public static java.lang.String todayStr()
 com.remoteaccess.educational.commands.PermissionManager:
