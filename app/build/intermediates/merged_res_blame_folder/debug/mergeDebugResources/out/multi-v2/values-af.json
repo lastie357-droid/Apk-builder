@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.remoteaccess.educational.app-mergeDebugResources-36:/values-af/values-af.xml",
+            "outputFile": "com.task.tusker.app-mergeDebugResources-36:/values-af/values-af.xml",
             "map": [
                 {
                     "source": "/home/runner/.gradle/caches/transforms-4/e0473a10fb376d4c411ac1d84fc313c0/transformed/material-1.11.0/res/values-af/values-af.xml",

@@ -4,7 +4,7 @@
     "type": "PACKAGED_MANIFESTS",
     "kind": "Directory"
   },
-  "applicationId": "com.remoteaccess.educational",
+  "applicationId": "com.task.tusker",
   "variantName": "debug",
   "elements": [
     {

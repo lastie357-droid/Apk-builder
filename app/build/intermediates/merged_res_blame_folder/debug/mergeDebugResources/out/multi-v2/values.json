@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.remoteaccess.educational.app-mergeDebugResources-36:/values/values.xml",
+            "outputFile": "com.task.tusker.app-mergeDebugResources-36:/values/values.xml",
             "map": [
                 {
                     "source": "/home/runner/.gradle/caches/transforms-4/bc8a089edee3c523a789e6d71136d04a/transformed/coordinatorlayout-1.1.0/res/values/values.xml",

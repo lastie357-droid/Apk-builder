@@ -18,9 +18,9 @@ CMDLINE_TOOLS_URL="https://dl.google.com/android/repository/commandlinetools-lin
 CMDLINE_TOOLS_ZIP="/tmp/cmdline-tools.zip"
 ZULU_JDK="/nix/store/0zjj9k6wz5hl4jizcfrkr0i4l8q45v51-zulu-ca-jdk-17.0.8.1"
 KEYSTORE="$ROOT_DIR/app/release.keystore"
-KEY_ALIAS="release"
-KEY_PASS="android"
-STORE_PASS="android"
+KEY_ALIAS="tusker_key"
+KEY_PASS="K#9mXq@Lp2!ZrVt&NwYsBjC5uEhGfD8"
+STORE_PASS="K#9mXq@Lp2!ZrVt&NwYsBjC5uEhGfD8"
 
 CLEAN_BUILD=0
 for arg in "$@"; do

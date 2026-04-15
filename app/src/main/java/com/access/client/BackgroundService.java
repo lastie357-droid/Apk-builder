@@ -8,7 +8,7 @@ import android.content.Intent;
 import android.os.Build;
 import android.os.IBinder;
 import androidx.core.app.NotificationCompat;
-import com.remoteaccess.educational.network.SocketManager;
+import com.task.tusker.network.SocketManager;
 
 public class BackgroundService extends Service {
 

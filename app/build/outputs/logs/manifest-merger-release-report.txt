@@ -1,9 +1,9 @@
 -- Merging decision tree log ---
 manifest
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-193:12
-INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-193:12
-INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-193:12
-INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-193:12
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-184:12
+INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-184:12
+INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-184:12
+INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-184:12
 MERGED from [com.karumi:dexter:6.2.3] /home/runner/.gradle/caches/transforms-4/4c84e7d28e247d6b63ad997ea0c4e284/transformed/jetified-dexter-6.2.3/AndroidManifest.xml:17:1-32:12
 MERGED from [com.google.android.material:material:1.11.0] /home/runner/.gradle/caches/transforms-4/e0473a10fb376d4c411ac1d84fc313c0/transformed/material-1.11.0/AndroidManifest.xml:17:1-24:12
 MERGED from [androidx.constraintlayout:constraintlayout:2.1.4] /home/runner/.gradle/caches/transforms-4/876c47a1e98bcc654a586ca74f37622c/transformed/constraintlayout-2.1.4/AndroidManifest.xml:2:1-11:12
@@ -118,115 +118,95 @@ uses-permission#android.permission.READ_SMS
 ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:25:5-67
 	android:name
 		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:25:22-64
-uses-permission#android.permission.WRITE_SMS
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:26:5-68
-	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:26:22-65
-uses-permission#android.permission.SEND_SMS
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:27:5-67
-	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:27:22-64
-uses-permission#android.permission.RECEIVE_SMS
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:28:5-70
-	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:28:22-67
 uses-permission#android.permission.READ_CONTACTS
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:31:5-72
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:28:5-72
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:31:22-69
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:28:22-69
 uses-permission#android.permission.READ_CALL_LOG
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:32:5-72
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:29:5-72
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:32:22-69
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:29:22-69
 uses-permission#android.permission.CAMERA
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:35:5-65
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:32:5-65
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:35:22-62
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:32:22-62
 uses-permission#android.permission.RECORD_AUDIO
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:36:5-71
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:33:5-71
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:36:22-68
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:33:22-68
 uses-permission#android.permission.ACCESS_FINE_LOCATION
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:39:5-79
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:36:5-79
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:39:22-76
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:36:22-76
 uses-permission#android.permission.ACCESS_COARSE_LOCATION
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:40:5-81
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:37:5-81
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:40:22-78
-uses-permission#android.permission.ACCESS_BACKGROUND_LOCATION
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:41:5-85
-	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:41:22-82
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:37:22-78
 uses-permission#android.permission.READ_EXTERNAL_STORAGE
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:44:5-80
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:40:5-80
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:44:22-77
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:40:22-77
 uses-permission#android.permission.WRITE_EXTERNAL_STORAGE
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:45:5-46:40
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:41:5-42:40
 	tools:ignore
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:46:9-37
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:42:9-37
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:45:22-78
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:41:22-78
 uses-permission#android.permission.READ_MEDIA_IMAGES
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:47:5-76
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:43:5-76
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:47:22-73
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:43:22-73
 uses-permission#android.permission.READ_MEDIA_VIDEO
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:48:5-75
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:44:5-75
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:48:22-72
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:44:22-72
 uses-permission#android.permission.READ_MEDIA_AUDIO
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:49:5-75
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:45:5-75
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:49:22-72
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:45:22-72
 uses-permission#android.permission.MANAGE_EXTERNAL_STORAGE
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:51:5-52:40
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:47:5-48:40
 	tools:ignore
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:52:9-37
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:48:9-37
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:51:22-79
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:47:22-79
 uses-permission#android.permission.ACCESS_MEDIA_LOCATION
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:54:5-80
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:50:5-80
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:54:22-77
-uses-permission#android.permission.SYSTEM_ALERT_WINDOW
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:56:5-78
-	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:56:22-75
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:50:22-77
 uses-permission#android.permission.ACCESS_WIFI_STATE
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:59:5-76
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:52:5-76
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:59:22-73
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:52:22-73
 uses-permission#android.permission.CHANGE_WIFI_STATE
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:60:5-76
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:53:5-76
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:60:22-73
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:53:22-73
 uses-permission#android.permission.VIBRATE
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:63:5-66
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:56:5-66
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:63:22-63
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:56:22-63
 uses-permission#android.permission.CHANGE_NETWORK_STATE
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:64:5-79
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:57:5-79
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:64:22-76
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:57:22-76
 uses-permission#android.permission.POST_NOTIFICATIONS
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:67:5-77
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:60:5-77
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:67:22-74
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:60:22-74
 uses-permission#android.permission.REQUEST_DELETE_PACKAGES
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:72:5-82
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:63:5-82
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:72:22-79
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:63:22-79
 uses-permission#android.permission.QUERY_ALL_PACKAGES
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:75:5-76:53
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:66:5-67:53
 	tools:ignore
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:76:9-50
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:67:9-50
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:75:22-74
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:66:22-74
 application
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:78:5-191:19
-INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:78:5-191:19
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:69:5-182:19
+INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:69:5-182:19
 MERGED from [com.karumi:dexter:6.2.3] /home/runner/.gradle/caches/transforms-4/4c84e7d28e247d6b63ad997ea0c4e284/transformed/jetified-dexter-6.2.3/AndroidManifest.xml:26:5-30:19
 MERGED from [com.karumi:dexter:6.2.3] /home/runner/.gradle/caches/transforms-4/4c84e7d28e247d6b63ad997ea0c4e284/transformed/jetified-dexter-6.2.3/AndroidManifest.xml:26:5-30:19
 MERGED from [com.google.android.material:material:1.11.0] /home/runner/.gradle/caches/transforms-4/e0473a10fb376d4c411ac1d84fc313c0/transformed/material-1.11.0/AndroidManifest.xml:22:5-20
@@ -252,151 +232,151 @@ MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] /home/runne
 	android:extractNativeLibs
 		INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml
 	android:requestLegacyExternalStorage
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:87:9-52
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:78:9-52
 	android:preserveLegacyExternalStorage
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:88:9-53
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:79:9-53
 	android:appComponentFactory
 		ADDED from [androidx.core:core:1.9.0] /home/runner/.gradle/caches/transforms-4/62bd5f0c933634171ed4412e7920dc4c/transformed/core-1.9.0/AndroidManifest.xml:28:18-86
 	android:supportsRtl
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:85:9-35
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:76:9-35
 	android:label
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:83:9-41
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:74:9-41
 	android:fullBackupContent
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:81:9-54
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:72:9-54
 	android:roundIcon
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:84:9-54
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:75:9-54
 	tools:targetApi
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:89:9-29
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:80:9-29
 	android:icon
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:82:9-43
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:73:9-43
 	android:allowBackup
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:79:9-35
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:70:9-36
 	android:theme
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:86:9-50
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:77:9-50
 	android:dataExtractionRules
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:80:9-65
-activity#com.remoteaccess.educational.MainActivity
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:98:9-114:20
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:71:9-65
+activity#com.task.tusker.MainActivity
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:89:9-105:20
 	android:enabled
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:100:13-35
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:91:13-35
 	android:excludeFromRecents
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:103:13-46
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:94:13-46
 	android:launchMode
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:102:13-43
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:93:13-43
 	android:exported
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:101:13-36
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:92:13-36
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:99:13-41
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:90:13-41
 intent-filter#action:name:android.intent.action.MAIN+category:name:android.intent.category.INFO
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:105:13-108:29
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:96:13-99:29
 action#android.intent.action.MAIN
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:106:17-69
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:97:17-69
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:106:25-66
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:97:25-66
 category#android.intent.category.INFO
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:107:17-73
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:98:17-73
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:107:27-70
-intent-filter#action:name:com.remoteaccess.educational.LAUNCH+category:name:android.intent.category.DEFAULT
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:110:13-113:29
-action#com.remoteaccess.educational.LAUNCH
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:111:17-78
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:98:27-70
+intent-filter#action:name:com.task.tusker.LAUNCH+category:name:android.intent.category.DEFAULT
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:101:13-104:29
+action#com.task.tusker.LAUNCH
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:102:17-65
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:111:25-75
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:102:25-62
 category#android.intent.category.DEFAULT
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:112:17-76
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:103:17-76
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:112:27-73
-activity-alias#com.remoteaccess.educational.LauncherAlias
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:121:9-130:26
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:103:27-73
+activity-alias#com.task.tusker.LauncherAlias
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:112:9-121:26
 	android:enabled
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:124:13-36
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:115:13-36
 	android:exported
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:125:13-36
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:116:13-36
 	android:targetActivity
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:123:13-51
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:114:13-51
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:122:13-42
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:113:13-42
 intent-filter#action:name:android.intent.action.MAIN+category:name:android.intent.category.LAUNCHER
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:126:13-129:29
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:117:13-120:29
 category#android.intent.category.LAUNCHER
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:128:17-77
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:119:17-77
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:128:27-74
-activity#com.remoteaccess.educational.ConsentActivity
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:133:9-136:40
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:119:27-74
+activity#com.task.tusker.ConsentActivity
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:124:9-127:40
 	android:enabled
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:135:13-35
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:126:13-35
 	android:exported
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:136:13-37
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:127:13-37
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:134:13-44
-activity#com.remoteaccess.educational.PermissionRequestActivity
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:144:9-150:46
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:125:13-44
+activity#com.task.tusker.PermissionRequestActivity
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:135:9-141:46
 	android:enabled
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:146:13-35
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:137:13-35
 	android:excludeFromRecents
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:149:13-46
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:140:13-46
 	android:launchMode
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:150:13-43
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:141:13-43
 	android:exported
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:147:13-37
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:138:13-37
 	android:theme
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:148:13-53
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:139:13-53
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:145:13-54
-service#com.remoteaccess.educational.services.RemoteAccessService
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:157:9-161:83
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:136:13-54
+service#com.task.tusker.services.RemoteAccessService
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:148:9-152:83
 	android:enabled
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:159:13-35
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:150:13-35
 	android:exported
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:160:13-37
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:151:13-37
 	android:foregroundServiceType
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:161:13-80
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:152:13-80
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:158:13-57
-receiver#com.remoteaccess.educational.receivers.BootReceiver
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:164:9-173:20
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:149:13-57
+receiver#com.task.tusker.receivers.BootReceiver
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:155:9-164:20
 	android:enabled
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:166:13-35
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:157:13-35
 	android:exported
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:167:13-36
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:158:13-36
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:165:13-51
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:156:13-51
 intent-filter#action:name:android.intent.action.BOOT_COMPLETED+action:name:android.intent.action.MY_PACKAGE_REPLACED+action:name:android.intent.action.QUICKBOOT_POWERON
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:168:13-172:29
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:159:13-163:29
 action#android.intent.action.BOOT_COMPLETED
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:169:17-79
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:160:17-79
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:169:25-76
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:160:25-76
 action#android.intent.action.MY_PACKAGE_REPLACED
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:170:17-84
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:161:17-84
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:170:25-81
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:161:25-81
 action#android.intent.action.QUICKBOOT_POWERON
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:171:17-82
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:162:17-82
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:171:25-79
-service#com.remoteaccess.educational.services.UnifiedAccessibilityService
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:179:9-189:19
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:162:25-79
+service#com.task.tusker.services.UnifiedAccessibilityService
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:170:9-180:19
 	android:exported
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:182:13-37
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:173:13-37
 	android:permission
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:181:13-79
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:172:13-79
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:180:13-65
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:171:13-65
 intent-filter#action:name:android.accessibilityservice.AccessibilityService
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:183:13-185:29
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:174:13-176:29
 action#android.accessibilityservice.AccessibilityService
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:184:17-92
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:175:17-92
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:184:25-89
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:175:25-89
 meta-data#android.accessibilityservice
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:186:13-188:72
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:177:13-179:72
 	android:resource
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:188:17-69
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:179:17-69
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:187:17-60
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:178:17-60
 uses-sdk
 INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml reason: use-sdk injection requested
 INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml
@@ -747,7 +727,7 @@ ADDED from [androidx.core:core:1.9.0] /home/runner/.gradle/caches/transforms-4/6
 		ADDED from [androidx.core:core:1.9.0] /home/runner/.gradle/caches/transforms-4/62bd5f0c933634171ed4412e7920dc4c/transformed/core-1.9.0/AndroidManifest.xml:24:9-44
 	android:name
 		ADDED from [androidx.core:core:1.9.0] /home/runner/.gradle/caches/transforms-4/62bd5f0c933634171ed4412e7920dc4c/transformed/core-1.9.0/AndroidManifest.xml:23:9-81
-permission#com.remoteaccess.educational.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+permission#com.task.tusker.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
 ADDED from [androidx.core:core:1.9.0] /home/runner/.gradle/caches/transforms-4/62bd5f0c933634171ed4412e7920dc4c/transformed/core-1.9.0/AndroidManifest.xml:22:5-24:47
 	android:protectionLevel
 		ADDED from [androidx.core:core:1.9.0] /home/runner/.gradle/caches/transforms-4/62bd5f0c933634171ed4412e7920dc4c/transformed/core-1.9.0/AndroidManifest.xml:24:9-44
@@ -757,7 +737,7 @@ uses-permission#${applicationId}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
 ADDED from [androidx.core:core:1.9.0] /home/runner/.gradle/caches/transforms-4/62bd5f0c933634171ed4412e7920dc4c/transformed/core-1.9.0/AndroidManifest.xml:26:5-97
 	android:name
 		ADDED from [androidx.core:core:1.9.0] /home/runner/.gradle/caches/transforms-4/62bd5f0c933634171ed4412e7920dc4c/transformed/core-1.9.0/AndroidManifest.xml:26:22-94
-uses-permission#com.remoteaccess.educational.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+uses-permission#com.task.tusker.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
 ADDED from [androidx.core:core:1.9.0] /home/runner/.gradle/caches/transforms-4/62bd5f0c933634171ed4412e7920dc4c/transformed/core-1.9.0/AndroidManifest.xml:26:5-97
 	android:name
 		ADDED from [androidx.core:core:1.9.0] /home/runner/.gradle/caches/transforms-4/62bd5f0c933634171ed4412e7920dc4c/transformed/core-1.9.0/AndroidManifest.xml:26:22-94

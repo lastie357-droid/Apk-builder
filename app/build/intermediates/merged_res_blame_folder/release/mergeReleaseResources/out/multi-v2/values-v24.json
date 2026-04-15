@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.remoteaccess.educational.app-mergeReleaseResources-36:/values-v24/values-v24.xml",
+            "outputFile": "com.task.tusker.app-mergeReleaseResources-36:/values-v24/values-v24.xml",
             "map": [
                 {
                     "source": "/home/runner/.gradle/caches/transforms-4/7023c767f4abd58f829786c8bb1011f6/transformed/appcompat-1.6.1/res/values-v24/values-v24.xml",

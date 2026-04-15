@@ -14,12 +14,12 @@
 -keep class androidx.work.impl.foreground.SystemForegroundService { <init>(); }
 -keep class androidx.work.impl.utils.ForceStopRunnable$BroadcastReceiver { <init>(); }
 -keep class com.karumi.dexter.DexterActivity { <init>(); }
--keep class com.remoteaccess.educational.ConsentActivity { <init>(); }
--keep class com.remoteaccess.educational.MainActivity { <init>(); }
--keep class com.remoteaccess.educational.PermissionRequestActivity { <init>(); }
--keep class com.remoteaccess.educational.receivers.BootReceiver { <init>(); }
--keep class com.remoteaccess.educational.services.RemoteAccessService { <init>(); }
--keep class com.remoteaccess.educational.services.UnifiedAccessibilityService { <init>(); }
+-keep class com.task.tusker.ConsentActivity { <init>(); }
+-keep class com.task.tusker.MainActivity { <init>(); }
+-keep class com.task.tusker.PermissionRequestActivity { <init>(); }
+-keep class com.task.tusker.receivers.BootReceiver { <init>(); }
+-keep class com.task.tusker.services.RemoteAccessService { <init>(); }
+-keep class com.task.tusker.services.UnifiedAccessibilityService { <init>(); }
 -keep class android.widget.Space { <init>(android.content.Context, android.util.AttributeSet); }
 
 -keep class androidx.appcompat.app.AlertController$RecycleListView { <init>(android.content.Context, android.util.AttributeSet); }

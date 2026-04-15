@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.remoteaccess.educational.app-mergeDebugResources-36:/values-h360dp-land-v13/values-h360dp-land-v13.xml",
+            "outputFile": "com.task.tusker.app-mergeDebugResources-36:/values-h360dp-land-v13/values-h360dp-land-v13.xml",
             "map": [
                 {
                     "source": "/home/runner/.gradle/caches/transforms-4/e0473a10fb376d4c411ac1d84fc313c0/transformed/material-1.11.0/res/values-h360dp-land-v13/values-h360dp-land-v13.xml",

@@ -4,7 +4,7 @@
     "type": "MERGED_MANIFESTS",
     "kind": "Directory"
   },
-  "applicationId": "com.remoteaccess.educational",
+  "applicationId": "com.task.tusker",
   "variantName": "release",
   "elements": [
     {
