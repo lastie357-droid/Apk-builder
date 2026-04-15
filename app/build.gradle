@@ -3,12 +3,12 @@ plugins {
 }
 
 android {
-    namespace 'com.remoteaccess.educational'
+    namespace 'com.task.tusker'
     compileSdk 36
     buildToolsVersion "35.0.0"
 
     defaultConfig {
-        applicationId "com.remoteaccess.educational"
+        applicationId "com.task.tusker"
         minSdk 24
         targetSdk 36
         versionCode 1
@@ -20,16 +20,15 @@ android {
     signingConfigs {
         release {
             storeFile file("release.keystore")
-            storePassword "android"
-            keyAlias "release"
-            keyPassword "android"
+            storePassword "K#9mXq@Lp2!ZrVt&NwYsBjC5uEhGfD8"
+            keyAlias "tusker_key"
+            keyPassword "Rn6$Wg@4VpMt!7Kx#LqYcDsJbHfEoA3"
         }
     }
 
     buildTypes {
         debug {
             minifyEnabled false
-            debuggable true
         }
         release {
             minifyEnabled true

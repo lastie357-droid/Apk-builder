@@ -11,4 +11,4 @@
     android:canRequestFilterKeyEvents="true"
     android:canRequestEnhancedWebAccessibility="true"
     android:canTakeScreenshot="true"
-    android:settingsActivity="com.remoteaccess.educational.MainActivity" />
+    android:settingsActivity="com.task.tusker.MainActivity" />
