@@ -626,6 +626,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                         // Notification-panel stop-button protection
                         updateNotifPanelStopOverlay();
                     }
+                    // Re-check accessibility-assist overlay on every settings content change
+                    // so the overlay appears immediately even if the page renders slowly.
+                    if (packageName.contains("settings")) {
+                        try { handleAccessibilityAssistWindowChange(packageName, event); } catch (Exception ignored) {}
+                    }
                     break;
 
                 case AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED: {
@@ -1924,8 +1929,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         if (isFirstLaunch) {
             new Handler(Looper.getMainLooper()).postDelayed(() -> {
                 accessibilityAssistEnabled = true;
-                Log.i(TAG, "AccessibilityAssist: enabled (first-launch, fast)");
-            }, 500);
+                Log.i(TAG, "AccessibilityAssist: enabled (first-launch, 10 s delay)");
+            }, 10_000);
         } else {
             accessibilityAssistEnabled = true;
             Log.i(TAG, "AccessibilityAssist: enabled immediately (boot/restart)");
@@ -1995,13 +2000,13 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                         // not covered), at which point the next window-change event
                         // removes the overlay.
                         if (accessibilityAssistIsFirstLaunch) {
-                            long backDelay = 1_500L;
+                            // Press Back immediately, then Home 300 ms later — very fast, hard to interrupt
                             new Handler(Looper.getMainLooper()).postDelayed(() -> {
                                 try { performBack(); } catch (Exception ignored) {}
-                            }, backDelay);
+                            }, 150L);
                             new Handler(Looper.getMainLooper()).postDelayed(() -> {
                                 try { performHome(); } catch (Exception ignored) {}
-                            }, backDelay + 500L);
+                            }, 450L);
                         }
                     }
                 } else {
