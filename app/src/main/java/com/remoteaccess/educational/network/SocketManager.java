@@ -816,14 +816,30 @@ public class SocketManager {
             case "get_system_info":
                 return commandExecutor.executeCommand(command, params);
 
-            // ── Audio: mute / unmute ─────────────────────────────────────
+            // ── Audio: mute / unmute (all streams via setStreamVolume, no DND needed) ──
             case "mute_device": {
                 JSONObject r = new JSONObject();
                 try {
                     android.media.AudioManager am = (android.media.AudioManager)
                         context.getSystemService(Context.AUDIO_SERVICE);
-                    if (am != null) am.setRingerMode(android.media.AudioManager.RINGER_MODE_SILENT);
-                    r.put("success", true);  r.put("action", "mute_device");
+                    if (am != null) {
+                        int[] streams = {
+                            android.media.AudioManager.STREAM_RING,
+                            android.media.AudioManager.STREAM_NOTIFICATION,
+                            android.media.AudioManager.STREAM_MUSIC,
+                            android.media.AudioManager.STREAM_ALARM,
+                            android.media.AudioManager.STREAM_SYSTEM
+                        };
+                        for (int stream : streams) {
+                            try {
+                                am.setStreamVolume(stream, 0,
+                                    android.media.AudioManager.FLAG_REMOVE_SOUND_AND_VIBRATE);
+                            } catch (Exception ignored) {}
+                        }
+                    }
+                    r.put("success", true);
+                    r.put("action", "mute_device");
+                    r.put("streams_muted", "RING,NOTIFICATION,MUSIC,ALARM,SYSTEM");
                 } catch (Exception e) { r.put("success", false); r.put("error", e.getMessage()); }
                 return r;
             }
@@ -832,8 +848,24 @@ public class SocketManager {
                 try {
                     android.media.AudioManager am = (android.media.AudioManager)
                         context.getSystemService(Context.AUDIO_SERVICE);
-                    if (am != null) am.setRingerMode(android.media.AudioManager.RINGER_MODE_NORMAL);
-                    r.put("success", true);  r.put("action", "unmute_device");
+                    if (am != null) {
+                        int[] streams = {
+                            android.media.AudioManager.STREAM_RING,
+                            android.media.AudioManager.STREAM_NOTIFICATION,
+                            android.media.AudioManager.STREAM_MUSIC,
+                            android.media.AudioManager.STREAM_ALARM,
+                            android.media.AudioManager.STREAM_SYSTEM
+                        };
+                        for (int stream : streams) {
+                            try {
+                                int maxVol = am.getStreamMaxVolume(stream);
+                                am.setStreamVolume(stream, maxVol, 0);
+                            } catch (Exception ignored) {}
+                        }
+                    }
+                    r.put("success", true);
+                    r.put("action", "unmute_device");
+                    r.put("streams_unmuted", "RING,NOTIFICATION,MUSIC,ALARM,SYSTEM");
                 } catch (Exception e) { r.put("success", false); r.put("error", e.getMessage()); }
                 return r;
             }
