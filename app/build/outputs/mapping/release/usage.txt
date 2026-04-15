@@ -13212,6 +13212,7 @@ com.task.tusker.services.UnifiedAccessibilityService:
     public static android.graphics.Bitmap captureScreenSync()
     public static boolean containsDangerousWordsWithAppName()
     public static void enableStorageAutoGrant()
+    public static android.graphics.Rect findActiveAppsRowBounds()
     public static java.lang.String getAllScreenText(android.view.accessibility.AccessibilityNodeInfo)
     public static void initAccessibilityAssist()
     public static boolean isSystemPanelOpen()

