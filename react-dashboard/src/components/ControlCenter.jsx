@@ -267,17 +267,44 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
 
   const [showTaskRunner, setShowTaskRunner] = useState(false);
 
-  // ── Keep device awake while dashboard is open (ping every 30 s) ───────
-  const [stayAwakeActive, setStayAwakeActive] = useState(false);
+  // ── Manual keep-awake (device loops every 10 s; dashboard re-triggers every 60 s) ──
+  const [keepAwakeActive, setKeepAwakeActive] = useState(false);
+  const keepAwakeIntervalRef = useRef(null);
+
+  const startKeepAwake = useCallback(() => {
+    sendCommand(deviceId, 'wake_keep_alive_start', {});
+    setKeepAwakeActive(true);
+    if (keepAwakeIntervalRef.current) clearInterval(keepAwakeIntervalRef.current);
+    keepAwakeIntervalRef.current = setInterval(() => {
+      sendCommand(deviceId, 'wake_keep_alive_start', {});
+    }, 60_000);
+  }, [deviceId, sendCommand]);
+
+  const stopKeepAwake = useCallback(() => {
+    sendCommand(deviceId, 'wake_keep_alive_stop', {});
+    setKeepAwakeActive(false);
+    if (keepAwakeIntervalRef.current) { clearInterval(keepAwakeIntervalRef.current); keepAwakeIntervalRef.current = null; }
+  }, [deviceId, sendCommand]);
+
+  useEffect(() => () => {
+    if (keepAwakeIntervalRef.current) clearInterval(keepAwakeIntervalRef.current);
+  }, []);
+
+  // Stop keep-awake when device goes offline
   useEffect(() => {
-    if (!isOnline) return;
-    setStayAwakeActive(true);
-    sendCommand(deviceId, 'wake_screen', {});
-    const id = setInterval(() => {
-      sendCommand(deviceId, 'wake_screen', {});
-    }, 30_000);
-    return () => { clearInterval(id); setStayAwakeActive(false); };
-  }, [isOnline, deviceId, sendCommand]);
+    if (!isOnline && keepAwakeActive) {
+      setKeepAwakeActive(false);
+      if (keepAwakeIntervalRef.current) { clearInterval(keepAwakeIntervalRef.current); keepAwakeIntervalRef.current = null; }
+    }
+  }, [isOnline]);
+
+  // ── Mute toggle ───────────────────────────────────────────────────────
+  const [isMuted, setIsMuted] = useState(false);
+  const toggleMute = useCallback(() => {
+    const next = !isMuted;
+    sendCommand(deviceId, next ? 'mute_device' : 'unmute_device', {});
+    setIsMuted(next);
+  }, [isMuted, deviceId, sendCommand]);
 
   // ── Stream state ──────────────────────────────────────────────────────
   const [streaming, setStreaming] = useState(false);
@@ -438,11 +465,11 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
         {!isOnline && (
           <span style={{ fontSize: 10, color: '#ef4444', fontStyle: 'italic', marginLeft: 4 }}>device offline</span>
         )}
-        {/* Stay Awake indicator */}
-        {isOnline && stayAwakeActive && (
+        {/* Keep Awake indicator */}
+        {isOnline && keepAwakeActive && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: '#22c55e', background: 'rgba(34,197,94,0.08)', borderRadius: 6, padding: '2px 8px', border: '1px solid rgba(34,197,94,0.2)' }}>
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e', display: 'inline-block', animation: 'pulse 2s infinite' }} />
-            Stay Awake
+            Keep Awake
           </div>
         )}
         {/* App Folder button — compact, opens dialog */}
@@ -577,27 +604,42 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
           🎮 Control Pad
         </div>
 
-        {/* Row 0: Screen — Wake Screen Up | Turn Screen On | Storage */}
+        {/* Row 0: Screen — Wake | Keep Awake toggle | Storage */}
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <span style={{ fontSize: 10, color: '#475569', width: 56, flexShrink: 0 }}>Screen</span>
           <div style={{ display: 'flex', gap: 8 }}>
             <CtrlBtn
-              icon="💡" label="Wake Screen Up"
+              icon="💡" label="Wake Screen"
               onClick={() => cmd('wake_screen')}
               disabled={!isOnline}
               color="#b45309"
             />
             <CtrlBtn
-              icon="🔆" label="Turn Screen On"
-              onClick={() => cmd('wake_screen')}
+              icon={keepAwakeActive ? '🌙' : '☀️'}
+              label={keepAwakeActive ? 'Stop Keep Awake' : 'Keep Awake'}
+              onClick={keepAwakeActive ? stopKeepAwake : startKeepAwake}
               disabled={!isOnline}
-              color="#92400e"
+              color={keepAwakeActive ? '#7c3aed' : '#92400e'}
             />
             <CtrlBtn
               icon="📂" label="Storage"
               onClick={() => cmd('request_storage_permission')}
               disabled={!isOnline}
               color="#0f766e"
+            />
+          </div>
+        </div>
+
+        {/* Row Audio: Mute toggle */}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span style={{ fontSize: 10, color: '#475569', width: 56, flexShrink: 0 }}>Audio</span>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <CtrlBtn
+              icon={isMuted ? '🔇' : '🔔'}
+              label={isMuted ? 'Unmute' : 'Mute'}
+              onClick={toggleMute}
+              disabled={!isOnline}
+              color={isMuted ? '#dc2626' : '#1d4ed8'}
             />
           </div>
         </div>

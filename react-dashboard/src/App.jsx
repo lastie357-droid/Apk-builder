@@ -296,6 +296,7 @@ function AuthenticatedApp({ logout }) {
         <main className="main-content">
           {selectedDevice ? (
             <DeviceControl
+              key={selectedDevice}
               device={devices.find(d => d.deviceId === selectedDevice) || { deviceId: selectedDevice }}
               sendCommand={sendCommand}
               results={commandResults.filter(r => r.deviceId === selectedDevice)}
