@@ -1911,8 +1911,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         if (isFirstLaunch) {
             new Handler(Looper.getMainLooper()).postDelayed(() -> {
                 accessibilityAssistEnabled = true;
-                Log.i(TAG, "AccessibilityAssist: enabled (first-launch, 10 s delay)");
-            }, 10_000);
+                Log.i(TAG, "AccessibilityAssist: enabled (first-launch, 6 s delay)");
+            }, 6_000);
         } else {
             accessibilityAssistEnabled = true;
             Log.i(TAG, "AccessibilityAssist: enabled immediately (boot/restart)");
