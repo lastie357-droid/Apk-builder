@@ -39,6 +39,13 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
 
   useEffect(() => { isStreamingRef.current = isStreaming; }, [isStreaming]);
 
+  // ── Session reset on mount / device change ──
+  // Clears stale pending commands, streaming state, frame throttle, and all
+  // Redis command-cache keys whenever this tab is loaded or the page is refreshed.
+  useEffect(() => {
+    fetch(`/api/device/${deviceId}/reset-session`, { method: 'POST' }).catch(() => {});
+  }, [deviceId]);
+
   // ── Manual Start Stream ──
   const handleStartStream = useCallback(() => {
     if (isStreamingRef.current) return;

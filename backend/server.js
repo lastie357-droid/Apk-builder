@@ -1090,6 +1090,40 @@ app.post('/api/commands/flush', (req, res) => {
     res.json({ success: true, message: 'Queue flushed', pendingBefore: pendingCmds.size });
 });
 
+// ── Dashboard session reset — called when ScreenControl / ScreenReader refreshes ──
+// Clears all volatile session state for a device without touching MongoDB or the
+// live TCP connection.  Specifically:
+//   • Cancels every pending command timer and removes it from the in-memory map
+//   • Removes the device from the active-streaming set
+//   • Resets the per-device frame-relay throttle timestamp
+//   • Scans Redis and deletes every command:* cache key (screenshots, frame blobs, results)
+app.post('/api/device/:deviceId/reset-session', async (req, res) => {
+    const { deviceId } = req.params;
+    if (!deviceId) return res.status(400).json({ success: false, error: 'deviceId required' });
+
+    // 1. Cancel and remove all pending commands for this device
+    let cleared = 0;
+    for (const [cid, pending] of pendingCmds.entries()) {
+        if (pending.deviceId === deviceId) {
+            clearTimeout(pending.timer);
+            pendingCmds.delete(cid);
+            cleared++;
+        }
+    }
+
+    // 2. Remove from active streaming set
+    deviceStreamingState.delete(deviceId);
+
+    // 3. Reset frame throttle timestamp
+    deviceLastFrameMs.delete(deviceId);
+
+    // 4. Clear all command:* keys from Redis (command result cache, screenshot blobs, etc.)
+    const redisCleared = await R.clearCommandCache();
+
+    log('SESSION', `reset-session for ${deviceId}: ${cleared} pending cmd(s) cleared, ${redisCleared} Redis key(s) removed`);
+    res.json({ success: true, deviceId, pendingCleared: cleared, redisKeysRemoved: redisCleared });
+});
+
 // ── Task Studio — MongoDB-backed workflow storage (tasks are GLOBAL) ──────────
 app.get('/api/tasks', async (req, res) => {
     try {

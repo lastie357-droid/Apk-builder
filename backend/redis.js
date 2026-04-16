@@ -295,6 +295,35 @@ async function getStats() {
     }
 }
 
+// ── Session reset helper ──────────────────────────────────────────────────────
+
+/**
+ * Delete all command:* cache keys from Redis.
+ * Called when the dashboard refreshes on ScreenControl or ScreenReader tab so
+ * stale command results, pending frame requests, and screenshot blobs don't
+ * linger in the cache between sessions.
+ */
+async function clearCommandCache() {
+    if (!isConnected()) return 0;
+    try {
+        let cursor = '0';
+        let deleted = 0;
+        do {
+            const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', 'command:*', 'COUNT', 200);
+            cursor = nextCursor;
+            if (keys.length) {
+                await redis.del(...keys);
+                deleted += keys.length;
+            }
+        } while (cursor !== '0');
+        log(`clearCommandCache: removed ${deleted} command cache key(s)`);
+        return deleted;
+    } catch (e) {
+        log(`clearCommandCache error: ${e.message}`, 'warn');
+        return 0;
+    }
+}
+
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 
 async function quit() {
@@ -311,4 +340,5 @@ module.exports = {
     pushActivity, getActivity,
     pushKeylog, getKeylogs,
     cacheCommandResult, getCachedCommandResult,
+    clearCommandCache,
 };

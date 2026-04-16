@@ -40,6 +40,13 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
     } catch (_) {}
   }
 
+  // ── Session reset on mount / device change ──
+  // Clears stale pending commands, streaming state, frame throttle, and all
+  // Redis command-cache keys whenever this tab is loaded or the page is refreshed.
+  useEffect(() => {
+    fetch(`/api/device/${deviceId}/reset-session`, { method: 'POST' }).catch(() => {});
+  }, [deviceId]);
+
   // ── Start: tell device to push screen:update frames to dashboard ────
   // Uses screen_reader_stream_start which enables streaming WITHOUT stopping
   // the underlying screen reader loop that runs continuously on the device.
