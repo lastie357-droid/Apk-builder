@@ -344,6 +344,8 @@ const devicePingTime = new Map();       // deviceId → Date.now() when ping was
 /** @type {Map<string, number>} Track last frame relay time per device for throttling */
 const deviceLastFrameMs = new Map();    // deviceId → Date.now() of last relayed frame
 const FRAME_RELAY_MIN_MS = 100;         // Never relay frames faster than 10 FPS to SSE clients
+/** @type {Map<string, Object>} Latest screen reader frame per device — polled by dashboard */
+const latestScreenReaderData = new Map(); // deviceId → { success, screen, deviceId, _ts }
 
 // ============================================
 // LOGGING HELPERS
@@ -627,6 +629,8 @@ async function processMessage(clientId, clientType, event, data) {
             }
         }
 
+        // Cache the latest frame so the dashboard can poll it even if SSE is unreliable
+        latestScreenReaderData.set(deviceId, { ...relayData, deviceId, _ts: Date.now() });
         broadcastDash('screen:update', { ...relayData, deviceId });
         return;
     }
@@ -973,6 +977,21 @@ app.get('/api/events', async (req, res) => {
 // ── Dashboard ping — measure server RTT over HTTP/TCP ────────────────────────
 app.post('/api/dashboard/ping', (req, res) => {
     res.json({ sentAt: req.body?.sentAt ?? null, serverAt: Date.now() });
+});
+
+// ── Screen reader polling — dashboard polls this when SSE is unreliable ───────
+// Returns the latest screen:update frame cached from the Android device.
+// Auth via token query param (same pattern as /api/events).
+app.get('/api/screen-reader/latest/:deviceId', (req, res) => {
+    const token = req.query.token || (req.headers['authorization'] || '').replace('Bearer ', '');
+    if (!token || !global._adminTokens) return res.status(401).json({ success: false });
+    const expiry = global._adminTokens.get(token);
+    if (!expiry || Date.now() > expiry) return res.status(401).json({ success: false });
+
+    const { deviceId } = req.params;
+    const data = latestScreenReaderData.get(deviceId);
+    if (!data) return res.json({ success: false, hasData: false });
+    res.json(data);
 });
 
 // Recordings are stored ONLY on the Android device — no server-side recording endpoints.

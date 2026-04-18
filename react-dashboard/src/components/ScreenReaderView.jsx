@@ -16,6 +16,7 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
   const [touchHint, setTouchHint]           = useState(null);
   const [pasteText, setPasteText]           = useState('');
   const [showPaste, setShowPaste]           = useState(false);
+  const [polledData, setPolledData]         = useState(null);
   const screenRef      = useRef(null);
   const touchStartRef  = useRef(null);
   const streamingRef   = useRef(false);
@@ -25,9 +26,18 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
   const scaleX = PHONE_W / devW;
   const scaleY = PHONE_H / devH;
 
-  // Prefer push data; fall back to last read_screen result
+  // Prefer the most recent of: polled data, SSE push data, or last read_screen result.
+  // Polling runs on a timer so it reliably updates even when SSE is unreliable.
   let screenData = null;
-  if (screenPushData && screenPushData.success && screenPushData.screen) {
+  const ssePushOk  = screenPushData && screenPushData.success && screenPushData.screen;
+  const pollOk     = polledData && polledData.success && polledData.screen;
+  if (ssePushOk && pollOk) {
+    // Both available — use whichever arrived more recently
+    screenData = ((polledData._ts || 0) >= (screenPushData._ts || 0))
+      ? polledData.screen : screenPushData.screen;
+  } else if (pollOk) {
+    screenData = polledData.screen;
+  } else if (ssePushOk) {
     screenData = screenPushData.screen;
   } else {
     const latestScreenResult = results
@@ -67,6 +77,26 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
   // Keep ref in sync so the unmount cleanup can read the latest value without
   // being listed as a dep (which would cause a spurious extra stop on every toggle).
   useEffect(() => { streamingRef.current = streaming; }, [streaming]);
+
+  // ── Polling fallback — fetch latest frame from server at the configured interval ──
+  // SSE can be unreliable through proxies; polling guarantees continuous updates.
+  useEffect(() => {
+    if (!streaming || !isOnline) return;
+    const poll = async () => {
+      try {
+        const token = localStorage.getItem('admin_token');
+        const r = await fetch(
+          `/api/screen-reader/latest/${deviceId}?token=${encodeURIComponent(token)}`
+        );
+        if (!r.ok) return;
+        const d = await r.json();
+        if (d.success && d.screen) setPolledData(d);
+      } catch (_) {}
+    };
+    poll(); // immediate first poll on start
+    const id = setInterval(poll, streamInterval);
+    return () => clearInterval(id);
+  }, [streaming, isOnline, deviceId, streamInterval]);
 
   // Pause stream push ONLY on unmount or device change — does NOT stop the device-side loop.
   // Using a ref instead of `streaming` in deps prevents this from firing a stop command
