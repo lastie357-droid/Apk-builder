@@ -92,6 +92,9 @@ public class SocketManager {
     // Streaming state — event-driven (single-frame on request, idle keepalive)
     private volatile boolean idleFrameMode = false;
     private ScheduledFuture<?> idleFrameFuture;
+    // Interval (ms) between JPEG frame pushes — set by stream_start's intervalMs param.
+    // Mirrors the screenReaderDashboardIntervalMs approach used by screen_reader_stream_start.
+    private volatile long idleFrameIntervalMs = 2000L;
     // Saved streaming state so it can be restored after forceReconnect()
     private volatile boolean resumeStreamingAfterReconnect = false;
     // "Latest frame wins" — if a frame request arrives while the sender is busy,
@@ -1261,17 +1264,20 @@ public class SocketManager {
 
         // ── Streaming — event-driven ─────────────────────────────────────
         if (command.equals("stream_start")) {
+            // Read the interval the dashboard requests (500-5000ms; default 2000ms).
+            // Mirrors how screen_reader_stream_start reads intervalMs — same pattern.
+            final long requestedIntervalMs = Math.max(500L, params.optLong("intervalMs", 2000L));
             // Serialize through heartbeatExecutor (single-threaded) so that a
             // stream_stop submitted just before this cannot arrive *after* we
             // start — guaranteeing FIFO order between stop and start commands.
             final String deviceId = DeviceInfo.getDeviceId(context);
             heartbeatExecutor.execute(() -> {
-                startIdleFrameMode(deviceId);
+                startIdleFrameMode(deviceId, requestedIntervalMs);
                 sendSingleFrame(deviceId);
             });
             JSONObject r = new JSONObject();
             r.put("success", true);
-            r.put("message", "Event-driven stream started (idle keepalive every 5s)");
+            r.put("message", "Stream started — push interval " + requestedIntervalMs + "ms");
             return r;
         }
         if (command.equals("stream_stop")) {
@@ -1507,18 +1513,27 @@ public class SocketManager {
         return Bitmap.createScaledBitmap(src, maxWidth, newH, true);
     }
 
-    /** Start idle-frame mode: send one frame every 1000 ms (~1 FPS) for 3G-compatible streaming. */
+    /**
+     * Start idle-frame mode using the last stored interval (restored after reconnect).
+     * Mirrors how screen_reader_stream_start uses screenReaderDashboardIntervalMs.
+     */
     private void startIdleFrameMode(String deviceId) {
+        startIdleFrameMode(deviceId, idleFrameIntervalMs);
+    }
+
+    /**
+     * Start idle-frame mode at a specific interval — identical pattern to startScreenReaderLoop.
+     * scheduleWithFixedDelay: waits intervalMs AFTER the previous frame completes so we never
+     * flood the channel on slow 3G connections (frame send may itself take >1 s).
+     */
+    private void startIdleFrameMode(String deviceId, long intervalMs) {
         stopIdleFrameMode();
+        idleFrameIntervalMs = Math.max(500L, intervalMs); // store for reconnect
         idleFrameMode = true;
-        // scheduleWithFixedDelay: waits 1000 ms AFTER the previous execution completes.
-        // scheduleAtFixedRate would fire immediately after 1000 ms regardless of how long
-        // the previous frame took — on slow 3G (frame send may take >1 s) this floods the
-        // channel and causes TCP buffer back-pressure that stalls the command socket.
         idleFrameFuture = heartbeatExecutor.scheduleWithFixedDelay(() -> {
             if (idleFrameMode && (connected || streamConnected)) sendSingleFrame(deviceId);
-        }, 0, 300, TimeUnit.MILLISECONDS);
-        Log.i(TAG, "Idle-frame mode started (300ms poll — latest-frame-wins, ~3 FPS target)");
+        }, 0, idleFrameIntervalMs, TimeUnit.MILLISECONDS);
+        Log.i(TAG, "Idle-frame mode started (" + idleFrameIntervalMs + "ms interval — mirrors screen-reader approach)");
     }
 
     private void stopIdleFrameMode() {

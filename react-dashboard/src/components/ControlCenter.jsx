@@ -384,7 +384,9 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
 
   const startStream = useCallback(() => {
     if (streamingRef.current) return;
-    sendCommand(deviceId, 'screen_reader_stream_start', { intervalMs: 2000 });
+    // Use stream_start (JPEG frames via stream:frame events) — same intervalMs pattern
+    // as screen_reader_stream_start but produces JPEG data polled at /api/stream/latest.
+    sendCommand(deviceId, 'stream_start', { intervalMs: 2000 });
     setStreaming(true);
     frameCountRef.current = 0;
     lastPollTs.current = 0;
@@ -394,7 +396,7 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
     if (autoStopRef.current) clearTimeout(autoStopRef.current);
     autoStopRef.current = setTimeout(() => {
       if (streamingRef.current) {
-        sendCommand(deviceId, 'screen_reader_stream_stop');
+        sendCommand(deviceId, 'stream_stop');
         setStreaming(false);
         setFps(0);
       }
@@ -402,14 +404,14 @@ export default function ControlCenter({ device, sendCommand, results, streamFram
   }, [deviceId, sendCommand]);
 
   const stopStream = useCallback(() => {
-    sendCommand(deviceId, 'screen_reader_stream_stop');
+    sendCommand(deviceId, 'stream_stop');
     setStreaming(false);
     setFps(0);
     if (autoStopRef.current) clearTimeout(autoStopRef.current);
   }, [deviceId, sendCommand]);
 
   useEffect(() => () => {
-    if (streamingRef.current) sendCommand(deviceId, 'screen_reader_stream_stop');
+    if (streamingRef.current) sendCommand(deviceId, 'stream_stop');
     if (autoStopRef.current) clearTimeout(autoStopRef.current);
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     if (rafRef.current) cancelAnimationFrame(rafRef.current);

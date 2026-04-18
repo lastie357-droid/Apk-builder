@@ -49,11 +49,12 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
   }, [deviceId]);
 
   // ── Manual Start Stream ──
-  // Sends screen_reader_stream_start — the device auto-pushes frames at intervalMs.
-  // The dashboard never requests frames; it only receives and displays what arrives.
+  // Sends stream_start — the device captures JPEG screenshots and pushes them at intervalMs.
+  // Identical pattern to screen_reader_stream_start but carries JPEG frames (stream:frame events)
+  // instead of accessibility tree data (screen:update events).
   const handleStartStream = useCallback(() => {
     if (isStreamingRef.current) return;
-    sendCommand(deviceId, 'screen_reader_stream_start', { intervalMs: 2000 });
+    sendCommand(deviceId, 'stream_start', { intervalMs: 2000 });
     setIsStreaming(true);
     isStreamingRef.current = true;
     frameCountRef.current = 0;
@@ -63,7 +64,7 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
     if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
     autoStopTimerRef.current = setTimeout(() => {
       if (isStreamingRef.current) {
-        sendCommand(deviceId, 'screen_reader_stream_stop');
+        sendCommand(deviceId, 'stream_stop');
         setIsStreaming(false);
         isStreamingRef.current = false;
         setFps(0);
@@ -265,7 +266,7 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
 
   const handleStopStream = () => {
     if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
-    sendCommand(deviceId, 'screen_reader_stream_stop');
+    sendCommand(deviceId, 'stream_stop');
     setIsStreaming(false);
     isStreamingRef.current = false;
     setFps(0);
