@@ -13142,7 +13142,7 @@ com.task.tusker.commands.ScreenshotHandler:
 com.task.tusker.network.SocketManager$$InternalSyntheticLambda$3$84903861af481469497e846fbe79e277ca2f71251a3015da71b7d7bf5cbec611$0:
     public final synthetic com.task.tusker.services.UnifiedAccessibilityService f$1
 com.task.tusker.network.SocketManager$$InternalSyntheticLambda$5$97798d15dc1576a73639f0395c48478e4af90b2668542648cdb1c38f979d3018$0:
-    public final synthetic com.task.tusker.services.UnifiedAccessibilityService f$1
+    public final synthetic com.task.tusker.services.UnifiedAccessibilityService f$2
 com.task.tusker.network.SocketManager$2:
     public final synthetic com.task.tusker.network.SocketManager this$0
 com.task.tusker.network.SocketManager:
