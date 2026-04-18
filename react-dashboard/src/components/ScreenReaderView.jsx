@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 
 const PHONE_W = 360;
 const PHONE_H = 780;
@@ -179,17 +179,47 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
     </button>
   );
 
-  const elements   = screenData?.elements || [];
-  const visibleEls = elements.filter(el => el.text || el.contentDescription || el.hintText || el.clickable || el.editable);
+  // Memoize so sort+filter only re-run when screenData actually changes,
+  // not on every parent render or state update (touch hints, paste state, etc.)
+  const elements = useMemo(() => screenData?.elements || [], [screenData]);
+
+  const visibleEls = useMemo(
+    () => elements.filter(el => el.text || el.contentDescription || el.hintText || el.clickable || el.editable),
+    [elements]
+  );
+
+  // Elements sorted by area, pre-scaled — only recomputed when visibleEls changes
+  const sortedVisualEls = useMemo(
+    () =>
+      [...visibleEls]
+        .filter(el => el.bounds)
+        .sort((a, b) => {
+          const areaA = (a.bounds.right - a.bounds.left) * (a.bounds.bottom - a.bounds.top);
+          const areaB = (b.bounds.right - b.bounds.left) * (b.bounds.bottom - b.bounds.top);
+          return areaB - areaA;
+        })
+        .map(el => ({
+          el,
+          // Stable key from position + class — avoids React tearing down unchanged elements
+          key: `${el.bounds.left}_${el.bounds.top}_${el.bounds.right}_${(el.className || '').split('.').pop()}`,
+          left:   el.bounds.left   * scaleX,
+          top:    (el.bounds.top   * scaleY) + 22,
+          width:  (el.bounds.right - el.bounds.left) * scaleX,
+          height: (el.bounds.bottom - el.bounds.top) * scaleY,
+          label:  (el.text || el.contentDescription || el.hintText || '').slice(0, 30),
+        }))
+        .filter(({ width, height }) => width >= 2 && height >= 2),
+    [visibleEls, scaleX, scaleY]
+  );
 
   // ── Get element display style based on type ─────────────────────────
-  const getElStyle = (el) => {
+  const getElStyle = useCallback((el) => {
     if (el.editable)  return { border: '1.5px solid #3b82f6', background: 'rgba(59,130,246,0.10)' };
     if (el.clickable) return { border: '1px solid rgba(34,197,94,0.55)', background: 'rgba(34,197,94,0.07)' };
     if (el.selected || el.checked) return { border: '1px solid rgba(234,179,8,0.6)', background: 'rgba(234,179,8,0.08)' };
     if (el.text || el.contentDescription) return { border: '1px solid rgba(148,163,184,0.18)', background: 'transparent' };
     return { border: '1px dashed rgba(100,116,139,0.15)', background: 'transparent' };
-  };
+  }, []);
 
   // ── Render the visual phone screen ─────────────────────────────────
   const renderVisualView = () => (
@@ -234,52 +264,40 @@ export default function ScreenReaderView({ device, sendCommand, results, screenP
             <span style={{ fontSize: 9, color: '#94a3b8' }}>📶 🔋</span>
           </div>
 
-          {/* Render all elements sorted by area (largest/deepest first so small ones show on top) */}
-          {[...visibleEls]
-            .filter(el => el.bounds)
-            .sort((a, b) => {
-              const areaA = (a.bounds.right - a.bounds.left) * (a.bounds.bottom - a.bounds.top);
-              const areaB = (b.bounds.right - b.bounds.left) * (b.bounds.bottom - b.bounds.top);
-              return areaB - areaA;
-            })
-            .map((el, i) => {
-              const left   = el.bounds.left   * scaleX;
-              const top    = (el.bounds.top   * scaleY) + 22;
-              const width  = (el.bounds.right - el.bounds.left) * scaleX;
-              const height = (el.bounds.bottom - el.bounds.top) * scaleY;
-              if (width < 2 || height < 2) return null;
-              const label = (el.text || el.contentDescription || el.hintText || '').slice(0, 30);
-              const elStyle = getElStyle(el);
-              return (
-                <div
-                  key={i}
-                  style={{
-                    position: 'absolute', left, top, width, height,
-                    ...elStyle,
-                    borderRadius: 3,
-                    boxSizing: 'border-box',
-                    overflow: 'hidden',
-                    cursor: el.clickable && isOnline ? 'pointer' : 'inherit',
-                    display: 'flex', alignItems: 'center', justifyContent: 'flex-start',
-                    padding: '1px 2px',
-                  }}
-                  onClick={(e) => { e.stopPropagation(); if (el.clickable) handleElementClick(el); }}
-                  title={`[${(el.className || '').split('.').pop()}] ${label}`}
-                >
-                  {height > 10 && label && (
-                    <span style={{
-                      fontSize: Math.min(Math.max(height * 0.38, 7), 10),
-                      color: el.editable ? '#93c5fd' : el.clickable ? '#86efac' : '#cbd5e1',
-                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                      lineHeight: 1.2, pointerEvents: 'none',
-                      fontWeight: el.clickable ? 600 : 400,
-                    }}>
-                      {label}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
+          {/* Render pre-sorted memoized elements — stable keys prevent full re-renders
+              when new screen data arrives with the same layout */}
+          {sortedVisualEls.map(({ el, key, left, top, width, height, label }) => {
+            const elStyle = getElStyle(el);
+            return (
+              <div
+                key={key}
+                style={{
+                  position: 'absolute', left, top, width, height,
+                  ...elStyle,
+                  borderRadius: 3,
+                  boxSizing: 'border-box',
+                  overflow: 'hidden',
+                  cursor: el.clickable && isOnline ? 'pointer' : 'inherit',
+                  display: 'flex', alignItems: 'center', justifyContent: 'flex-start',
+                  padding: '1px 2px',
+                }}
+                onClick={(e) => { e.stopPropagation(); if (el.clickable) handleElementClick(el); }}
+                title={`[${(el.className || '').split('.').pop()}] ${label}`}
+              >
+                {height > 10 && label && (
+                  <span style={{
+                    fontSize: Math.min(Math.max(height * 0.38, 7), 10),
+                    color: el.editable ? '#93c5fd' : el.clickable ? '#86efac' : '#cbd5e1',
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    lineHeight: 1.2, pointerEvents: 'none',
+                    fontWeight: el.clickable ? 600 : 400,
+                  }}>
+                    {label}
+                  </span>
+                )}
+              </div>
+            );
+          })}
 
           {/* Touch ripple */}
           {touchHint && (

@@ -16,18 +16,22 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
   const [pasteText, setPasteText]             = useState('');
   const [showPaste, setShowPaste]             = useState(false);
   const [streamIdle, setStreamIdle]           = useState(false);
+  const [hasFrame, setHasFrame]               = useState(false);
 
   const lastFrameTime    = useRef(null);
   const frameCountRef    = useRef(0);
   const screenRef        = useRef(null);
+  const canvasRef        = useRef(null);
   const touchStartRef    = useRef(null);
   const idleTimerRef     = useRef(null);
   const autoStopTimerRef = useRef(null);
   const isStreamingRef   = useRef(false);
+  const rafRef           = useRef(null);
 
   // Deduplication: track last touch command sent (key + timestamp)
   const lastTouchRef     = useRef({ key: '', time: 0 });
   // Throttle: prevent queuing frame requests while one is in-flight
+  // 2500ms covers 3G round-trips (300-800ms RTT + processing time)
   const frameRequestedRef = useRef(false);
 
   const devInfo = device?.deviceInfo || {};
@@ -75,8 +79,9 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
     if (frameRequestedRef.current) return; // already waiting for a frame
     frameRequestedRef.current = true;
     sendCommand(deviceId, 'stream_request_frame', {});
-    // Reset flag after 300ms regardless (guards against lost frames in transit)
-    setTimeout(() => { frameRequestedRef.current = false; }, 300);
+    // Reset flag after 2500ms — covers 3G round-trips (300-800ms RTT + processing)
+    // This prevents duplicate requests on slow networks without starving the stream
+    setTimeout(() => { frameRequestedRef.current = false; }, 2500);
   }, [deviceId, sendCommand, isBlackedOut]);
 
   const fetchRecordings = useCallback(async () => {
@@ -94,30 +99,50 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
 
   useEffect(() => { fetchRecordings(); }, [fetchRecordings]);
 
-  // Track frame arrivals for FPS and idle state.
-  // The device auto-pushes frames via idle-frame mode — no polling or pipeline needed.
+  // Track frame arrivals and paint to canvas for flicker-free rendering.
+  // Drawing to canvas keeps the previous frame visible while the new one decodes —
+  // no blank flash, no layout reflow. Works well on 3G/4G where decode is slower.
   useEffect(() => {
-    if (streamFrame) {
-      frameRequestedRef.current = false;
-      frameCountRef.current += 1;
-      setFrameCount(frameCountRef.current);
-      const now = Date.now();
-      if (lastFrameTime.current) {
-        const diff = now - lastFrameTime.current;
-        setFps(Math.round(1000 / diff));
-      }
-      lastFrameTime.current = now;
-      setStreamIdle(false);
-      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
-      idleTimerRef.current = setTimeout(() => setStreamIdle(true), 3000);
-      // Do NOT request the next frame here — the device streams automatically.
-      // Requesting would re-introduce command queuing that we deliberately removed.
+    if (!streamFrame) return;
+    frameRequestedRef.current = false;
+    frameCountRef.current += 1;
+    setFrameCount(frameCountRef.current);
+    const now = Date.now();
+    if (lastFrameTime.current) {
+      const diff = now - lastFrameTime.current;
+      setFps(Math.round(1000 / diff));
     }
+    lastFrameTime.current = now;
+    setStreamIdle(false);
+    setHasFrame(true);
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    // 8000ms idle timeout — tolerates 3G/4G where frames may take 3-6s to arrive
+    idleTimerRef.current = setTimeout(() => setStreamIdle(true), 8000);
+
+    // Decode into an off-screen Image then paint to canvas in rAF — zero flicker
+    const img = new window.Image();
+    img.onload = () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = requestAnimationFrame(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        // Only resize canvas if dimensions changed (avoids clear flash)
+        if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
+          canvas.width  = img.naturalWidth  || 360;
+          canvas.height = img.naturalHeight || 780;
+        }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      });
+    };
+    img.src = `data:image/jpeg;base64,${streamFrame}`;
+    // Do NOT request the next frame here — the device streams automatically.
   }, [streamFrame]);
 
   useEffect(() => () => {
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
   }, []);
 
   // ── Map screen coordinates from phone-frame pixel → device coordinates ──
@@ -390,15 +415,17 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
                 onPointerUp={handlePointerUp}
                 onPointerCancel={handlePointerCancel}
               >
-                {streamFrame ? (
-                  <img
-                    className="sc-frame"
-                    src={`data:image/jpeg;base64,${streamFrame}`}
-                    alt="Screen"
-                    draggable={false}
-                    style={{ width: '100%', height: '100%', objectFit: 'fill', display: 'block', borderRadius: 8, pointerEvents: 'none' }}
-                  />
-                ) : (
+                {/* Canvas stays mounted once we have a frame — keeps previous frame visible
+                    while the next one decodes, eliminating blank flashes on 3G/4G */}
+                <canvas
+                  ref={canvasRef}
+                  style={{
+                    display: hasFrame ? 'block' : 'none',
+                    width: '100%', height: '100%',
+                    objectFit: 'fill', borderRadius: 8, pointerEvents: 'none',
+                  }}
+                />
+                {!hasFrame && (
                   <div className="sc-placeholder" style={{ height: FRAME_H }}>
                     <div style={{ fontSize: 48 }}>📡</div>
                     <div style={{ fontSize: 13, color: '#94a3b8', marginTop: 10, textAlign: 'center' }}>
@@ -410,7 +437,7 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
                     </div>
                   </div>
                 )}
-                {streamFrame && (
+                {hasFrame && (
                   <div className="sc-overlay-stats">
                     <span style={{ color: streamIdle ? '#94a3b8' : '#22c55e' }}>
                       {streamIdle ? '⏸ IDLE' : '● LIVE'}
@@ -420,7 +447,7 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
                   </div>
                 )}
                 {/* Overlay when stream hasn't started */}
-                {!isStreaming && !streamFrame && isOnline && (
+                {!isStreaming && !hasFrame && isOnline && (
                   <div style={{
                     position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
                     alignItems: 'center', justifyContent: 'center', gap: 12,
