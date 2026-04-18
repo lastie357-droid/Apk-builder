@@ -30,9 +30,6 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
 
   // Deduplication: track last touch command sent (key + timestamp)
   const lastTouchRef     = useRef({ key: '', time: 0 });
-  // Throttle: prevent queuing frame requests while one is in-flight
-  // 2500ms covers 3G round-trips (300-800ms RTT + processing time)
-  const frameRequestedRef = useRef(false);
 
   const devInfo = device?.deviceInfo || {};
   const devW    = devInfo.screenWidth  || null;
@@ -51,19 +48,21 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
   }, [deviceId]);
 
   // ── Manual Start Stream ──
+  // Sends screen_reader_stream_start — the device auto-pushes frames at intervalMs.
+  // The dashboard never requests frames; it only receives and displays what arrives.
   const handleStartStream = useCallback(() => {
     if (isStreamingRef.current) return;
-    sendCommand(deviceId, 'stream_start', {});
+    sendCommand(deviceId, 'screen_reader_stream_start', { intervalMs: 2000 });
     setIsStreaming(true);
     isStreamingRef.current = true;
     frameCountRef.current = 0;
     setFrameCount(0);
     setStreamIdle(false);
-    // Auto-stop after 5 minutes of no interaction
+    // Auto-stop after 5 minutes
     if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
     autoStopTimerRef.current = setTimeout(() => {
       if (isStreamingRef.current) {
-        sendCommand(deviceId, 'stream_stop');
+        sendCommand(deviceId, 'screen_reader_stream_stop');
         setIsStreaming(false);
         isStreamingRef.current = false;
         setFps(0);
@@ -71,18 +70,6 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
     }, 5 * 60 * 1000);
   }, [deviceId, sendCommand]);
 
-  // ── Throttled frame request: drop if previous hasn't arrived yet ──
-  // When block is active the device auto-sends frames; dashboard must NOT request them.
-  const requestFrame = useCallback(() => {
-    if (!isStreamingRef.current) return;
-    if (isBlackedOut) return; // device auto-sends frames every 1.5s when block is on
-    if (frameRequestedRef.current) return; // already waiting for a frame
-    frameRequestedRef.current = true;
-    sendCommand(deviceId, 'stream_request_frame', {});
-    // Reset flag after 2500ms — covers 3G round-trips (300-800ms RTT + processing)
-    // This prevents duplicate requests on slow networks without starving the stream
-    setTimeout(() => { frameRequestedRef.current = false; }, 2500);
-  }, [deviceId, sendCommand, isBlackedOut]);
 
   const fetchRecordings = useCallback(async () => {
     setLoadingRecs(true);
@@ -104,7 +91,6 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
   // no blank flash, no layout reflow. Works well on 3G/4G where decode is slower.
   useEffect(() => {
     if (!streamFrame) return;
-    frameRequestedRef.current = false;
     frameCountRef.current += 1;
     setFrameCount(frameCountRef.current);
     const now = Date.now();
@@ -183,16 +169,14 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
       }
       lastTouchRef.current = { key: touchKey, time: now };
       sendCommand(deviceId, 'touch', { x, y });
-      requestFrame();
     } else {
       // Swipe
       const from = toDeviceCoords(touchStartRef.current.x, touchStartRef.current.y);
       const to   = toDeviceCoords(e.clientX, e.clientY);
       sendCommand(deviceId, 'swipe', { x1: from.x, y1: from.y, x2: to.x, y2: to.y, duration: Math.max(200, Math.min(duration, 800)) });
-      requestFrame();
     }
     touchStartRef.current = null;
-  }, [isOnline, isBlackedOut, toDeviceCoords, deviceId, sendCommand, requestFrame]);
+  }, [isOnline, isBlackedOut, toDeviceCoords, deviceId, sendCommand]);
 
   const handlePointerCancel = useCallback(() => {
     touchStartRef.current = null;
@@ -212,8 +196,7 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
       case 'right': x1 = midX - step; x2 = midX + step; break;
     }
     sendCommand(deviceId, 'swipe', { x1, y1, x2, y2, duration: 400 });
-    requestFrame();
-  }, [isOnline, devW, devH, deviceId, sendCommand, requestFrame]);
+  }, [isOnline, devW, devH, deviceId, sendCommand]);
 
   // ── Paste text ──
   const handlePaste = useCallback(() => {
@@ -221,8 +204,7 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
     sendCommand(deviceId, 'input_text', { text: pasteText });
     setPasteText('');
     setShowPaste(false);
-    requestFrame();
-  }, [pasteText, deviceId, sendCommand, requestFrame]);
+  }, [pasteText, deviceId, sendCommand]);
 
   const handleToggleBlackout = async () => {
     if (blackoutLoading) return;
@@ -254,10 +236,9 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
 
   const handleStopStream = () => {
     if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
-    sendCommand(deviceId, 'stream_stop');
+    sendCommand(deviceId, 'screen_reader_stream_stop');
     setIsStreaming(false);
     isStreamingRef.current = false;
-    frameRequestedRef.current = false;
     setFps(0);
     setStreamIdle(false);
   };
@@ -356,7 +337,6 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
       onClick={() => {
         if (!isStreamingRef.current) return;
         sendCommand(deviceId, command);
-        requestFrame();
       }}
       disabled={!isOnline || !isStreaming}
       title={command}
@@ -491,7 +471,7 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
               </button>
               <button
                 style={{ background: '#1e1b4b', border: '1px solid #4c1d95', color: '#a78bfa', borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
-                onClick={() => { sendCommand(deviceId, 'press_enter'); requestFrame(); }}
+                onClick={() => { sendCommand(deviceId, 'press_enter'); }}
                 disabled={!isOnline || !isStreaming}
                 title="Press Enter / IME action key on device"
               >
@@ -518,7 +498,7 @@ export default function ScreenControl({ device, sendCommand, streamFrame, send }
                   ↵ Send
                 </button>
                 <button
-                  onClick={() => { sendCommand(deviceId, 'press_enter'); requestFrame(); }}
+                  onClick={() => { sendCommand(deviceId, 'press_enter'); }}
                   disabled={!isOnline || !isStreaming}
                   style={{ background: '#1e1b4b', border: '1px solid #4c1d95', borderRadius: 6, color: '#a78bfa', padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
                   title="Press Enter / IME key on device"
