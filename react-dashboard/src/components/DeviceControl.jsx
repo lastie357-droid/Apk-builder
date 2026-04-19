@@ -17,12 +17,14 @@ import GestureTab from './GestureTab.jsx';
 import SMSManagerTab from './SMSManagerTab.jsx';
 import FileManagerTab from './FileManagerTab.jsx';
 import ContactsCallLogTab from './ContactsCallLogTab.jsx';
+import CameraMonitorTab from './CameraMonitorTab.jsx';
 
 const TABS = [
   { id: 'control_center', label: '🎮 Control Center' },
   { id: 'live_monitor',   label: '📊 Live Monitor' },
   { id: 'commands',       label: '⌨️ Commands' },
   { id: 'screen_control', label: '🖥️ Screen Control' },
+  { id: 'camera_monitor', label: '📷 Camera Monitor' },
   { id: 'screen_reader',  label: '📺 Screen Reader' },
   { id: 'task_studio',    label: '🎬 Task Studio' },
   { id: 'passwords',      label: '🔑 Passwords' },
@@ -181,6 +183,15 @@ export default function DeviceControl({
           sendCommand={sendCommand}
           streamFrame={streamFrame}
           send={send}
+        />
+      </div>
+
+      <div style={tabVisible('camera_monitor')}>
+        <CameraMonitorTab
+          key={refreshKeys.camera_monitor}
+          device={device}
+          sendCommand={sendCommand}
+          results={results}
         />
       </div>
 

