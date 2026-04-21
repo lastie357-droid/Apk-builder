@@ -127,11 +127,15 @@ export default function CameraMonitorTab({ device, sendCommand, results }) {
     }
   }, [results]);
 
-  // ── Load cameras on mount ─────────────────────────────────────────────
+  // ── Load cameras on mount (only if not already loaded) ────────────────
+  // Avoid re-requesting on every reconnect / isOnline flip — the camera
+  // list is static for a given device.
   useEffect(() => {
     if (!deviceId || !isOnline) return;
+    if (cameras.length > 0) return;
     sendCommand(deviceId, 'get_available_cameras', {});
-  }, [deviceId, isOnline, sendCommand]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deviceId, isOnline]);
 
   // ── Paint frame onto canvas ───────────────────────────────────────────
   const paintFrame = useCallback((base64) => {
