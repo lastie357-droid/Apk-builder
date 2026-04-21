@@ -33,10 +33,9 @@ export default function SettingsTab() {
 
   const [botToken, setBotToken]             = useState('');
   const [chatId, setChatId]                 = useState('');
-  const [enabled, setEnabled]               = useState(true);
-  const [notifyConnect, setNotifyConnect]   = useState(true);
-  const [notifyDisconnect, setNotifyDisconnect] = useState(false);
-  const [botTokenSet, setBotTokenSet]       = useState(false);
+  const [enabled, setEnabled]             = useState(true);
+  const [notifyConnect, setNotifyConnect] = useState(true);
+  const [botTokenSet, setBotTokenSet]     = useState(false);
 
   const token = localStorage.getItem('admin_token');
   const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
@@ -57,7 +56,6 @@ export default function SettingsTab() {
         setChatId(t.chatId || '');
         setEnabled(t.enabled !== false);
         setNotifyConnect(t.notifyConnect !== false);
-        setNotifyDisconnect(!!t.notifyDisconnect);
       })
       .catch(() => showToast('Failed to load settings', 'error'))
       .finally(() => setLoading(false));
@@ -69,7 +67,7 @@ export default function SettingsTab() {
       const body = {
         telegram: {
           botToken: botToken.startsWith('***') ? undefined : botToken,
-          chatId, enabled, notifyConnect, notifyDisconnect,
+          chatId, enabled, notifyConnect,
         },
       };
       const r = await fetch('/api/settings', { method: 'POST', headers, body: JSON.stringify(body) });
@@ -204,12 +202,6 @@ export default function SettingsTab() {
               onChange={setNotifyConnect}
               label="Notify on Device Connect"
               description="Send a message when a new device comes online"
-            />
-            <Toggle
-              value={notifyDisconnect}
-              onChange={setNotifyDisconnect}
-              label="Notify on Device Disconnect"
-              description="Send a message when a device goes offline"
             />
           </div>
         </div>

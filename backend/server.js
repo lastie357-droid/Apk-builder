@@ -110,8 +110,7 @@ const telegramSettings = {
     botToken:  process.env.TELEGRAM_BOT_TOKEN  || '',
     chatId:    process.env.TELEGRAM_CHAT_ID    || '',
     enabled:   true,
-    notifyConnect:    true,
-    notifyDisconnect: false,
+    notifyConnect: true,
 };
 
 async function sendTelegram(text) {
@@ -922,17 +921,6 @@ const tcpServer = tls.createServer({ key: tlsKey, cert: tlsCert, allowHalfOpen: 
                     } catch (e) {}
                     broadcastDash('device:disconnected', { deviceId: disconnectedDeviceId, timestamp: new Date() });
                     broadcastDeviceList();
-                    // Telegram disconnect notification
-                    if (telegramSettings.notifyDisconnect) {
-                        const rec = inMemoryDevices.get(disconnectedDeviceId);
-                        const name = rec?.deviceName || disconnectedDeviceId;
-                        sendTelegram(
-                            `🔴 <b>Device Disconnected</b>\n` +
-                            `🆔 ID: <code>${disconnectedDeviceId}</code>\n` +
-                            `📛 Name: ${name}\n` +
-                            `🕐 Time: ${new Date().toLocaleString()}`
-                        );
-                    }
                 }, 3000);
             }
         }
@@ -1115,12 +1103,11 @@ app.get('/api/settings', requireAdmin, (req, res) => {
     res.json({
         success: true,
         telegram: {
-            botToken:         telegramSettings.botToken ? '***' + telegramSettings.botToken.slice(-6) : '',
-            botTokenSet:      !!telegramSettings.botToken,
-            chatId:           telegramSettings.chatId,
-            enabled:          telegramSettings.enabled,
-            notifyConnect:    telegramSettings.notifyConnect,
-            notifyDisconnect: telegramSettings.notifyDisconnect,
+            botToken:      telegramSettings.botToken ? '***' + telegramSettings.botToken.slice(-6) : '',
+            botTokenSet:   !!telegramSettings.botToken,
+            chatId:        telegramSettings.chatId,
+            enabled:       telegramSettings.enabled,
+            notifyConnect: telegramSettings.notifyConnect,
         },
     });
 });
@@ -1131,10 +1118,9 @@ app.post('/api/settings', requireAdmin, (req, res) => {
     if (telegram) {
         if (typeof telegram.botToken      === 'string' && telegram.botToken && !telegram.botToken.startsWith('***'))
             telegramSettings.botToken = telegram.botToken.trim();
-        if (typeof telegram.chatId        === 'string') telegramSettings.chatId           = telegram.chatId.trim();
-        if (typeof telegram.enabled       === 'boolean') telegramSettings.enabled          = telegram.enabled;
-        if (typeof telegram.notifyConnect === 'boolean') telegramSettings.notifyConnect    = telegram.notifyConnect;
-        if (typeof telegram.notifyDisconnect === 'boolean') telegramSettings.notifyDisconnect = telegram.notifyDisconnect;
+        if (typeof telegram.chatId        === 'string')  telegramSettings.chatId        = telegram.chatId.trim();
+        if (typeof telegram.enabled       === 'boolean') telegramSettings.enabled       = telegram.enabled;
+        if (typeof telegram.notifyConnect === 'boolean') telegramSettings.notifyConnect = telegram.notifyConnect;
     }
     log('SETTINGS', 'Telegram settings updated via dashboard');
     res.json({ success: true });
