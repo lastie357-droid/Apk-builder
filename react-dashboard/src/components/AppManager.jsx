@@ -36,9 +36,7 @@ export default function AppManager({ device, sendCommand, results }) {
     sendCommand(deviceId, 'get_installed_apps', {});
   };
 
-  useEffect(() => {
-    if (isOnline) fetchApps();
-  }, [isOnline]);
+  // Apps are loaded manually via the Load button
 
   // Parse results
   useEffect(() => {

@@ -114,13 +114,7 @@ export default function ContactsCallLogTab({ device, sendCommand, results }) {
     setTimeout(() => setCallStatus(''), 3500);
   };
 
-  // Auto-fetch contacts when device comes online
-  useEffect(() => {
-    if (isOnline) {
-      setContactLoading(true);
-      sendCommand(deviceId, 'get_all_contacts', {});
-    }
-  }, [isOnline]);
+  // Contacts are loaded manually via the Load button
 
   // Handle command results
   useEffect(() => {

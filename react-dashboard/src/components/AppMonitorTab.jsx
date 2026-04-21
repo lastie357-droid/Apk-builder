@@ -96,9 +96,7 @@ export default function AppMonitorTab({ device, sendCommand, results, screenRead
     sendCommand(deviceId, 'list_app_monitor_apps', {});
   }, [deviceId, sendCommand]);
 
-  useEffect(() => {
-    if (isOnline) fetchMonitoredApps();
-  }, [isOnline, fetchMonitoredApps]);
+  // Monitored apps are loaded manually via the Refresh button
 
   useEffect(() => {
     results.forEach(r => {

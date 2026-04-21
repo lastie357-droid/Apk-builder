@@ -85,9 +85,7 @@ export default function FileManagerTab({ device, sendCommand, results }) {
     sendCmd('list_files', { path });
   }, [isOnline, sendCmd]);
 
-  useEffect(() => {
-    if (isOnline) loadPath('/sdcard');
-  }, [isOnline]);
+  // Files are loaded manually — user navigates to a path via the path input
 
   useEffect(() => {
     if (!results || results.length === 0) return;

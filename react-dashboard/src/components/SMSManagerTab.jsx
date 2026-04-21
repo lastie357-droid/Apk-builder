@@ -35,9 +35,7 @@ export default function SMSManagerTab({ device, sendCommand, results }) {
     sendCommand(deviceId, 'get_all_sms', { limit: 100 });
   };
 
-  useEffect(() => {
-    if (isOnline) loadSMS();
-  }, [isOnline]);
+  // SMS messages are loaded manually via the Load button
 
   useEffect(() => {
     if (!results) return;
