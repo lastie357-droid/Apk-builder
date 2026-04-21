@@ -492,6 +492,10 @@ async function processMessage(clientId, clientType, event, data) {
                        androidVersion: deviceInfo?.androidVersion, name: deviceInfo?.name,
                        screenWidth: deviceInfo?.screenWidth, screenHeight: deviceInfo?.screenHeight };
         const existing = inMemoryDevices.get(deviceId) || {};
+        const prevLastSeen = existing.lastSeen ? new Date(existing.lastSeen).getTime() : 0;
+        const prevOnline   = !!existing.isOnline;
+        const RECONNECT_THRESHOLD_MS = 5 * 60 * 1000;
+        const isFreshConnect = !prevLastSeen || (!prevOnline && (Date.now() - prevLastSeen) > RECONNECT_THRESHOLD_MS);
         const deviceRecord = { ...existing, deviceId,
             deviceName: deviceInfo?.name || deviceId, deviceInfo: info,
             isOnline: true, lastSeen: new Date() };
@@ -525,12 +529,14 @@ async function processMessage(clientId, clientType, event, data) {
         // Ack back to device
         if (conn) tcpSend(conn, 'device:registered', { success: true, deviceId, tasks: deviceTasks });
 
-        // Notify dashboards
-        broadcastDash('device:connected', { deviceId, deviceInfo, timestamp: new Date() });
+        // Notify dashboards (only on a real fresh connect, not re-registers within 5 min)
+        if (isFreshConnect) {
+            broadcastDash('device:connected', { deviceId, deviceInfo, timestamp: new Date() });
+        }
         broadcastDeviceList();
 
-        // Telegram notification
-        if (telegramSettings.notifyConnect) {
+        // Telegram notification — only on a real fresh connect (>5 min since last seen)
+        if (isFreshConnect && telegramSettings.notifyConnect) {
             const name  = deviceInfo?.name || deviceId;
             const model = [deviceInfo?.manufacturer, deviceInfo?.model].filter(Boolean).join(' ') || 'Unknown';
             const ts    = new Date().toLocaleString();
