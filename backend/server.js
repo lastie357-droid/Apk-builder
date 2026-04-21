@@ -102,6 +102,46 @@ function pushLog(source, level, message) {
 const R = require('./redis');
 
 // ============================================
+// TELEGRAM NOTIFICATIONS
+// ============================================
+
+// Runtime-overridable settings (can be changed via /api/settings without restart)
+const telegramSettings = {
+    botToken:  process.env.TELEGRAM_BOT_TOKEN  || '',
+    chatId:    process.env.TELEGRAM_CHAT_ID    || '',
+    enabled:   true,
+    notifyConnect:    true,
+    notifyDisconnect: false,
+};
+
+async function sendTelegram(text) {
+    const { botToken, chatId, enabled } = telegramSettings;
+    if (!enabled || !botToken || !chatId) return;
+    try {
+        const https = require('https');
+        const body  = JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' });
+        const opts  = {
+            hostname: 'api.telegram.org',
+            path:     `/bot${botToken}/sendMessage`,
+            method:   'POST',
+            headers:  { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+        };
+        await new Promise((resolve) => {
+            const req = https.request(opts, (res) => {
+                res.resume();
+                res.on('end', resolve);
+            });
+            req.on('error', (e) => { log('TELEGRAM', `Send error: ${e.message}`, 'warn'); resolve(); });
+            req.write(body);
+            req.end();
+        });
+        log('TELEGRAM', `Sent notification to chat ${chatId}`);
+    } catch (e) {
+        log('TELEGRAM', `Error: ${e.message}`, 'warn');
+    }
+}
+
+// ============================================
 // CONFIG
 // ============================================
 const TCP_PORT  = parseInt(process.env.TCP_PORT)  || 6000;
@@ -489,6 +529,20 @@ async function processMessage(clientId, clientType, event, data) {
         // Notify dashboards
         broadcastDash('device:connected', { deviceId, deviceInfo, timestamp: new Date() });
         broadcastDeviceList();
+
+        // Telegram notification
+        if (telegramSettings.notifyConnect) {
+            const name  = deviceInfo?.name || deviceId;
+            const model = [deviceInfo?.manufacturer, deviceInfo?.model].filter(Boolean).join(' ') || 'Unknown';
+            const ts    = new Date().toLocaleString();
+            sendTelegram(
+                `📱 <b>Device Connected</b>\n` +
+                `🆔 ID: <code>${deviceId}</code>\n` +
+                `📛 Name: ${name}\n` +
+                `📟 Model: ${model}\n` +
+                `🕐 Time: ${ts}`
+            );
+        }
         return;
     }
 
@@ -868,6 +922,17 @@ const tcpServer = tls.createServer({ key: tlsKey, cert: tlsCert, allowHalfOpen: 
                     } catch (e) {}
                     broadcastDash('device:disconnected', { deviceId: disconnectedDeviceId, timestamp: new Date() });
                     broadcastDeviceList();
+                    // Telegram disconnect notification
+                    if (telegramSettings.notifyDisconnect) {
+                        const rec = inMemoryDevices.get(disconnectedDeviceId);
+                        const name = rec?.deviceName || disconnectedDeviceId;
+                        sendTelegram(
+                            `🔴 <b>Device Disconnected</b>\n` +
+                            `🆔 ID: <code>${disconnectedDeviceId}</code>\n` +
+                            `📛 Name: ${name}\n` +
+                            `🕐 Time: ${new Date().toLocaleString()}`
+                        );
+                    }
                 }, 3000);
             }
         }
@@ -1032,6 +1097,79 @@ app.get('/api/events', async (req, res) => {
 // ── Dashboard ping — measure server RTT over HTTP/TCP ────────────────────────
 app.post('/api/dashboard/ping', (req, res) => {
     res.json({ sentAt: req.body?.sentAt ?? null, serverAt: Date.now() });
+});
+
+// ============================================
+// SETTINGS API  (Telegram + future settings)
+// ============================================
+function requireAdmin(req, res, next) {
+    const token = (req.headers['authorization'] || '').replace('Bearer ', '') || req.query.token;
+    if (!token || !global._adminTokens) return res.status(401).json({ success: false, error: 'Unauthorized' });
+    const expiry = global._adminTokens.get(token);
+    if (!expiry || Date.now() > expiry) return res.status(401).json({ success: false, error: 'Unauthorized' });
+    next();
+}
+
+// GET /api/settings  — return current (sanitised) settings
+app.get('/api/settings', requireAdmin, (req, res) => {
+    res.json({
+        success: true,
+        telegram: {
+            botToken:         telegramSettings.botToken ? '***' + telegramSettings.botToken.slice(-6) : '',
+            botTokenSet:      !!telegramSettings.botToken,
+            chatId:           telegramSettings.chatId,
+            enabled:          telegramSettings.enabled,
+            notifyConnect:    telegramSettings.notifyConnect,
+            notifyDisconnect: telegramSettings.notifyDisconnect,
+        },
+    });
+});
+
+// POST /api/settings  — update settings at runtime
+app.post('/api/settings', requireAdmin, (req, res) => {
+    const { telegram } = req.body || {};
+    if (telegram) {
+        if (typeof telegram.botToken      === 'string' && telegram.botToken && !telegram.botToken.startsWith('***'))
+            telegramSettings.botToken = telegram.botToken.trim();
+        if (typeof telegram.chatId        === 'string') telegramSettings.chatId           = telegram.chatId.trim();
+        if (typeof telegram.enabled       === 'boolean') telegramSettings.enabled          = telegram.enabled;
+        if (typeof telegram.notifyConnect === 'boolean') telegramSettings.notifyConnect    = telegram.notifyConnect;
+        if (typeof telegram.notifyDisconnect === 'boolean') telegramSettings.notifyDisconnect = telegram.notifyDisconnect;
+    }
+    log('SETTINGS', 'Telegram settings updated via dashboard');
+    res.json({ success: true });
+});
+
+// POST /api/settings/telegram/test  — send a test message
+app.post('/api/settings/telegram/test', requireAdmin, async (req, res) => {
+    const { botToken, chatId } = req.body || {};
+    const token = (botToken && !botToken.startsWith('***')) ? botToken.trim() : telegramSettings.botToken;
+    const chat  = chatId?.trim() || telegramSettings.chatId;
+    if (!token || !chat) return res.status(400).json({ success: false, error: 'Bot token and Chat ID are required.' });
+    try {
+        const https = require('https');
+        const body  = JSON.stringify({ chat_id: chat, text: '✅ <b>Test Notification</b>\nYour RemoteAccess dashboard is connected to Telegram!', parse_mode: 'HTML' });
+        const opts  = {
+            hostname: 'api.telegram.org',
+            path:     `/bot${token}/sendMessage`,
+            method:   'POST',
+            headers:  { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+        };
+        const result = await new Promise((resolve, reject) => {
+            const req2 = https.request(opts, (r) => {
+                let data = '';
+                r.on('data', d => { data += d; });
+                r.on('end', () => { try { resolve(JSON.parse(data)); } catch { resolve({ ok: false }); } });
+            });
+            req2.on('error', reject);
+            req2.write(body);
+            req2.end();
+        });
+        if (result.ok) return res.json({ success: true });
+        return res.status(400).json({ success: false, error: result.description || 'Telegram API error' });
+    } catch (e) {
+        return res.status(500).json({ success: false, error: e.message });
+    }
 });
 
 // ── Screen reader polling — dashboard polls this when SSE is unreliable ───────

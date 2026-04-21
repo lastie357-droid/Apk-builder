@@ -6,6 +6,7 @@ import Overview from './components/Overview.jsx';
 import StatusBar from './components/StatusBar.jsx';
 import Login from './components/Login.jsx';
 import ServerLogsTab from './components/ServerLogsTab.jsx';
+import SettingsTab from './components/SettingsTab.jsx';
 import './App.css';
 
 function useAdminAuth() {
@@ -396,8 +397,9 @@ function AuthenticatedApp({ logout }) {
             <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
               <div style={{ display: 'flex', gap: 4, padding: '0 0 14px 0', borderBottom: '1px solid #1e1b4b', marginBottom: 16 }}>
                 {[
-                  { id: 'overview', label: '📊 Overview' },
-                  { id: 'logs',     label: '🖥️ Server Logs' },
+                  { id: 'overview',  label: '📊 Overview' },
+                  { id: 'logs',      label: '🖥️ Server Logs' },
+                  { id: 'settings',  label: '⚙️ Settings' },
                 ].map(tab => (
                   <button
                     key={tab.id}
@@ -423,6 +425,8 @@ function AuthenticatedApp({ logout }) {
                     onSelectDevice={setSelectedDevice}
                     connected={connected}
                   />
+                ) : globalView === 'settings' ? (
+                  <SettingsTab />
                 ) : (
                   <ServerLogsTab />
                 )}
