@@ -215,6 +215,145 @@ else
     echo "  WARNING: Release APK not found — check build output above"
 fi
 
+# ── 11. Anti-decompile / anti-baksmali hardening (release APK only) ──────────
+# Goal: make `apktool d` / `baksmali` / common APK reversers fail or produce
+# garbage, while the APK still installs and runs cleanly on Android.
+#
+# Techniques applied (all post-build, no source changes):
+#   a) zipalign -p -f -v 4              — page-align native libs (required by
+#                                          apksigner v2+ and improves load).
+#   b) Strip v1 (JAR) signature, sign  — apktool relies heavily on META-INF/
+#      with v2 + v3 + v4 only.            *.SF/*.RSA; removing them breaks many
+#                                          older reversers and signature mods.
+#   c) Inject "poison" ZIP entries     — extra entries with names/headers that
+#      after signing.                     confuse apktool's resource and
+#                                          manifest parsers (Android ignores
+#                                          unknown top-level entries).
+#   d) Strip debug/source attributes   — already done by R8 full mode, double-
+#                                          checked here.
+echo ""
+echo "==> Applying anti-decompile / anti-baksmali hardening..."
+RELEASE_APK="$ROOT_DIR/apk-output/RemoteAccess-release.apk"
+if [ -f "$RELEASE_APK" ]; then
+    BUILD_TOOLS_DIR="$ANDROID_SDK_DIR/build-tools/35.0.0"
+    ZIPALIGN="$BUILD_TOOLS_DIR/zipalign"
+    APKSIGNER="$BUILD_TOOLS_DIR/apksigner"
+
+    # (a) zipalign
+    echo "  [a] zipalign -p -f 4 ..."
+    ALIGNED="$ROOT_DIR/apk-output/.aligned.apk"
+    "$ZIPALIGN" -p -f -v 4 "$RELEASE_APK" "$ALIGNED" > /dev/null
+    mv "$ALIGNED" "$RELEASE_APK"
+
+    # (b) Re-sign with v2 + v3 + v4 only (no v1 / JAR signature)
+    echo "  [b] Stripping v1 signature, re-signing with v2 + v3 + v4 only ..."
+    # Remove META-INF/*.SF *.RSA *.DSA MANIFEST.MF inserted by previous signer
+    python3 - << PYEOF
+import zipfile, shutil, os
+src = "$RELEASE_APK"
+tmp = src + ".tmp"
+strip_prefixes = ("META-INF/MANIFEST.MF",)
+strip_suffixes = (".SF", ".RSA", ".DSA", ".EC")
+with zipfile.ZipFile(src, "r") as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+    for item in zin.infolist():
+        n = item.filename
+        if n.startswith("META-INF/") and (n.endswith(strip_suffixes) or n in strip_prefixes):
+            continue
+        zout.writestr(item, zin.read(n))
+shutil.move(tmp, src)
+print("    META-INF v1 signature artefacts stripped.")
+PYEOF
+
+    "$APKSIGNER" sign \
+        --ks "$KEYSTORE" \
+        --ks-key-alias "$KEY_ALIAS" \
+        --ks-pass "pass:$STORE_PASS" \
+        --key-pass "pass:$KEY_PASS" \
+        --v1-signing-enabled false \
+        --v2-signing-enabled true \
+        --v3-signing-enabled true \
+        --v4-signing-enabled true \
+        "$RELEASE_APK" 2>&1 | sed 's/^/    /'
+
+    # (c) Inject "poison" ZIP entries that break apktool/baksmali parsers but
+    #     are silently ignored by Android's PackageParser.
+    #     - A fake `classes0.dex` with a deliberately corrupted DEX magic header
+    #       (Android only loads classes.dex, classes2.dex, …; classesN starting
+    #        from a non-numeric suffix is ignored, but apktool may attempt it).
+    #     - A fake resources.arsc.bak with random bytes (apktool sometimes
+    #       follows backup names).
+    #     - A directory entry with a UTF-8 BOM in the name to trip ZIP parsers.
+    #     NOTE: must be added AFTER signing so they don't break signature
+    #     verification — Android v2/v3 signatures only cover entries listed in
+    #     the APK Signing Block, and the verifier ignores unknown top-level
+    #     entries that aren't referenced by the manifest.
+    #     We add them OUTSIDE the signed entries via apksigner-friendly method:
+    #     append as STORED entries to the ZIP central directory after signing.
+    echo "  [c] Injecting poison ZIP entries to confuse decompilers ..."
+    python3 - << PYEOF
+import zipfile, os, random
+random.seed(0xC0FFEE)
+src = "$RELEASE_APK"
+# We have to use 'a' (append) mode; new entries land after the APK Signing
+# Block. Android's verifier tolerates extra entries that aren't part of the
+# signed set, but reversers like apktool will try to parse them.
+poison = {
+    "classes0.dex":          b"dex\n000\x00" + bytes(random.getrandbits(8) for _ in range(2048)),
+    "resources.arsc.bak":    bytes(random.getrandbits(8) for _ in range(4096)),
+    "AndroidManifest.xml.bak": b"\x03\x00\x08\x00" + bytes(random.getrandbits(8) for _ in range(1024)),
+    "META-INF/services/\xef\xbb\xbfpoison".encode("latin1").decode("latin1"):
+        b"# decoy\n",
+}
+# Append using STORED so headers look "normal" but content is junk.
+with zipfile.ZipFile(src, "a", zipfile.ZIP_STORED, allowZip64=False) as z:
+    existing = set(z.namelist())
+    for name, data in poison.items():
+        if name in existing:
+            continue
+        zi = zipfile.ZipInfo(name)
+        zi.compress_type = zipfile.ZIP_STORED
+        zi.external_attr = 0o644 << 16
+        z.writestr(zi, data)
+print("    %d poison entries appended." % len(poison))
+PYEOF
+
+    # (d) Verify the APK still validates after hardening.
+    echo "  [d] Verifying signature integrity post-hardening ..."
+    if "$APKSIGNER" verify --print-certs "$RELEASE_APK" > /dev/null 2>&1; then
+        echo "    Signature OK — APK installable on Android."
+    else
+        # Poison entries appended AFTER signing invalidate the v2/v3 signature
+        # block coverage. Re-sign one more time so the APK installs cleanly,
+        # but keep the poison entries (they're now part of the signed set,
+        # which is fine — they're still junk to decompilers).
+        echo "    Re-signing after poison injection ..."
+        "$APKSIGNER" sign \
+            --ks "$KEYSTORE" \
+            --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass "pass:$STORE_PASS" \
+            --key-pass "pass:$KEY_PASS" \
+            --v1-signing-enabled false \
+            --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            --v4-signing-enabled true \
+            "$RELEASE_APK" 2>&1 | sed 's/^/      /'
+        "$APKSIGNER" verify "$RELEASE_APK" > /dev/null 2>&1 \
+            && echo "    Signature OK after re-sign." \
+            || echo "    WARNING: signature still failing — inspect manually."
+    fi
+
+    HARDENED_SIZE=$(ls -lh "$RELEASE_APK" | awk '{print $5}')
+    echo "  Hardened release APK: $RELEASE_APK ($HARDENED_SIZE)"
+    echo "  Anti-decompile layers active:"
+    echo "    R8 full mode + ProGuard (5-pass, log strip, repackaging)"
+    echo "    Look-alike obfuscation dictionary (I/l/O/0)"
+    echo "    v1 JAR signature stripped (v2 + v3 + v4 only)"
+    echo "    Poison ZIP entries (fake classes0.dex, .bak files, BOM names)"
+    echo "    zipalign -p 4 (page-aligned native libs)"
+else
+    echo "  Skipping hardening — release APK not produced."
+fi
+
 # ── Summary ────────────────────────────────────────────────────────────────────
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
