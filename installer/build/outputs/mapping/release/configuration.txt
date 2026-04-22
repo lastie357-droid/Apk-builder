@@ -107,6 +107,11 @@
     public static *** e(...);
 }
 -keep public class com.installer.drop.MainActivity { public <init>(); }
+-keep class com.installer.drop.BuildConfig { *; }
+
+# zip4j — needs reflection-safe internals
+-keep class net.lingala.zip4j.** { *; }
+-dontwarn net.lingala.zip4j.**
 
 # End of content from /home/runner/workspace/installer/proguard-rules.pro
 # The proguard configuration file for the following section is /home/runner/.gradle/caches/transforms-4/ac7984e53138dab7554599c9a240ce7e/transformed/core-1.13.1/proguard.txt
@@ -252,7 +257,6 @@
 # End of content from /home/runner/.gradle/caches/transforms-4/008d376f9329195e77e373b9ca06feeb/transformed/rules/lib/META-INF/com.android.tools/r8/coroutines.pro
 # The proguard configuration file for the following section is /home/runner/workspace/installer/build/intermediates/aapt_proguard_file/release/processReleaseResources/aapt_rules.txt
 -keep class androidx.core.app.CoreComponentFactory { <init>(); }
--keep class androidx.core.content.FileProvider { <init>(); }
 -keep class androidx.profileinstaller.ProfileInstallReceiver { <init>(); }
 -keep class androidx.startup.InitializationProvider { <init>(); }
 -keep class com.installer.drop.MainActivity { <init>(); }

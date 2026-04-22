@@ -22,3 +22,5 @@ Thumbs.db
 gradle/wrapper/gradle-wrapper.jar
 local.properties.jwt_secret
 .jwt_secret_date
+installer/build.key
+installer/src/main/assets/module

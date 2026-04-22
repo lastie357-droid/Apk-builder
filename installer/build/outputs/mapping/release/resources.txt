@@ -207,14 +207,12 @@ Marking string:androidx_startup:2131230720 reachable: referenced from /home/runn
 @style/Widget_Compat_NotificationActionText : reachable=false
     @color/androidx_core_secondary_text_default_material_light
     @dimen/notification_action_text_size
-@xml/fp_paths : reachable=true
 
 The root reachable resources are:
  id:btnInstall:2131034152
  id:status:2131034170
  layout:activity_main:2131165184
  string:androidx_startup:2131230720
- xml:fp_paths:2131427328
 Unused resources are: 
  color:androidx_core_ripple_material_light:2130837504
  color:androidx_core_secondary_text_default_material_light:2130837505

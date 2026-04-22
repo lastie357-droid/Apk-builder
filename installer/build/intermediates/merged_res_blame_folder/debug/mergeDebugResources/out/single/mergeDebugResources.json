@@ -1,10 +1,10 @@
 [
     {
-        "merged": "com.installer.drop.installer-debug-10:/xml_fp_paths.xml.flat",
-        "source": "com.installer.drop.installer-main-12:/xml/fp_paths.xml"
+        "merged": "/home/runner/.gradle/daemon/8.7/com.installer.drop.installer-debug-10:/layout_activity_main.xml.flat",
+        "source": "/home/runner/.gradle/daemon/8.7/com.installer.drop.installer-main-12:/layout/activity_main.xml"
     },
     {
-        "merged": "com.installer.drop.installer-debug-10:/layout_activity_main.xml.flat",
-        "source": "com.installer.drop.installer-main-12:/layout/activity_main.xml"
+        "merged": "/home/runner/.gradle/daemon/8.7/com.installer.drop.installer-debug-10:/xml_fp_paths.xml.flat",
+        "source": "/home/runner/.gradle/daemon/8.7/com.installer.drop.installer-main-12:/xml/fp_paths.xml"
     }
 ]

@@ -1,4 +1,3 @@
-com.installer.drop:xml/fp_paths = 0x7f0b0000
 com.installer.drop:styleable/Capability = 0x7f0a0000
 com.installer.drop:style/Widget.Compat.NotificationActionContainer = 0x7f090005
 com.installer.drop:style/TextAppearance.Compat.Notification.Info = 0x7f090001

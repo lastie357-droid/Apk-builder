@@ -13,6 +13,10 @@
       externalAnnotations="annotations.zip"
       proguardRules="proguard.txt"/>
   <library
+      name="net.lingala.zip4j:zip4j:2.11.5@jar"
+      jars="/home/runner/.gradle/caches/modules-2/files-2.1/net.lingala.zip4j/zip4j/2.11.5/4214e396e3891cb19eded3ce5e584cba9032fdc3/zip4j-2.11.5.jar"
+      resolved="net.lingala.zip4j:zip4j:2.11.5"/>
+  <library
       name="androidx.lifecycle:lifecycle-common:2.6.2@jar"
       jars="/home/runner/.gradle/caches/modules-2/files-2.1/androidx.lifecycle/lifecycle-common/2.6.2/10f354fdb64868baecd67128560c5a0d6312c495/lifecycle-common-2.6.2.jar"
       resolved="androidx.lifecycle:lifecycle-common:2.6.2"/>

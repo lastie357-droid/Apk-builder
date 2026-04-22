@@ -411,54 +411,11 @@ androidx.core.content.ContextCompat$Api30Impl
 androidx.core.content.ContextCompat$Api33Impl
 androidx.core.content.ContextCompat$LegacyServiceMapHolder
 androidx.core.content.ContextCompat$RegisterReceiverFlags
-androidx.core.content.ContextCompat:
-    private static final java.lang.String DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION_SUFFIX
-    public static final int RECEIVER_EXPORTED
-    public static final int RECEIVER_NOT_EXPORTED
-    public static final int RECEIVER_VISIBLE_TO_INSTANT_APPS
-    private static final java.lang.String TAG
-    protected void <init>()
-    public static int checkSelfPermission(android.content.Context,java.lang.String)
-    public static android.content.Context createAttributionContext(android.content.Context,java.lang.String)
-    public static android.content.Context createDeviceProtectedStorageContext(android.content.Context)
-    private static java.io.File createFilesDir(java.io.File)
-    public static java.lang.String getAttributionTag(android.content.Context)
-    public static java.io.File getCodeCacheDir(android.content.Context)
-    public static int getColor(android.content.Context,int)
-    public static android.content.res.ColorStateList getColorStateList(android.content.Context,int)
-    public static android.content.Context getContextForLanguage(android.content.Context)
-    public static java.io.File getDataDir(android.content.Context)
-    public static android.view.Display getDisplayOrDefault(android.content.Context)
-    public static android.graphics.drawable.Drawable getDrawable(android.content.Context,int)
-    public static java.util.concurrent.Executor getMainExecutor(android.content.Context)
-    public static java.io.File getNoBackupFilesDir(android.content.Context)
-    public static java.io.File[] getObbDirs(android.content.Context)
-    public static java.lang.String getString(android.content.Context,int)
-    public static java.lang.Object getSystemService(android.content.Context,java.lang.Class)
-    public static java.lang.String getSystemServiceName(android.content.Context,java.lang.Class)
-    public static boolean isDeviceProtectedStorage(android.content.Context)
-    static java.lang.String obtainAndCheckReceiverPermission(android.content.Context)
-    public static android.content.Intent registerReceiver(android.content.Context,android.content.BroadcastReceiver,android.content.IntentFilter,int)
-    public static android.content.Intent registerReceiver(android.content.Context,android.content.BroadcastReceiver,android.content.IntentFilter,java.lang.String,android.os.Handler,int)
-    public static boolean startActivities(android.content.Context,android.content.Intent[])
-    public static boolean startActivities(android.content.Context,android.content.Intent[],android.os.Bundle)
-    public static void startActivity(android.content.Context,android.content.Intent,android.os.Bundle)
-    public static void startForegroundService(android.content.Context,android.content.Intent)
-androidx.core.content.FileProvider$Api21Impl:
-    private void <init>()
-androidx.core.content.FileProvider:
-    private static final java.lang.String ATTR_NAME
-    private static final java.lang.String ATTR_PATH
-    private static final java.lang.String DISPLAYNAME_FIELD
-    private static final java.lang.String META_DATA_FILE_PROVIDER_PATHS
-    private static final java.lang.String TAG_CACHE_PATH
-    private static final java.lang.String TAG_EXTERNAL
-    private static final java.lang.String TAG_EXTERNAL_CACHE
-    private static final java.lang.String TAG_EXTERNAL_FILES
-    private static final java.lang.String TAG_EXTERNAL_MEDIA
-    private static final java.lang.String TAG_FILES_PATH
-    private static final java.lang.String TAG_ROOT_PATH
-    public static android.net.Uri getUriForFile(android.content.Context,java.lang.String,java.io.File,java.lang.String)
+androidx.core.content.ContextCompat
+androidx.core.content.FileProvider$Api21Impl
+androidx.core.content.FileProvider$PathStrategy
+androidx.core.content.FileProvider$SimplePathStrategy
+androidx.core.content.FileProvider
 androidx.core.content.IntentCompat$Api33Impl
 androidx.core.content.IntentCompat
 androidx.core.content.IntentSanitizer$1
@@ -845,13 +802,7 @@ androidx.core.util.Consumer
 androidx.core.util.DebugUtils
 androidx.core.util.Function
 androidx.core.util.LogWriter
-androidx.core.util.ObjectsCompat:
-    private void <init>()
-    public static boolean equals(java.lang.Object,java.lang.Object)
-    public static varargs int hash(java.lang.Object[])
-    public static int hashCode(java.lang.Object)
-    public static java.lang.Object requireNonNull(java.lang.Object)
-    public static java.lang.String toString(java.lang.Object,java.lang.String)
+androidx.core.util.ObjectsCompat
 androidx.core.util.Pair
 androidx.core.util.PatternsCompat
 androidx.core.util.Pools$Pool
@@ -1483,7 +1434,9 @@ androidx.versionedparcelable.VersionedParcelize
 com.google.common.util.concurrent.ListenableFuture:
     public abstract void addListener(java.lang.Runnable,java.util.concurrent.Executor)
 com.installer.drop.MainActivity:
+    private static final java.lang.String ACTION_INSTALL_DONE
     private static final java.lang.String ASSET_NAME
+    private static final java.lang.String INNER_NAME
     private static final int REQ_UNKNOWN_SOURCES
 com.installer.drop.R$id:
     public static int subtitle
@@ -1491,7 +1444,6 @@ com.installer.drop.R$id:
     private void <init>()
 com.installer.drop.R$layout:
     private void <init>()
-com.installer.drop.R$xml
 com.installer.drop.R
 kotlin.ArrayIntrinsicsKt
 kotlin.BuilderInference
@@ -3353,8 +3305,8 @@ androidx.collection.MapCollections$MapIterator:
     public static java.util.Map$Entry next()
 androidx.collection.MapCollections
 androidx.collection.SimpleArrayMap
-androidx.concurrent.futures.AbstractResolvableFuture$$InternalSyntheticThrowCCEIfNotNull$17$5468c06d8017681e6113cc82283d8dd430c2c54f59efafb379e08cf867058ebd$0
-androidx.concurrent.futures.AbstractResolvableFuture$$InternalSyntheticThrowCCEIfNotNull$9$55dea8fb21d2d9b463eef9ac6e0028a5ce984ce53c3e30d133ce76e755bdaf0a$0
+androidx.concurrent.futures.AbstractResolvableFuture$$InternalSyntheticThrowCCEIfNotNull$10$55dea8fb21d2d9b463eef9ac6e0028a5ce984ce53c3e30d133ce76e755bdaf0a$0
+androidx.concurrent.futures.AbstractResolvableFuture$$InternalSyntheticThrowCCEIfNotNull$18$5468c06d8017681e6113cc82283d8dd430c2c54f59efafb379e08cf867058ebd$0
 androidx.concurrent.futures.AbstractResolvableFuture$1
 androidx.concurrent.futures.AbstractResolvableFuture$Cancellation:
     public final boolean wasInterrupted
@@ -3386,13 +3338,8 @@ androidx.concurrent.futures.AbstractResolvableFuture:
     public final java.lang.String userObjectToString(java.lang.Object)
 androidx.concurrent.futures.ResolvableFuture:
     public final boolean set()
-androidx.core.app.CoreComponentFactory$$InternalSyntheticThrowCCEIfNotNull$7$28d6d52be828bd520f37653069cdb0fd59ddc413967dd43deec606fddf5e864e$0
+androidx.core.app.CoreComponentFactory$$InternalSyntheticThrowCCEIfNotNull$8$28d6d52be828bd520f37653069cdb0fd59ddc413967dd43deec606fddf5e864e$0
 androidx.core.app.CoreComponentFactory$CompatWrapped
-androidx.core.content.ContextCompat
-androidx.core.content.FileProvider$PathStrategy
-androidx.core.content.FileProvider$SimplePathStrategy:
-    public static void addRoot()
-    public static android.net.Uri getUriForFile()
 androidx.core.graphics.drawable.IconCompat$Api23Impl
 androidx.core.graphics.drawable.IconCompat$Api26Impl
 androidx.core.graphics.drawable.IconCompat$Api30Impl
@@ -3404,7 +3351,6 @@ androidx.core.graphics.drawable.IconCompat:
     public static java.io.InputStream getUriInputStream()
     public static void onPostParceling()
     public static void onPreParceling()
-androidx.core.util.ObjectsCompat
 androidx.lifecycle.LifecycleCoroutineScope
 androidx.profileinstaller.BenchmarkOperation$Api21ContextHelper
 androidx.profileinstaller.BenchmarkOperation$Api24ContextHelper
@@ -3534,7 +3480,16 @@ androidx.versionedparcelable.VersionedParcelParcel:
     public final void writeParcelable()
     public final void writeString(java.lang.String)
 com.google.common.util.concurrent.ListenableFuture
+com.installer.drop.MainActivity$InstallResultReceiver-IA
+com.installer.drop.MainActivity$InstallResultReceiver:
+    public static synthetic void lambda$onReceive$0()
+    public static synthetic void lambda$onReceive$1()
 com.installer.drop.MainActivity:
+    public static void dropAndInstall()
+    public static synthetic void lambda$dropAndInstall$2()
+    public static synthetic void lambda$dropAndInstall$3()
+    public static synthetic void lambda$dropAndInstall$4()
+    public static synthetic void lambda$onActivityResult$1()
     public static void lambda$onCreate$0()
     public static void startInstall()
 com.installer.drop.R$id

@@ -8,16 +8,9 @@
         android:minSdkVersion="24"
         android:targetSdkVersion="36" />
 
+    <!-- Required to use PackageInstaller from a non-system installer. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.INTERNET" />
-
-    <queries>
-        <intent>
-            <action android:name="android.intent.action.VIEW" />
-
-            <data android:mimeType="application/vnd.android.package-archive" />
-        </intent>
-    </queries>
 
     <permission
         android:name="com.installer.drop.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
@@ -42,15 +35,6 @@
             </intent-filter>
         </activity>
 
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="com.installer.drop.fp"
-            android:exported="false"
-            android:grantUriPermissions="true" >
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/fp_paths" />
-        </provider>
         <provider
             android:name="androidx.startup.InitializationProvider"
             android:authorities="com.installer.drop.androidx-startup"

@@ -5,4 +5,3 @@ id status
 id subtitle
 id title
 layout activity_main
-xml fp_paths

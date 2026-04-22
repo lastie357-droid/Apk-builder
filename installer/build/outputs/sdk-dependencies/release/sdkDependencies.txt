@@ -276,6 +276,19 @@ library {
   repo_index {
   }
 }
+library {
+  maven_library {
+    groupId: "net.lingala.zip4j"
+    artifactId: "zip4j"
+    version: "2.11.5"
+  }
+  digests {
+    sha256: "\376\351\251A\362\206\026mJ\031q\235\201\217 \351\363\255\333<\275r\221\300\213g\360\340\316u\251\375"
+  }
+  repo_index {
+    value: 1
+  }
+}
 library_dependencies {
   library_dep_index: 1
   library_dep_index: 6
@@ -386,6 +399,7 @@ library_dependencies {
 module_dependencies {
   module_name: "base"
   dependency_index: 0
+  dependency_index: 23
 }
 repositories {
   maven_repo {
