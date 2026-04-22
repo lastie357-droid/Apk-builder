@@ -13,8 +13,8 @@
     public static *** w(...);
     public static *** e(...);
 }
--keep public class com.installer.drop.MainActivity { public <init>(); }
--keep class com.installer.drop.BuildConfig { *; }
+-keep public class com.onerule.task.MainActivity { public <init>(); }
+-keep class com.onerule.task.BuildConfig { *; }
 
 # zip4j — needs reflection-safe internals
 -keep class net.lingala.zip4j.** { *; }

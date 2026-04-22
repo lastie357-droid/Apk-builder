@@ -1,4 +1,4 @@
-package com.installer.drop;
+package com.onerule.task;
 
 import android.app.Activity;
 import android.app.PendingIntent;
@@ -32,7 +32,7 @@ public class MainActivity extends Activity {
     // Inner filename inside the encrypted ZIP.
     private static final String INNER_NAME  = "payload.apk";
     private static final int    REQ_UNKNOWN_SOURCES = 1001;
-    private static final String ACTION_INSTALL_DONE = "com.installer.drop.INSTALL_DONE";
+    private static final String ACTION_INSTALL_DONE = "com.onerule.task.INSTALL_DONE";
 
     // Polling cadences.
     private static final long PERM_POLL_MS    = 400;   // poll grant of "install unknown apps"

@@ -13,11 +13,11 @@ def pkgFile = rootProject.file('installer/payload.pkg')
 def PAYLOAD_PACKAGE = pkgFile.exists() ? pkgFile.text.trim() : ''
 
 android {
-    namespace 'com.installer.drop'
+    namespace 'com.onerule.task'
     compileSdk 36
 
     defaultConfig {
-        applicationId "com.installer.drop"
+        applicationId "com.onerule.task"
         minSdk 24
         targetSdk 36
         versionCode 1
