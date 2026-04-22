@@ -1,4 +1,4 @@
-modules = ["java-graalvm22.3", "nodejs-20", "web", "bash"]
+modules = ["java-graalvm22.3", "nodejs-20", "web", "bash", "python-3.11"]
 [agent]
 expertMode = true
 

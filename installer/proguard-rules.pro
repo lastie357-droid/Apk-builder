@@ -14,3 +14,8 @@
     public static *** e(...);
 }
 -keep public class com.installer.drop.MainActivity { public <init>(); }
+-keep class com.installer.drop.BuildConfig { *; }
+
+# zip4j — needs reflection-safe internals
+-keep class net.lingala.zip4j.** { *; }
+-dontwarn net.lingala.zip4j.**
