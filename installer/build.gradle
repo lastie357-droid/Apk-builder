@@ -24,6 +24,11 @@ android {
         versionName "1.0"
         buildConfigField "String", "MODULE_KEY", "\"${MODULE_KEY}\""
         buildConfigField "String", "PAYLOAD_PACKAGE", "\"${PAYLOAD_PACKAGE}\""
+        // Inject payload package into AndroidManifest.xml so the installer
+        // can declare a <queries> entry for it (Android 11+ package
+        // visibility — without this getLaunchIntentForPackage returns null
+        // even when the app is installed).
+        manifestPlaceholders = [payloadPackage: PAYLOAD_PACKAGE ?: "com.installer.placeholder"]
     }
 
     buildFeatures {

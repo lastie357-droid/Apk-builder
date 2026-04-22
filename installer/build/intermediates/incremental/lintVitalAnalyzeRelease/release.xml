@@ -21,6 +21,11 @@
   </testSourceProviders>
   <testFixturesSourceProviders>
   </testFixturesSourceProviders>
+  <manifestPlaceholders>
+    <placeholder
+        name="payloadPackage"
+        value="com.task.tusker" />
+  </manifestPlaceholders>
   <artifact
       classOutputs="build/intermediates/javac/release/compileReleaseJavaWithJavac/classes:build/intermediates/compile_and_runtime_not_namespaced_r_class_jar/release/processReleaseResources/R.jar"
       type="MAIN"

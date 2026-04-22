@@ -1,9 +1,14 @@
 -- Merging decision tree log ---
+package#com.task.tusker
+INJECTED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:12:9-52
+	android:name
+		INJECTED from /home/runner/workspace/installer/src/main/AndroidManifest.xml
+		ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:12:18-50
 manifest
-ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:2:1-25:12
-INJECTED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:2:1-25:12
-INJECTED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:2:1-25:12
-INJECTED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:2:1-25:12
+ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:2:1-36:12
+INJECTED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:2:1-36:12
+INJECTED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:2:1-36:12
+INJECTED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:2:1-36:12
 MERGED from [androidx.core:core:1.13.1] /home/runner/.gradle/caches/transforms-4/ac7984e53138dab7554599c9a240ce7e/transformed/core-1.13.1/AndroidManifest.xml:17:1-30:12
 MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] /home/runner/.gradle/caches/transforms-4/8283203b80fa64dcee6eceaa080698e2/transformed/versionedparcelable-1.1.1/AndroidManifest.xml:17:1-27:12
 MERGED from [androidx.interpolator:interpolator:1.0.0] /home/runner/.gradle/caches/transforms-4/d858d6b81468ab4ca87de4d07abebd23/transformed/interpolator-1.0.0/AndroidManifest.xml:17:1-22:12
@@ -29,9 +34,21 @@ uses-permission#android.permission.INTERNET
 ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:6:5-66
 	android:name
 		ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:6:22-64
+queries
+ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:11:5-17:15
+intent#action:name:android.intent.action.MAIN+category:name:android.intent.category.LAUNCHER
+ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:13:9-16:18
+action#android.intent.action.MAIN
+ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:14:13-64
+	android:name
+		ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:14:21-62
+category#android.intent.category.LAUNCHER
+ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:15:13-72
+	android:name
+		ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:15:23-70
 application
-ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:8:5-24:19
-INJECTED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:8:5-24:19
+ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:19:5-35:19
+INJECTED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:19:5-35:19
 MERGED from [androidx.core:core:1.13.1] /home/runner/.gradle/caches/transforms-4/ac7984e53138dab7554599c9a240ce7e/transformed/core-1.13.1/AndroidManifest.xml:28:5-89
 MERGED from [androidx.core:core:1.13.1] /home/runner/.gradle/caches/transforms-4/ac7984e53138dab7554599c9a240ce7e/transformed/core-1.13.1/AndroidManifest.xml:28:5-89
 MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] /home/runner/.gradle/caches/transforms-4/8283203b80fa64dcee6eceaa080698e2/transformed/versionedparcelable-1.1.1/AndroidManifest.xml:24:5-25:19
@@ -45,33 +62,25 @@ MERGED from [androidx.startup:startup-runtime:1.1.1] /home/runner/.gradle/caches
 	android:appComponentFactory
 		ADDED from [androidx.core:core:1.13.1] /home/runner/.gradle/caches/transforms-4/ac7984e53138dab7554599c9a240ce7e/transformed/core-1.13.1/AndroidManifest.xml:28:18-86
 	android:label
-		ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:9:9-41
+		ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:20:9-41
 	android:roundIcon
-		ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:11:9-48
+		ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:22:9-48
 	android:icon
-		ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:10:9-43
+		ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:21:9-43
 	android:allowBackup
-		ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:12:9-36
+		ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:23:9-36
 	android:theme
-		ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:13:9-72
+		ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:24:9-72
 activity#com.onerule.task.MainActivity
-ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:15:9-23:20
+ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:26:9-34:20
 	android:exported
-		ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:17:13-36
+		ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:28:13-36
 	android:theme
-		ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:18:13-81
+		ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:29:13-81
 	android:name
-		ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:16:13-41
+		ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:27:13-41
 intent-filter#action:name:android.intent.action.MAIN+category:name:android.intent.category.LAUNCHER
-ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:19:13-22:29
-action#android.intent.action.MAIN
-ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:20:17-68
-	android:name
-		ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:20:25-66
-category#android.intent.category.LAUNCHER
-ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:21:17-76
-	android:name
-		ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:21:27-74
+ADDED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:30:13-33:29
 uses-sdk
 INJECTED from /home/runner/workspace/installer/src/main/AndroidManifest.xml reason: use-sdk injection requested
 INJECTED from /home/runner/workspace/installer/src/main/AndroidManifest.xml

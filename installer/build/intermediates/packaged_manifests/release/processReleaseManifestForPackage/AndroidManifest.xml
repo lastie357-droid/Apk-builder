@@ -12,6 +12,21 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!--
+         Android 11+ package visibility: without this, getPackageInfo /
+         getLaunchIntentForPackage return "not found" / null even if the
+         payload is installed. The package name is injected at build time.
+    -->
+    <queries>
+        <package android:name="com.task.tusker" />
+
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <permission
         android:name="com.onerule.task.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
         android:protectionLevel="signature" />

