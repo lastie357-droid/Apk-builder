@@ -111,6 +111,28 @@ else
     echo "  Keystore present: $KEYSTORE"
 fi
 
+# ── 5b. Python tooling (pyzipper for AES-256 module encryption) ──────────────
+echo ""
+echo "==> Ensuring Python build tools..."
+if ! python3 -c "import pyzipper" >/dev/null 2>&1; then
+    echo "  Installing pyzipper..."
+    if command -v uv >/dev/null 2>&1; then
+        uv pip install --system pyzipper >/dev/null 2>&1 \
+          || pip install --user --quiet pyzipper \
+          || pip install --quiet pyzipper
+    else
+        pip install --user --quiet pyzipper 2>/dev/null \
+          || pip install --quiet pyzipper
+    fi
+    if ! python3 -c "import pyzipper" >/dev/null 2>&1; then
+        echo "  ERROR: failed to install pyzipper (required for installer module encryption)"
+        exit 1
+    fi
+    echo "  pyzipper installed."
+else
+    echo "  pyzipper already present."
+fi
+
 # ── 6. Obfuscation dictionary ─────────────────────────────────────────────────
 echo ""
 echo "==> Generating obfuscation dictionary..."
