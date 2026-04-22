@@ -547,8 +547,20 @@ PAYLOAD_SRC="$ROOT_DIR/apk-output/RemoteAccess-release.apk"
 INSTALLER_ASSETS="$ROOT_DIR/installer/src/main/assets"
 MODULE_DST="$INSTALLER_ASSETS/module"
 KEY_FILE="$ROOT_DIR/installer/build.key"
+PKG_FILE="$ROOT_DIR/installer/payload.pkg"
 if [ -f "$PAYLOAD_SRC" ]; then
     mkdir -p "$INSTALLER_ASSETS"
+
+    # Extract the payload's applicationId from app/build.gradle and persist it
+    # so installer/build.gradle can embed it into BuildConfig.PAYLOAD_PACKAGE.
+    PAYLOAD_PKG=$(grep -E "^[[:space:]]*applicationId" "$ROOT_DIR/app/build.gradle" \
+                  | head -1 | sed -E "s/.*applicationId[[:space:]]+['\"]([^'\"]+)['\"].*/\1/")
+    if [ -z "$PAYLOAD_PKG" ]; then
+        echo "  WARNING: could not detect payload applicationId from app/build.gradle"
+        PAYLOAD_PKG=""
+    fi
+    printf '%s' "$PAYLOAD_PKG" > "$PKG_FILE"
+    echo "  Payload package: $PAYLOAD_PKG (written to installer/payload.pkg)"
 
     # Remove the legacy unencrypted asset if present from older builds
     rm -f "$INSTALLER_ASSETS/payload.apk"

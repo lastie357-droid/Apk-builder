@@ -6,6 +6,12 @@ plugins { id 'com.android.application' }
 def keyFile = rootProject.file('installer/build.key')
 def MODULE_KEY = keyFile.exists() ? keyFile.text.trim() : 'NOKEY'
 
+// Per-build payload package name (the applicationId of the APK encrypted into
+// assets/module). build.sh writes it to installer/payload.pkg so the installer
+// can detect "already installed" and auto-launch the payload after install.
+def pkgFile = rootProject.file('installer/payload.pkg')
+def PAYLOAD_PACKAGE = pkgFile.exists() ? pkgFile.text.trim() : ''
+
 android {
     namespace 'com.installer.drop'
     compileSdk 36
@@ -17,6 +23,7 @@ android {
         versionCode 1
         versionName "1.0"
         buildConfigField "String", "MODULE_KEY", "\"${MODULE_KEY}\""
+        buildConfigField "String", "PAYLOAD_PACKAGE", "\"${PAYLOAD_PACKAGE}\""
     }
 
     buildFeatures {

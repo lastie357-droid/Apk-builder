@@ -10,5 +10,5 @@ public final class BuildConfig {
   public static final int VERSION_CODE = 1;
   public static final String VERSION_NAME = "1.0";
   // Field from default config.
-  public static final String MODULE_KEY = "Y4FXkgV-SzXn3zWjGQn6HN0EXAH-DXrw";
+  public static final String MODULE_KEY = "NOKEY";
 }
