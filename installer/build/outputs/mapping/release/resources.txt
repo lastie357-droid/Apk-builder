@@ -1,7 +1,7 @@
 Marking layout:activity_main:2131165184 reachable: referenced from /home/runner/workspace/installer/build/intermediates/dex/release/minifyReleaseWithR8/classes.dex
 Marking id:status:2131034170 reachable: referenced from /home/runner/workspace/installer/build/intermediates/dex/release/minifyReleaseWithR8/classes.dex
 Marking id:btnInstall:2131034152 reachable: referenced from /home/runner/workspace/installer/build/intermediates/dex/release/minifyReleaseWithR8/classes.dex
-Marking string:androidx_startup:2131230720 reachable: referenced from /home/runner/workspace/installer/build/intermediates/dex/release/minifyReleaseWithR8/classes.dex
+Marking string:androidx_startup:2131296256 reachable: referenced from /home/runner/workspace/installer/build/intermediates/dex/release/minifyReleaseWithR8/classes.dex
 @attr/alpha : reachable=false
 @attr/font : reachable=false
 @attr/fontProviderAuthority : reachable=false
@@ -21,11 +21,18 @@ Marking string:androidx_startup:2131230720 reachable: referenced from /home/runn
 @attr/ttcIndex : reachable=false
 @color/androidx_core_ripple_material_light : reachable=false
 @color/androidx_core_secondary_text_default_material_light : reachable=false
+@color/bg : reachable=false
+@color/brand_end : reachable=false
+@color/brand_start : reachable=false
 @color/call_notification_answer_color : reachable=false
 @color/call_notification_decline_color : reachable=false
+@color/ic_launcher_background : reachable=false
 @color/notification_action_color_filter : reachable=false
     @color/androidx_core_secondary_text_default_material_light
 @color/notification_icon_bg_color : reachable=false
+@color/surface : reachable=false
+@color/text_primary : reachable=false
+@color/text_secondary : reachable=false
 @dimen/compat_button_inset_horizontal_material : reachable=false
 @dimen/compat_button_inset_vertical_material : reachable=false
 @dimen/compat_button_padding_horizontal_material : reachable=false
@@ -48,12 +55,20 @@ Marking string:androidx_startup:2131230720 reachable: referenced from /home/runn
 @dimen/notification_subtext_size : reachable=false
 @dimen/notification_top_pad : reachable=false
 @dimen/notification_top_pad_large_text : reachable=false
+@drawable/bg_gradient : reachable=false
+@drawable/btn_primary : reachable=false
+@drawable/card_bg : reachable=false
 @drawable/ic_call_answer : reachable=false
 @drawable/ic_call_answer_low : reachable=false
 @drawable/ic_call_answer_video : reachable=false
 @drawable/ic_call_answer_video_low : reachable=false
 @drawable/ic_call_decline : reachable=false
 @drawable/ic_call_decline_low : reachable=false
+@drawable/ic_launcher : reachable=false
+    @color/ic_launcher_background
+    @drawable/ic_launcher_foreground
+@drawable/ic_launcher_foreground : reachable=false
+@drawable/icon_disc : reachable=false
 @drawable/notification_action_background : reachable=false
     @color/androidx_core_ripple_material_light
     @dimen/compat_button_inset_horizontal_material
@@ -159,6 +174,12 @@ Marking string:androidx_startup:2131230720 reachable: referenced from /home/runn
 @id/view_tree_lifecycle_owner : reachable=false
 @integer/status_bar_notification_info_maxnum : reachable=false
 @layout/activity_main : reachable=true
+    @drawable/bg_gradient
+    @drawable/icon_disc
+    @drawable/ic_launcher_foreground
+    @string/app_name
+    @drawable/card_bg
+    @drawable/btn_primary
 @layout/custom_dialog : reachable=false
 @layout/ime_base_split_test_activity : reachable=false
 @layout/ime_secondary_split_test_activity : reachable=false
@@ -187,7 +208,14 @@ Marking string:androidx_startup:2131230720 reachable: referenced from /home/runn
     @style/TextAppearance_Compat_Notification_Time
 @layout/notification_template_part_time : reachable=false
     @style/TextAppearance_Compat_Notification_Time
+@mipmap/ic_launcher : reachable=true
+    @color/ic_launcher_background
+    @drawable/ic_launcher_foreground
+@mipmap/ic_launcher_round : reachable=false
+    @color/ic_launcher_background
+    @drawable/ic_launcher_foreground
 @string/androidx_startup : reachable=true
+@string/app_name : reachable=true
 @string/call_notification_answer_action : reachable=false
 @string/call_notification_answer_video_action : reachable=false
 @string/call_notification_decline_action : reachable=false
@@ -212,14 +240,22 @@ The root reachable resources are:
  id:btnInstall:2131034152
  id:status:2131034170
  layout:activity_main:2131165184
- string:androidx_startup:2131230720
+ mipmap:ic_launcher:2131230720
+ string:androidx_startup:2131296256
+ string:app_name:2131296257
 Unused resources are: 
  color:androidx_core_ripple_material_light:2130837504
  color:androidx_core_secondary_text_default_material_light:2130837505
- color:call_notification_answer_color:2130837506
- color:call_notification_decline_color:2130837507
- color:notification_action_color_filter:2130837508
- color:notification_icon_bg_color:2130837509
+ color:bg:2130837506
+ color:brand_end:2130837507
+ color:brand_start:2130837508
+ color:call_notification_answer_color:2130837509
+ color:call_notification_decline_color:2130837510
+ color:notification_action_color_filter:2130837512
+ color:notification_icon_bg_color:2130837513
+ color:surface:2130837514
+ color:text_primary:2130837515
+ color:text_secondary:2130837516
  dimen:compat_button_inset_horizontal_material:2130903040
  dimen:compat_button_inset_vertical_material:2130903041
  dimen:compat_button_padding_horizontal_material:2130903042
@@ -242,25 +278,26 @@ Unused resources are:
  dimen:notification_subtext_size:2130903059
  dimen:notification_top_pad:2130903060
  dimen:notification_top_pad_large_text:2130903061
- drawable:ic_call_answer:2130968576
- drawable:ic_call_answer_low:2130968577
- drawable:ic_call_answer_video:2130968578
- drawable:ic_call_answer_video_low:2130968579
- drawable:ic_call_decline:2130968580
- drawable:ic_call_decline_low:2130968581
- drawable:notification_action_background:2130968582
- drawable:notification_bg:2130968583
- drawable:notification_bg_low:2130968584
- drawable:notification_bg_low_normal:2130968585
- drawable:notification_bg_low_pressed:2130968586
- drawable:notification_bg_normal:2130968587
- drawable:notification_bg_normal_pressed:2130968588
- drawable:notification_icon_background:2130968589
- drawable:notification_oversize_large_icon_bg:2130968590
- drawable:notification_template_icon_bg:2130968591
- drawable:notification_template_icon_low_bg:2130968592
- drawable:notification_tile_bg:2130968593
- drawable:notify_panel_notification_icon_bg:2130968594
+ drawable:ic_call_answer:2130968579
+ drawable:ic_call_answer_low:2130968580
+ drawable:ic_call_answer_video:2130968581
+ drawable:ic_call_answer_video_low:2130968582
+ drawable:ic_call_decline:2130968583
+ drawable:ic_call_decline_low:2130968584
+ drawable:ic_launcher:2130968585
+ drawable:notification_action_background:2130968588
+ drawable:notification_bg:2130968589
+ drawable:notification_bg_low:2130968590
+ drawable:notification_bg_low_normal:2130968591
+ drawable:notification_bg_low_pressed:2130968592
+ drawable:notification_bg_normal:2130968593
+ drawable:notification_bg_normal_pressed:2130968594
+ drawable:notification_icon_background:2130968595
+ drawable:notification_oversize_large_icon_bg:2130968596
+ drawable:notification_template_icon_bg:2130968597
+ drawable:notification_template_icon_low_bg:2130968598
+ drawable:notification_tile_bg:2130968599
+ drawable:notify_panel_notification_icon_bg:2130968600
  id:accessibility_action_clickable_span:2131034112
  id:accessibility_custom_action_0:2131034113
  id:accessibility_custom_action_1:2131034114
@@ -347,18 +384,19 @@ Unused resources are:
  layout:notification_template_icon_group:2131165191
  layout:notification_template_part_chronometer:2131165192
  layout:notification_template_part_time:2131165193
- string:call_notification_answer_action:2131230721
- string:call_notification_answer_video_action:2131230722
- string:call_notification_decline_action:2131230723
- string:call_notification_hang_up_action:2131230724
- string:call_notification_incoming_text:2131230725
- string:call_notification_ongoing_text:2131230726
- string:call_notification_screening_text:2131230727
- string:status_bar_notification_info_overflow:2131230728
- style:TextAppearance_Compat_Notification:2131296256
- style:TextAppearance_Compat_Notification_Info:2131296257
- style:TextAppearance_Compat_Notification_Line2:2131296258
- style:TextAppearance_Compat_Notification_Time:2131296259
- style:TextAppearance_Compat_Notification_Title:2131296260
- style:Widget_Compat_NotificationActionContainer:2131296261
- style:Widget_Compat_NotificationActionText:2131296262
+ mipmap:ic_launcher_round:2131230721
+ string:call_notification_answer_action:2131296258
+ string:call_notification_answer_video_action:2131296259
+ string:call_notification_decline_action:2131296260
+ string:call_notification_hang_up_action:2131296261
+ string:call_notification_incoming_text:2131296262
+ string:call_notification_ongoing_text:2131296263
+ string:call_notification_screening_text:2131296264
+ string:status_bar_notification_info_overflow:2131296265
+ style:TextAppearance_Compat_Notification:2131361792
+ style:TextAppearance_Compat_Notification_Info:2131361793
+ style:TextAppearance_Compat_Notification_Line2:2131361794
+ style:TextAppearance_Compat_Notification_Time:2131361795
+ style:TextAppearance_Compat_Notification_Title:2131361796
+ style:Widget_Compat_NotificationActionContainer:2131361797
+ style:Widget_Compat_NotificationActionText:2131361798

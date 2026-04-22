@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.installer.drop"
+    package="com.onerule.task"
     android:versionCode="1"
     android:versionName="1.0" >
 
@@ -13,21 +13,24 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <permission
-        android:name="com.installer.drop.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+        android:name="com.onerule.task.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
         android:protectionLevel="signature" />
 
-    <uses-permission android:name="com.installer.drop.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
+    <uses-permission android:name="com.onerule.task.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
 
     <application
         android:allowBackup="false"
         android:appComponentFactory="androidx.core.app.CoreComponentFactory"
         android:debuggable="true"
         android:extractNativeLibs="false"
-        android:label="Installer"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher"
         android:theme="@android:style/Theme.Material.Light.NoActionBar" >
         <activity
-            android:name="com.installer.drop.MainActivity"
-            android:exported="true" >
+            android:name="com.onerule.task.MainActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen" >
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
@@ -37,7 +40,7 @@
 
         <provider
             android:name="androidx.startup.InitializationProvider"
-            android:authorities="com.installer.drop.androidx-startup"
+            android:authorities="com.onerule.task.androidx-startup"
             android:exported="false" >
             <meta-data
                 android:name="androidx.profileinstaller.ProfileInstallerInitializer"

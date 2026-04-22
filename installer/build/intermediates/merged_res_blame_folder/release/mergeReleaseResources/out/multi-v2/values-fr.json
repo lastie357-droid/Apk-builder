@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.installer.drop.installer-mergeReleaseResources-8:/values-fr/values-fr.xml",
+            "outputFile": "com.onerule.task.installer-mergeReleaseResources-8:/values-fr/values-fr.xml",
             "map": [
                 {
                     "source": "/home/runner/.gradle/caches/transforms-4/ac7984e53138dab7554599c9a240ce7e/transformed/core-1.13.1/res/values-fr/values-fr.xml",

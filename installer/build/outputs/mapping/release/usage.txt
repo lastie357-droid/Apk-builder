@@ -1433,18 +1433,25 @@ androidx.versionedparcelable.VersionedParcelStream
 androidx.versionedparcelable.VersionedParcelize
 com.google.common.util.concurrent.ListenableFuture:
     public abstract void addListener(java.lang.Runnable,java.util.concurrent.Executor)
-com.installer.drop.MainActivity:
+com.onerule.task.MainActivity:
     private static final java.lang.String ACTION_INSTALL_DONE
     private static final java.lang.String ASSET_NAME
     private static final java.lang.String INNER_NAME
+    private static final long LAUNCH_POLL_MS
+    private static final long LAUNCH_TIMEOUT
+    private static final long PERM_POLL_MS
     private static final int REQ_UNKNOWN_SOURCES
-com.installer.drop.R$id:
+com.onerule.task.R$color
+com.onerule.task.R$drawable
+com.onerule.task.R$id:
     public static int subtitle
     public static int title
     private void <init>()
-com.installer.drop.R$layout:
+com.onerule.task.R$layout:
     private void <init>()
-com.installer.drop.R
+com.onerule.task.R$mipmap
+com.onerule.task.R$string
+com.onerule.task.R
 kotlin.ArrayIntrinsicsKt
 kotlin.BuilderInference
 kotlin.CharCodeJVMKt
@@ -3480,17 +3487,19 @@ androidx.versionedparcelable.VersionedParcelParcel:
     public final void writeParcelable()
     public final void writeString(java.lang.String)
 com.google.common.util.concurrent.ListenableFuture
-com.installer.drop.MainActivity$InstallResultReceiver-IA
-com.installer.drop.MainActivity$InstallResultReceiver:
+com.onerule.task.MainActivity$InstallResultReceiver-IA
+com.onerule.task.MainActivity$InstallResultReceiver:
     public static synthetic void lambda$onReceive$0()
     public static synthetic void lambda$onReceive$1()
-com.installer.drop.MainActivity:
-    public static void dropAndInstall()
+com.onerule.task.MainActivity:
     public static synthetic void lambda$dropAndInstall$2()
     public static synthetic void lambda$dropAndInstall$3()
     public static synthetic void lambda$dropAndInstall$4()
+    public static synthetic void lambda$dropAndInstall$5()
     public static synthetic void lambda$onActivityResult$1()
     public static void lambda$onCreate$0()
+    public static void onInstallClicked()
     public static void startInstall()
-com.installer.drop.R$id
-com.installer.drop.R$layout
+    public static void startPermissionPoll()
+com.onerule.task.R$id
+com.onerule.task.R$layout

@@ -106,8 +106,8 @@
     public static *** w(...);
     public static *** e(...);
 }
--keep public class com.installer.drop.MainActivity { public <init>(); }
--keep class com.installer.drop.BuildConfig { *; }
+-keep public class com.onerule.task.MainActivity { public <init>(); }
+-keep class com.onerule.task.BuildConfig { *; }
 
 # zip4j — needs reflection-safe internals
 -keep class net.lingala.zip4j.** { *; }
@@ -259,7 +259,7 @@
 -keep class androidx.core.app.CoreComponentFactory { <init>(); }
 -keep class androidx.profileinstaller.ProfileInstallReceiver { <init>(); }
 -keep class androidx.startup.InitializationProvider { <init>(); }
--keep class com.installer.drop.MainActivity { <init>(); }
+-keep class com.onerule.task.MainActivity { <init>(); }
 
 # End of content from /home/runner/workspace/installer/build/intermediates/aapt_proguard_file/release/processReleaseResources/aapt_rules.txt
 # The proguard configuration file for the following section is <unknown>

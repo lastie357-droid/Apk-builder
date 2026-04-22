@@ -1,4 +1,4 @@
-com.installer.drop
+com.onerule.task
 attr alpha
 attr font
 attr fontProviderAuthority
@@ -18,10 +18,17 @@ attr shortcutMatchRequired
 attr ttcIndex
 color androidx_core_ripple_material_light
 color androidx_core_secondary_text_default_material_light
+color bg
+color brand_end
+color brand_start
 color call_notification_answer_color
 color call_notification_decline_color
+color ic_launcher_background
 color notification_action_color_filter
 color notification_icon_bg_color
+color surface
+color text_primary
+color text_secondary
 dimen compat_button_inset_horizontal_material
 dimen compat_button_inset_vertical_material
 dimen compat_button_padding_horizontal_material
@@ -44,12 +51,18 @@ dimen notification_small_icon_size_as_large
 dimen notification_subtext_size
 dimen notification_top_pad
 dimen notification_top_pad_large_text
+drawable bg_gradient
+drawable btn_primary
+drawable card_bg
 drawable ic_call_answer
 drawable ic_call_answer_low
 drawable ic_call_answer_video
 drawable ic_call_answer_video_low
 drawable ic_call_decline
 drawable ic_call_decline_low
+drawable ic_launcher
+drawable ic_launcher_foreground
+drawable icon_disc
 drawable notification_action_background
 drawable notification_bg
 drawable notification_bg_low
@@ -152,7 +165,10 @@ layout notification_template_custom_big
 layout notification_template_icon_group
 layout notification_template_part_chronometer
 layout notification_template_part_time
+mipmap ic_launcher
+mipmap ic_launcher_round
 string androidx_startup
+string app_name
 string call_notification_answer_action
 string call_notification_answer_video_action
 string call_notification_decline_action
