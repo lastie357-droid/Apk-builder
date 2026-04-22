@@ -289,20 +289,66 @@ PYEOF
     #     entries that aren't referenced by the manifest.
     #     We add them OUTSIDE the signed entries via apksigner-friendly method:
     #     append as STORED entries to the ZIP central directory after signing.
-    echo "  [c] Injecting poison ZIP entries to confuse decompilers ..."
+    echo "  [c] Injecting poison ZIP + resource entries to confuse decompilers ..."
     python3 - << PYEOF
-import zipfile, os, random
+import zipfile, os, random, struct
 random.seed(0xC0FFEE)
 src = "$RELEASE_APK"
-# We have to use 'a' (append) mode; new entries land after the APK Signing
-# Block. Android's verifier tolerates extra entries that aren't part of the
-# signed set, but reversers like apktool will try to parse them.
+
+# ── Crafted AXML (Android Binary XML) header that LOOKS valid (so apktool/
+#    AXmlPrinter dives into it) but has a corrupted string-pool chunk that
+#    triggers an IndexOutOfBounds / NegativeArraySize during decoding.
+#    Android never loads these files (they aren't referenced from
+#    resources.arsc), so runtime is unaffected.
+def poison_axml():
+    # AXML magic: 0x00080003, file size placeholder, then a malformed
+    # ResStringPool_header chunk (type=0x0001) with absurd stringCount.
+    header = struct.pack("<HHI", 0x0003, 0x0008, 0x10000000)  # huge "file size"
+    spool  = struct.pack("<HHIIIIII",
+                         0x0001, 0x001C,        # type, headerSize
+                         0x10000000,            # chunk size (huge → overflow)
+                         0x7FFFFFFF,            # stringCount (max int → OOM)
+                         0,                     # styleCount
+                         0,                     # flags
+                         0x10000000,            # stringsStart (out of bounds)
+                         0)                     # stylesStart
+    return header + spool + bytes(random.getrandbits(8) for _ in range(512))
+
+# ── Crafted resources.arsc-style header: looks like a ResTable but the
+#    package chunk count is bogus, so aapt2/apktool's arsc parser explodes.
+def poison_arsc():
+    # ResTable_header: type=0x0002, headerSize=0x000C, size, packageCount
+    return struct.pack("<HHII",
+                       0x0002, 0x000C,
+                       0x10000000,            # huge "file size"
+                       0x7FFFFFFF) + bytes(random.getrandbits(8) for _ in range(2048))
+
 poison = {
-    "classes0.dex":          b"dex\n000\x00" + bytes(random.getrandbits(8) for _ in range(2048)),
-    "resources.arsc.bak":    bytes(random.getrandbits(8) for _ in range(4096)),
-    "AndroidManifest.xml.bak": b"\x03\x00\x08\x00" + bytes(random.getrandbits(8) for _ in range(1024)),
+    # Generic ZIP-level decoys (already present, slightly expanded)
+    "classes0.dex":            b"dex\n000\x00" + bytes(random.getrandbits(8) for _ in range(2048)),
+    "AndroidManifest.xml.bak": poison_axml(),
+    "resources.arsc.bak":      poison_arsc(),
     "META-INF/services/\xef\xbb\xbfpoison".encode("latin1").decode("latin1"):
         b"# decoy\n",
+
+    # ── Resource-tree poisoning: apktool/aapt2 walk every entry under res/
+    #    and try to decode AXML / arsc by extension. Each of these will abort
+    #    decoding with a fatal parser error.
+    "res/xml/_decoy0.xml":     poison_axml(),
+    "res/xml/_decoy1.xml":     poison_axml(),
+    "res/layout/_decoy0.xml":  poison_axml(),
+    "res/layout/_decoy1.xml":  poison_axml(),
+    "res/menu/_decoy.xml":     poison_axml(),
+    "res/anim/_decoy.xml":     poison_axml(),
+    "res/drawable/_decoy.xml": poison_axml(),
+    "res/values/_decoy.xml":   poison_axml(),
+    "res/raw/_decoy.bin":      bytes(random.getrandbits(8) for _ in range(1024)),
+    "res/raw/_decoy.arsc":     poison_arsc(),
+
+    # ── Asset-tree decoys: apktool copies assets/ as-is, but some scanners
+    #    (jadx, MobSF) try to parse XML/JSON inside assets and choke.
+    "assets/_decoy_manifest.xml": poison_axml(),
+    "assets/_decoy_resources.arsc": poison_arsc(),
 }
 # Append using STORED so headers look "normal" but content is junk.
 with zipfile.ZipFile(src, "a", zipfile.ZIP_STORED, allowZip64=False) as z:
@@ -349,6 +395,8 @@ PYEOF
     echo "    Look-alike obfuscation dictionary (I/l/O/0)"
     echo "    v1 JAR signature stripped (v2 + v3 + v4 only)"
     echo "    Poison ZIP entries (fake classes0.dex, .bak files, BOM names)"
+    echo "    Resource-tree poisoning (corrupted AXML in res/xml, layout, menu,"
+    echo "      anim, drawable, values + decoy resources.arsc + assets decoys)"
     echo "    zipalign -p 4 (page-aligned native libs)"
 else
     echo "  Skipping hardening — release APK not produced."
