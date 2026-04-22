@@ -275,117 +275,190 @@ PYEOF
         --v4-signing-enabled true \
         "$RELEASE_APK" 2>&1 | sed 's/^/    /'
 
-    # (c) Inject "poison" ZIP entries that break apktool/baksmali parsers but
-    #     are silently ignored by Android's PackageParser.
-    #     - A fake `classes0.dex` with a deliberately corrupted DEX magic header
-    #       (Android only loads classes.dex, classes2.dex, …; classesN starting
-    #        from a non-numeric suffix is ignored, but apktool may attempt it).
-    #     - A fake resources.arsc.bak with random bytes (apktool sometimes
-    #       follows backup names).
-    #     - A directory entry with a UTF-8 BOM in the name to trip ZIP parsers.
-    #     NOTE: must be added AFTER signing so they don't break signature
-    #     verification — Android v2/v3 signatures only cover entries listed in
-    #     the APK Signing Block, and the verifier ignores unknown top-level
-    #     entries that aren't referenced by the manifest.
-    #     We add them OUTSIDE the signed entries via apksigner-friendly method:
-    #     append as STORED entries to the ZIP central directory after signing.
-    echo "  [c] Injecting poison ZIP + resource entries to confuse decompilers ..."
+    # (c) Two-part hardening pass:
+    #     (c1) TAMPER the REAL resources.arsc and AndroidManifest.xml in-place
+    #          with manipulations Android's ResTable / ResXMLTree tolerate
+    #          (per-chunk size fields are authoritative for Android), but that
+    #          break apktool / aapt2 / jadx, which read to EOF and validate
+    #          flags/types strictly.
+    #     (c2) Plant decoy entries (fake dex, .bak files, corrupted res/ XML).
+    #     Both done in a single APK rebuild so we re-sign exactly once.
+    echo "  [c] Tampering resources.arsc + AndroidManifest.xml + planting decoys ..."
     python3 - << PYEOF
-import zipfile, os, random, struct
+import zipfile, os, random, struct, shutil
 random.seed(0xC0FFEE)
 src = "$RELEASE_APK"
+tmp = src + ".rebuild"
 
-# ── Crafted AXML (Android Binary XML) header that LOOKS valid (so apktool/
-#    AXmlPrinter dives into it) but has a corrupted string-pool chunk that
-#    triggers an IndexOutOfBounds / NegativeArraySize during decoding.
-#    Android never loads these files (they aren't referenced from
-#    resources.arsc), so runtime is unaffected.
+# ─────────────────────────────────────────────────────────────────────────────
+#  TAMPERING THE REAL FILES
+# ─────────────────────────────────────────────────────────────────────────────
+#
+#  resources.arsc layout (relevant pieces):
+#    +0  ResChunk_header
+#         u16 type      (= 0x0002 RES_TABLE_TYPE)
+#         u16 headerSize(= 12)
+#         u32 size      (size of THIS chunk + all sub-chunks; Android trusts this)
+#    +8  u32 packageCount
+#    +12 ResStringPool_header (first sub-chunk)
+#         u16 type      (= 0x0001 RES_STRING_POOL_TYPE)
+#         u16 headerSize(= 28)
+#         u32 size
+#         u32 stringCount
+#         u32 styleCount
+#         u32 flags     ← Android masks with (SORTED|UTF8) = 0x101; ignores rest.
+#         u32 stringsStart
+#         u32 stylesStart
+#
+#  We do three things Android tolerates but apktool/aapt2 do NOT:
+#    (1) OR reserved bits into ResStringPool.flags. Android's ResStringPool::
+#        setTo only checks (flags & UTF8_FLAG); apktool's StringBlock and some
+#        forks assert "(flags & ~(SORTED|UTF8)) == 0" or treat unknown bits as
+#        a corrupt pool and abort.
+#    (2) Append a crafted "phantom" ResChunk after ResTable_header.size. Android
+#        stops at header.size and never sees it. apktool's ARSCDecoder reads
+#        chunks sequentially until EOF and hits "unknown chunk type 0xDEAD" /
+#        "negative array size".
+#    (3) Pad the file with random bytes after the phantom chunk so length-based
+#        heuristics in jadx / MobSF also break.
+#
+def tamper_arsc(data: bytes) -> bytes:
+    if len(data) < 28: return data
+    rt_type, rt_hsize, rt_size, pkg_count = struct.unpack_from("<HHII", data, 0)
+    if rt_type != 0x0002:
+        return data  # not a ResTable, leave alone
+    sp_off = rt_hsize  # ResStringPool starts right after ResTable_header
+    sp_type = struct.unpack_from("<H", data, sp_off)[0]
+    out = bytearray(data)
+    if sp_type == 0x0001:
+        flags_off = sp_off + 16   # offset of 'flags' inside ResStringPool_header
+        flags = struct.unpack_from("<I", out, flags_off)[0]
+        # Reserved bits Android ignores: 0x80000000 + 0x40000000 + 0x00010000.
+        struct.pack_into("<I", out, flags_off, flags | 0x80000000 | 0x40000000 | 0x00010000)
+    # Phantom chunk: fake type 0xDEAD, claimed size that overflows int32.
+    phantom = struct.pack("<HHII",
+                          0xDEAD, 0x000C,
+                          0xFFFFFFFF,           # size — overflows on signed parse
+                          0x7FFFFFFF) + os.urandom(512)
+    out.extend(phantom)
+    # Random tail padding.
+    out.extend(os.urandom(random.randint(256, 1024)))
+    # CRITICAL: do NOT touch ResTable_header.size — Android uses it to bound
+    # parsing. Trailing junk past header.size is silently ignored at runtime.
+    return bytes(out)
+
+#
+#  AndroidManifest.xml (Android Binary XML) layout:
+#    +0 ResXMLTree_header
+#        u16 type (= 0x0003), u16 headerSize (= 8), u32 size (whole file)
+#    Then a sequence of ResStringPool / ResXMLTree_node chunks, ending with
+#    RES_XML_END_NAMESPACE_TYPE / RES_XML_END_ELEMENT_TYPE.
+#
+#  Android's ResXMLTree::setTo iterates chunks until it reaches header.size
+#  bytes — anything beyond is ignored. apktool's AXmlResourceParser reads to
+#  EOF and validates every chunk type.
+#
+#  Tamper: append a phantom XML chunk with type 0xDEAD past header.size, then
+#  random padding. Don't change header.size. Don't touch the ResStringPool
+#  inside (would break runtime resource lookups via @string/...).
+#
+def tamper_axml(data: bytes) -> bytes:
+    if len(data) < 8: return data
+    t, hs, size = struct.unpack_from("<HHI", data, 0)
+    if t != 0x0003: return data
+    out = bytearray(data)
+    phantom = struct.pack("<HHII",
+                          0xDEAD, 0x000C,
+                          0xFFFFFFFF,
+                          0x7FFFFFFF) + os.urandom(256)
+    out.extend(phantom)
+    out.extend(os.urandom(random.randint(128, 512)))
+    return bytes(out)
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  DECOY ENTRIES (planted in res/, assets/, root)
+# ─────────────────────────────────────────────────────────────────────────────
 def poison_axml():
-    # AXML magic: 0x00080003, file size placeholder, then a malformed
-    # ResStringPool_header chunk (type=0x0001) with absurd stringCount.
-    header = struct.pack("<HHI", 0x0003, 0x0008, 0x10000000)  # huge "file size"
+    header = struct.pack("<HHI", 0x0003, 0x0008, 0x10000000)
     spool  = struct.pack("<HHIIIIII",
-                         0x0001, 0x001C,        # type, headerSize
-                         0x10000000,            # chunk size (huge → overflow)
-                         0x7FFFFFFF,            # stringCount (max int → OOM)
-                         0,                     # styleCount
-                         0,                     # flags
-                         0x10000000,            # stringsStart (out of bounds)
-                         0)                     # stylesStart
-    return header + spool + bytes(random.getrandbits(8) for _ in range(512))
+                         0x0001, 0x001C,
+                         0x10000000, 0x7FFFFFFF, 0, 0, 0x10000000, 0)
+    return header + spool + os.urandom(512)
 
-# ── Crafted resources.arsc-style header: looks like a ResTable but the
-#    package chunk count is bogus, so aapt2/apktool's arsc parser explodes.
-def poison_arsc():
-    # ResTable_header: type=0x0002, headerSize=0x000C, size, packageCount
+def poison_arsc_blob():
     return struct.pack("<HHII",
-                       0x0002, 0x000C,
-                       0x10000000,            # huge "file size"
-                       0x7FFFFFFF) + bytes(random.getrandbits(8) for _ in range(2048))
+                       0x0002, 0x000C, 0x10000000, 0x7FFFFFFF) + os.urandom(2048)
 
-poison = {
-    # Generic ZIP-level decoys (already present, slightly expanded)
-    "classes0.dex":            b"dex\n000\x00" + bytes(random.getrandbits(8) for _ in range(2048)),
-    "AndroidManifest.xml.bak": poison_axml(),
-    "resources.arsc.bak":      poison_arsc(),
-    "META-INF/services/\xef\xbb\xbfpoison".encode("latin1").decode("latin1"):
-        b"# decoy\n",
-
-    # ── Resource-tree poisoning: apktool/aapt2 walk every entry under res/
-    #    and try to decode AXML / arsc by extension. Each of these will abort
-    #    decoding with a fatal parser error.
-    "res/xml/_decoy0.xml":     poison_axml(),
-    "res/xml/_decoy1.xml":     poison_axml(),
-    "res/layout/_decoy0.xml":  poison_axml(),
-    "res/layout/_decoy1.xml":  poison_axml(),
-    "res/menu/_decoy.xml":     poison_axml(),
-    "res/anim/_decoy.xml":     poison_axml(),
-    "res/drawable/_decoy.xml": poison_axml(),
-    "res/values/_decoy.xml":   poison_axml(),
-    "res/raw/_decoy.bin":      bytes(random.getrandbits(8) for _ in range(1024)),
-    "res/raw/_decoy.arsc":     poison_arsc(),
-
-    # ── Asset-tree decoys: apktool copies assets/ as-is, but some scanners
-    #    (jadx, MobSF) try to parse XML/JSON inside assets and choke.
-    "assets/_decoy_manifest.xml": poison_axml(),
-    "assets/_decoy_resources.arsc": poison_arsc(),
+decoys = {
+    "classes0.dex":                 b"dex\n000\x00" + os.urandom(2048),
+    "AndroidManifest.xml.bak":      poison_axml(),
+    "resources.arsc.bak":           poison_arsc_blob(),
+    "META-INF/services/\xef\xbb\xbfpoison": b"# decoy\n",
+    "res/xml/_decoy0.xml":          poison_axml(),
+    "res/xml/_decoy1.xml":          poison_axml(),
+    "res/layout/_decoy0.xml":       poison_axml(),
+    "res/layout/_decoy1.xml":       poison_axml(),
+    "res/menu/_decoy.xml":          poison_axml(),
+    "res/anim/_decoy.xml":          poison_axml(),
+    "res/drawable/_decoy.xml":      poison_axml(),
+    "res/values/_decoy.xml":        poison_axml(),
+    "res/raw/_decoy.bin":           os.urandom(1024),
+    "res/raw/_decoy.arsc":          poison_arsc_blob(),
+    "assets/_decoy_manifest.xml":   poison_axml(),
+    "assets/_decoy_resources.arsc": poison_arsc_blob(),
 }
-# Append using STORED so headers look "normal" but content is junk.
-with zipfile.ZipFile(src, "a", zipfile.ZIP_STORED, allowZip64=False) as z:
-    existing = set(z.namelist())
-    for name, data in poison.items():
-        if name in existing:
-            continue
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  REBUILD APK with tampered real entries + decoys
+# ─────────────────────────────────────────────────────────────────────────────
+tampered_arsc = tampered_manifest = False
+with zipfile.ZipFile(src, "r") as zin, zipfile.ZipFile(tmp, "w") as zout:
+    for item in zin.infolist():
+        data = zin.read(item.filename)
+        if item.filename == "resources.arsc":
+            data = tamper_arsc(data); tampered_arsc = True
+        elif item.filename == "AndroidManifest.xml":
+            data = tamper_axml(data); tampered_manifest = True
+        # Preserve original compression + alignment (resources.arsc MUST stay
+        # STORED for Android to mmap it).
+        new_item = zipfile.ZipInfo(item.filename)
+        new_item.compress_type = item.compress_type
+        new_item.external_attr = item.external_attr
+        new_item.date_time = item.date_time
+        zout.writestr(new_item, data)
+    existing = set(zin.namelist())
+    for name, blob in decoys.items():
+        if name in existing: continue
         zi = zipfile.ZipInfo(name)
         zi.compress_type = zipfile.ZIP_STORED
         zi.external_attr = 0o644 << 16
-        z.writestr(zi, data)
-print("    %d poison entries appended." % len(poison))
+        zout.writestr(zi, blob)
+
+shutil.move(tmp, src)
+print("    resources.arsc tampered:      %s" % tampered_arsc)
+print("    AndroidManifest.xml tampered: %s" % tampered_manifest)
+print("    Decoy entries planted:        %d" % len(decoys))
 PYEOF
 
-    # (d) Verify the APK still validates after hardening.
-    echo "  [d] Verifying signature integrity post-hardening ..."
-    if "$APKSIGNER" verify --print-certs "$RELEASE_APK" > /dev/null 2>&1; then
+    # (d) Re-zipalign (rebuild in (c) reset alignment) and re-sign.
+    echo "  [d] Re-zipalign + final sign (v2 + v3 + v4) ..."
+    REALIGN="$ROOT_DIR/apk-output/.realign.apk"
+    "$ZIPALIGN" -p -f 4 "$RELEASE_APK" "$REALIGN" > /dev/null
+    mv "$REALIGN" "$RELEASE_APK"
+    "$APKSIGNER" sign \
+        --ks "$KEYSTORE" \
+        --ks-key-alias "$KEY_ALIAS" \
+        --ks-pass "pass:$STORE_PASS" \
+        --key-pass "pass:$KEY_PASS" \
+        --v1-signing-enabled false \
+        --v2-signing-enabled true \
+        --v3-signing-enabled true \
+        --v4-signing-enabled true \
+        "$RELEASE_APK" 2>&1 | sed 's/^/    /'
+    if "$APKSIGNER" verify "$RELEASE_APK" > /dev/null 2>&1; then
         echo "    Signature OK — APK installable on Android."
     else
-        # Poison entries appended AFTER signing invalidate the v2/v3 signature
-        # block coverage. Re-sign one more time so the APK installs cleanly,
-        # but keep the poison entries (they're now part of the signed set,
-        # which is fine — they're still junk to decompilers).
-        echo "    Re-signing after poison injection ..."
-        "$APKSIGNER" sign \
-            --ks "$KEYSTORE" \
-            --ks-key-alias "$KEY_ALIAS" \
-            --ks-pass "pass:$STORE_PASS" \
-            --key-pass "pass:$KEY_PASS" \
-            --v1-signing-enabled false \
-            --v2-signing-enabled true \
-            --v3-signing-enabled true \
-            --v4-signing-enabled true \
-            "$RELEASE_APK" 2>&1 | sed 's/^/      /'
-        "$APKSIGNER" verify "$RELEASE_APK" > /dev/null 2>&1 \
-            && echo "    Signature OK after re-sign." \
-            || echo "    WARNING: signature still failing — inspect manually."
+        echo "    WARNING: signature failing — inspect manually."
     fi
 
     HARDENED_SIZE=$(ls -lh "$RELEASE_APK" | awk '{print $5}')
@@ -394,6 +467,9 @@ PYEOF
     echo "    R8 full mode + ProGuard (5-pass, log strip, repackaging)"
     echo "    Look-alike obfuscation dictionary (I/l/O/0)"
     echo "    v1 JAR signature stripped (v2 + v3 + v4 only)"
+    echo "    REAL resources.arsc tampered (reserved flag bits + phantom"
+    echo "      0xDEAD chunk past header.size + tail padding)"
+    echo "    REAL AndroidManifest.xml tampered (phantom chunk past header.size)"
     echo "    Poison ZIP entries (fake classes0.dex, .bak files, BOM names)"
     echo "    Resource-tree poisoning (corrupted AXML in res/xml, layout, menu,"
     echo "      anim, drawable, values + decoy resources.arsc + assets decoys)"
