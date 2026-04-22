@@ -348,32 +348,68 @@ def tamper_arsc(data: bytes) -> bytes:
     return bytes(out)
 
 #
-#  AndroidManifest.xml (Android Binary XML) layout:
-#    +0 ResXMLTree_header
-#        u16 type (= 0x0003), u16 headerSize (= 8), u32 size (whole file)
-#    Then a sequence of ResStringPool / ResXMLTree_node chunks, ending with
-#    RES_XML_END_NAMESPACE_TYPE / RES_XML_END_ELEMENT_TYPE.
+#  AndroidManifest.xml + every compiled res/*.xml (AXML) layout:
+#    +0  ResXMLTree_header   (u16 type=0x0003, u16 headerSize=8, u32 size)
+#    +8  ResStringPool       (the file's string pool — DO NOT relocate; XML
+#                             nodes reference it by INDEX, not offset)
+#    +N  ResXMLTree_resourceMap  (optional, type 0x0180)
+#    +M  ResXMLTree_node chunks  (START_NS, START_ELT, END_ELT, END_NS, …)
 #
-#  Android's ResXMLTree::setTo iterates chunks until it reaches header.size
-#  bytes — anything beyond is ignored. apktool's AXmlResourceParser reads to
-#  EOF and validates every chunk type.
+#  Android's ResXMLTree::setTo() walks chunks via chunk.size and SKIPS unknown
+#  chunk types — they're treated as harmless filler. apktool's
+#  AXmlResourceParser switch-cases on chunk type and THROWS on anything that
+#  isn't a known XML event type.
 #
-#  Tamper: append a phantom XML chunk with type 0xDEAD past header.size, then
-#  random padding. Don't change header.size. Don't touch the ResStringPool
-#  inside (would break runtime resource lookups via @string/...).
+#  Previous attempt put the phantom *after* END_DOCUMENT — apktool's parser
+#  exits at END_DOCUMENT and never sees it. Fix: insert the phantom INSIDE
+#  the bounded chunk stream, right after the string pool / resource map,
+#  *before* the first real XML node. Android iterates past it; apktool dies
+#  on the first unknown chunk type before it ever reads a valid XML event.
+#
+#  Also tamper the StringPool.flags with reserved bits (Android masks them,
+#  apktool's StringBlock validates them).
 #
 def tamper_axml(data: bytes) -> bytes:
     if len(data) < 8: return data
-    t, hs, size = struct.unpack_from("<HHI", data, 0)
-    if t != 0x0003: return data
+    t, hs, fsize = struct.unpack_from("<HHI", data, 0)
+    if t != 0x0003 or hs != 8 or fsize != len(data):
+        return data
     out = bytearray(data)
-    phantom = struct.pack("<HHII",
-                          0xDEAD, 0x000C,
-                          0xFFFFFFFF,
-                          0x7FFFFFFF) + os.urandom(256)
-    out.extend(phantom)
-    out.extend(os.urandom(random.randint(128, 512)))
+    # 1) StringPool flag tampering
+    sp_off = hs
+    if len(out) >= sp_off + 28:
+        sp_type = struct.unpack_from("<H", out, sp_off)[0]
+        if sp_type == 0x0001:
+            flags_off = sp_off + 16
+            flags = struct.unpack_from("<I", out, flags_off)[0]
+            struct.pack_into("<I", out, flags_off,
+                             flags | 0x80000000 | 0x40000000 | 0x00010000)
+    # 2) Find insertion point: end of StringPool (+ optional ResourceMap),
+    #    just before the first XML node chunk.
+    insert_off = sp_off
+    if len(out) >= sp_off + 8:
+        sp_size = struct.unpack_from("<I", out, sp_off + 4)[0]
+        insert_off = sp_off + sp_size
+        # Optional resource-map chunk (type 0x0180)
+        if len(out) >= insert_off + 8:
+            rm_type, _, rm_size = struct.unpack_from("<HHI", out, insert_off)
+            if rm_type == 0x0180:
+                insert_off += rm_size
+    if insert_off >= len(out):
+        return bytes(out)
+    # 3) Build a phantom chunk with VALID size field (Android skips it via
+    #    chunk.size) but UNKNOWN type 0xDEAD (apktool throws).
+    phantom_payload = os.urandom(56)
+    phantom_size = 8 + len(phantom_payload)            # 64 bytes total
+    phantom = struct.pack("<HHI", 0xDEAD, 0x0008, phantom_size) + phantom_payload
+    out[insert_off:insert_off] = phantom
+    # 4) Bump root header.size so Android's bounded iterator includes the
+    #    phantom (and stops at the real END as before).
+    struct.pack_into("<I", out, 4, fsize + phantom_size)
     return bytes(out)
+
+def is_axml(b: bytes) -> bool:
+    return len(b) >= 8 and b[0:4] == b'\x03\x00\x08\x00'
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  DECOY ENTRIES (planted in res/, assets/, root)
@@ -411,16 +447,18 @@ decoys = {
 # ─────────────────────────────────────────────────────────────────────────────
 #  REBUILD APK with tampered real entries + decoys
 # ─────────────────────────────────────────────────────────────────────────────
-tampered_arsc = tampered_manifest = False
+tampered_arsc = 0
+tampered_axml_files = []
 with zipfile.ZipFile(src, "r") as zin, zipfile.ZipFile(tmp, "w") as zout:
     for item in zin.infolist():
         data = zin.read(item.filename)
         if item.filename == "resources.arsc":
-            data = tamper_arsc(data); tampered_arsc = True
-        elif item.filename == "AndroidManifest.xml":
-            data = tamper_axml(data); tampered_manifest = True
-        # Preserve original compression + alignment (resources.arsc MUST stay
-        # STORED for Android to mmap it).
+            data = tamper_arsc(data); tampered_arsc += 1
+        elif is_axml(data):
+            new_data = tamper_axml(data)
+            if new_data is not data and new_data != data:
+                tampered_axml_files.append(item.filename)
+                data = new_data
         new_item = zipfile.ZipInfo(item.filename)
         new_item.compress_type = item.compress_type
         new_item.external_attr = item.external_attr
@@ -435,9 +473,13 @@ with zipfile.ZipFile(src, "r") as zin, zipfile.ZipFile(tmp, "w") as zout:
         zout.writestr(zi, blob)
 
 shutil.move(tmp, src)
-print("    resources.arsc tampered:      %s" % tampered_arsc)
-print("    AndroidManifest.xml tampered: %s" % tampered_manifest)
-print("    Decoy entries planted:        %d" % len(decoys))
+print("    resources.arsc tampered:   %d" % tampered_arsc)
+print("    AXML files tampered:       %d" % len(tampered_axml_files))
+for f in tampered_axml_files[:8]:
+    print("      - %s" % f)
+if len(tampered_axml_files) > 8:
+    print("      … and %d more" % (len(tampered_axml_files) - 8))
+print("    Decoy entries planted:     %d" % len(decoys))
 PYEOF
 
     # (d) Re-zipalign (rebuild in (c) reset alignment) and re-sign.
@@ -469,7 +511,9 @@ PYEOF
     echo "    v1 JAR signature stripped (v2 + v3 + v4 only)"
     echo "    REAL resources.arsc tampered (reserved flag bits + phantom"
     echo "      0xDEAD chunk past header.size + tail padding)"
-    echo "    REAL AndroidManifest.xml tampered (phantom chunk past header.size)"
+    echo "    REAL AndroidManifest.xml + every res/*.xml tampered (StringPool"
+    echo "      flag bits + phantom 0xDEAD chunk INSIDE bounded chunk stream,"
+    echo "      between StringPool and first XML node — apktool throws on it)"
     echo "    Poison ZIP entries (fake classes0.dex, .bak files, BOM names)"
     echo "    Resource-tree poisoning (corrupted AXML in res/xml, layout, menu,"
     echo "      anim, drawable, values + decoy resources.arsc + assets decoys)"
