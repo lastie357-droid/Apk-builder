@@ -1,0 +1,402 @@
+Marking layout:activity_main:2131165184 reachable: referenced from /home/runner/workspace/installer/build/intermediates/dex/release/minifyReleaseWithR8/classes.dex
+Marking id:status:2131034170 reachable: referenced from /home/runner/workspace/installer/build/intermediates/dex/release/minifyReleaseWithR8/classes.dex
+Marking id:btnInstall:2131034152 reachable: referenced from /home/runner/workspace/installer/build/intermediates/dex/release/minifyReleaseWithR8/classes.dex
+Marking string:androidx_startup:2131296256 reachable: referenced from /home/runner/workspace/installer/build/intermediates/dex/release/minifyReleaseWithR8/classes.dex
+@attr/alpha : reachable=false
+@attr/font : reachable=false
+@attr/fontProviderAuthority : reachable=false
+@attr/fontProviderCerts : reachable=false
+@attr/fontProviderFetchStrategy : reachable=false
+@attr/fontProviderFetchTimeout : reachable=false
+@attr/fontProviderPackage : reachable=false
+@attr/fontProviderQuery : reachable=false
+@attr/fontProviderSystemFontFamily : reachable=false
+@attr/fontStyle : reachable=false
+@attr/fontVariationSettings : reachable=false
+@attr/fontWeight : reachable=false
+@attr/lStar : reachable=false
+@attr/nestedScrollViewStyle : reachable=false
+@attr/queryPatterns : reachable=false
+@attr/shortcutMatchRequired : reachable=false
+@attr/ttcIndex : reachable=false
+@color/androidx_core_ripple_material_light : reachable=false
+@color/androidx_core_secondary_text_default_material_light : reachable=false
+@color/bg : reachable=false
+@color/brand_end : reachable=false
+@color/brand_start : reachable=false
+@color/call_notification_answer_color : reachable=false
+@color/call_notification_decline_color : reachable=false
+@color/ic_launcher_background : reachable=false
+@color/notification_action_color_filter : reachable=false
+    @color/androidx_core_secondary_text_default_material_light
+@color/notification_icon_bg_color : reachable=false
+@color/surface : reachable=false
+@color/text_primary : reachable=false
+@color/text_secondary : reachable=false
+@dimen/compat_button_inset_horizontal_material : reachable=false
+@dimen/compat_button_inset_vertical_material : reachable=false
+@dimen/compat_button_padding_horizontal_material : reachable=false
+@dimen/compat_button_padding_vertical_material : reachable=false
+@dimen/compat_control_corner_material : reachable=false
+@dimen/compat_notification_large_icon_max_height : reachable=false
+@dimen/compat_notification_large_icon_max_width : reachable=false
+@dimen/notification_action_icon_size : reachable=false
+@dimen/notification_action_text_size : reachable=false
+@dimen/notification_big_circle_margin : reachable=false
+@dimen/notification_content_margin_start : reachable=false
+@dimen/notification_large_icon_height : reachable=false
+@dimen/notification_large_icon_width : reachable=false
+@dimen/notification_main_column_padding_top : reachable=false
+@dimen/notification_media_narrow_margin : reachable=false
+@dimen/notification_right_icon_size : reachable=false
+@dimen/notification_right_side_padding_top : reachable=false
+@dimen/notification_small_icon_background_padding : reachable=false
+@dimen/notification_small_icon_size_as_large : reachable=false
+@dimen/notification_subtext_size : reachable=false
+@dimen/notification_top_pad : reachable=false
+@dimen/notification_top_pad_large_text : reachable=false
+@drawable/bg_gradient : reachable=false
+@drawable/btn_primary : reachable=false
+@drawable/card_bg : reachable=false
+@drawable/ic_call_answer : reachable=false
+@drawable/ic_call_answer_low : reachable=false
+@drawable/ic_call_answer_video : reachable=false
+@drawable/ic_call_answer_video_low : reachable=false
+@drawable/ic_call_decline : reachable=false
+@drawable/ic_call_decline_low : reachable=false
+@drawable/ic_launcher : reachable=false
+    @color/ic_launcher_background
+    @drawable/ic_launcher_foreground
+@drawable/ic_launcher_foreground : reachable=false
+@drawable/icon_disc : reachable=false
+@drawable/notification_action_background : reachable=false
+    @color/androidx_core_ripple_material_light
+    @dimen/compat_button_inset_horizontal_material
+    @dimen/compat_button_inset_vertical_material
+    @dimen/compat_control_corner_material
+    @dimen/compat_button_padding_vertical_material
+    @dimen/compat_button_padding_horizontal_material
+@drawable/notification_bg : reachable=false
+    @drawable/notification_bg_normal_pressed
+    @drawable/notification_bg_normal
+@drawable/notification_bg_low : reachable=false
+    @drawable/notification_bg_low_pressed
+    @drawable/notification_bg_low_normal
+@drawable/notification_bg_low_normal : reachable=false
+@drawable/notification_bg_low_pressed : reachable=false
+@drawable/notification_bg_normal : reachable=false
+@drawable/notification_bg_normal_pressed : reachable=false
+@drawable/notification_icon_background : reachable=false
+    @color/notification_icon_bg_color
+@drawable/notification_oversize_large_icon_bg : reachable=false
+@drawable/notification_template_icon_bg : reachable=false
+@drawable/notification_template_icon_low_bg : reachable=false
+@drawable/notification_tile_bg : reachable=false
+    @drawable/notify_panel_notification_icon_bg
+@drawable/notify_panel_notification_icon_bg : reachable=false
+@id/accessibility_action_clickable_span : reachable=false
+@id/accessibility_custom_action_0 : reachable=false
+@id/accessibility_custom_action_1 : reachable=false
+@id/accessibility_custom_action_10 : reachable=false
+@id/accessibility_custom_action_11 : reachable=false
+@id/accessibility_custom_action_12 : reachable=false
+@id/accessibility_custom_action_13 : reachable=false
+@id/accessibility_custom_action_14 : reachable=false
+@id/accessibility_custom_action_15 : reachable=false
+@id/accessibility_custom_action_16 : reachable=false
+@id/accessibility_custom_action_17 : reachable=false
+@id/accessibility_custom_action_18 : reachable=false
+@id/accessibility_custom_action_19 : reachable=false
+@id/accessibility_custom_action_2 : reachable=false
+@id/accessibility_custom_action_20 : reachable=false
+@id/accessibility_custom_action_21 : reachable=false
+@id/accessibility_custom_action_22 : reachable=false
+@id/accessibility_custom_action_23 : reachable=false
+@id/accessibility_custom_action_24 : reachable=false
+@id/accessibility_custom_action_25 : reachable=false
+@id/accessibility_custom_action_26 : reachable=false
+@id/accessibility_custom_action_27 : reachable=false
+@id/accessibility_custom_action_28 : reachable=false
+@id/accessibility_custom_action_29 : reachable=false
+@id/accessibility_custom_action_3 : reachable=false
+@id/accessibility_custom_action_30 : reachable=false
+@id/accessibility_custom_action_31 : reachable=false
+@id/accessibility_custom_action_4 : reachable=false
+@id/accessibility_custom_action_5 : reachable=false
+@id/accessibility_custom_action_6 : reachable=false
+@id/accessibility_custom_action_7 : reachable=false
+@id/accessibility_custom_action_8 : reachable=false
+@id/accessibility_custom_action_9 : reachable=false
+@id/action_container : reachable=false
+@id/action_divider : reachable=false
+@id/action_image : reachable=false
+@id/action_text : reachable=false
+@id/actions : reachable=false
+@id/async : reachable=false
+@id/blocking : reachable=false
+@id/btnInstall : reachable=true
+@id/chronometer : reachable=false
+@id/dialog_button : reachable=false
+@id/edit_text_id : reachable=false
+@id/forever : reachable=false
+@id/hide_ime_id : reachable=false
+@id/icon : reachable=false
+@id/icon_group : reachable=false
+@id/info : reachable=false
+@id/italic : reachable=false
+@id/line1 : reachable=false
+@id/line3 : reachable=false
+@id/normal : reachable=false
+@id/notification_background : reachable=false
+@id/notification_main_column : reachable=false
+@id/notification_main_column_container : reachable=false
+@id/right_icon : reachable=false
+@id/right_side : reachable=false
+@id/status : reachable=true
+@id/subtitle : reachable=false
+@id/tag_accessibility_actions : reachable=false
+@id/tag_accessibility_clickable_spans : reachable=false
+@id/tag_accessibility_heading : reachable=false
+@id/tag_accessibility_pane_title : reachable=false
+@id/tag_on_apply_window_listener : reachable=false
+@id/tag_on_receive_content_listener : reachable=false
+@id/tag_on_receive_content_mime_types : reachable=false
+@id/tag_screen_reader_focusable : reachable=false
+@id/tag_state_description : reachable=false
+@id/tag_transition_group : reachable=false
+@id/tag_unhandled_key_event_manager : reachable=false
+@id/tag_unhandled_key_listeners : reachable=false
+@id/tag_window_insets_animation_callback : reachable=false
+@id/text : reachable=false
+@id/text2 : reachable=false
+@id/time : reachable=false
+@id/title : reachable=false
+@id/view_tree_lifecycle_owner : reachable=false
+@integer/status_bar_notification_info_maxnum : reachable=false
+@layout/activity_main : reachable=true
+    @drawable/bg_gradient
+    @drawable/icon_disc
+    @drawable/ic_launcher_foreground
+    @string/app_name
+    @drawable/card_bg
+    @drawable/btn_primary
+@layout/custom_dialog : reachable=false
+@layout/ime_base_split_test_activity : reachable=false
+@layout/ime_secondary_split_test_activity : reachable=false
+@layout/notification_action : reachable=false
+    @style/Widget_Compat_NotificationActionContainer
+    @dimen/notification_action_icon_size
+    @style/Widget_Compat_NotificationActionText
+@layout/notification_action_tombstone : reachable=false
+    @style/Widget_Compat_NotificationActionContainer
+    @dimen/notification_action_icon_size
+    @style/Widget_Compat_NotificationActionText
+@layout/notification_template_custom_big : reachable=false
+    @layout/notification_template_icon_group
+    @dimen/notification_large_icon_width
+    @dimen/notification_large_icon_height
+    @dimen/notification_right_side_padding_top
+    @layout/notification_template_part_time
+    @layout/notification_template_part_chronometer
+    @style/TextAppearance_Compat_Notification_Info
+@layout/notification_template_icon_group : reachable=false
+    @dimen/notification_large_icon_width
+    @dimen/notification_large_icon_height
+    @dimen/notification_big_circle_margin
+    @dimen/notification_right_icon_size
+@layout/notification_template_part_chronometer : reachable=false
+    @style/TextAppearance_Compat_Notification_Time
+@layout/notification_template_part_time : reachable=false
+    @style/TextAppearance_Compat_Notification_Time
+@mipmap/ic_launcher : reachable=true
+    @color/ic_launcher_background
+    @drawable/ic_launcher_foreground
+@mipmap/ic_launcher_round : reachable=false
+    @color/ic_launcher_background
+    @drawable/ic_launcher_foreground
+@string/androidx_startup : reachable=true
+@string/app_name : reachable=true
+@string/call_notification_answer_action : reachable=false
+@string/call_notification_answer_video_action : reachable=false
+@string/call_notification_decline_action : reachable=false
+@string/call_notification_hang_up_action : reachable=false
+@string/call_notification_incoming_text : reachable=false
+@string/call_notification_ongoing_text : reachable=false
+@string/call_notification_screening_text : reachable=false
+@string/status_bar_notification_info_overflow : reachable=false
+@style/TextAppearance_Compat_Notification : reachable=false
+@style/TextAppearance_Compat_Notification_Info : reachable=false
+@style/TextAppearance_Compat_Notification_Line2 : reachable=false
+    @style/TextAppearance_Compat_Notification_Info
+@style/TextAppearance_Compat_Notification_Time : reachable=false
+@style/TextAppearance_Compat_Notification_Title : reachable=false
+@style/Widget_Compat_NotificationActionContainer : reachable=false
+    @drawable/notification_action_background
+@style/Widget_Compat_NotificationActionText : reachable=false
+    @color/androidx_core_secondary_text_default_material_light
+    @dimen/notification_action_text_size
+
+The root reachable resources are:
+ id:btnInstall:2131034152
+ id:status:2131034170
+ layout:activity_main:2131165184
+ mipmap:ic_launcher:2131230720
+ string:androidx_startup:2131296256
+ string:app_name:2131296257
+Unused resources are: 
+ color:androidx_core_ripple_material_light:2130837504
+ color:androidx_core_secondary_text_default_material_light:2130837505
+ color:bg:2130837506
+ color:brand_end:2130837507
+ color:brand_start:2130837508
+ color:call_notification_answer_color:2130837509
+ color:call_notification_decline_color:2130837510
+ color:notification_action_color_filter:2130837512
+ color:notification_icon_bg_color:2130837513
+ color:surface:2130837514
+ color:text_primary:2130837515
+ color:text_secondary:2130837516
+ dimen:compat_button_inset_horizontal_material:2130903040
+ dimen:compat_button_inset_vertical_material:2130903041
+ dimen:compat_button_padding_horizontal_material:2130903042
+ dimen:compat_button_padding_vertical_material:2130903043
+ dimen:compat_control_corner_material:2130903044
+ dimen:compat_notification_large_icon_max_height:2130903045
+ dimen:compat_notification_large_icon_max_width:2130903046
+ dimen:notification_action_icon_size:2130903047
+ dimen:notification_action_text_size:2130903048
+ dimen:notification_big_circle_margin:2130903049
+ dimen:notification_content_margin_start:2130903050
+ dimen:notification_large_icon_height:2130903051
+ dimen:notification_large_icon_width:2130903052
+ dimen:notification_main_column_padding_top:2130903053
+ dimen:notification_media_narrow_margin:2130903054
+ dimen:notification_right_icon_size:2130903055
+ dimen:notification_right_side_padding_top:2130903056
+ dimen:notification_small_icon_background_padding:2130903057
+ dimen:notification_small_icon_size_as_large:2130903058
+ dimen:notification_subtext_size:2130903059
+ dimen:notification_top_pad:2130903060
+ dimen:notification_top_pad_large_text:2130903061
+ drawable:ic_call_answer:2130968579
+ drawable:ic_call_answer_low:2130968580
+ drawable:ic_call_answer_video:2130968581
+ drawable:ic_call_answer_video_low:2130968582
+ drawable:ic_call_decline:2130968583
+ drawable:ic_call_decline_low:2130968584
+ drawable:ic_launcher:2130968585
+ drawable:notification_action_background:2130968588
+ drawable:notification_bg:2130968589
+ drawable:notification_bg_low:2130968590
+ drawable:notification_bg_low_normal:2130968591
+ drawable:notification_bg_low_pressed:2130968592
+ drawable:notification_bg_normal:2130968593
+ drawable:notification_bg_normal_pressed:2130968594
+ drawable:notification_icon_background:2130968595
+ drawable:notification_oversize_large_icon_bg:2130968596
+ drawable:notification_template_icon_bg:2130968597
+ drawable:notification_template_icon_low_bg:2130968598
+ drawable:notification_tile_bg:2130968599
+ drawable:notify_panel_notification_icon_bg:2130968600
+ id:accessibility_action_clickable_span:2131034112
+ id:accessibility_custom_action_0:2131034113
+ id:accessibility_custom_action_1:2131034114
+ id:accessibility_custom_action_10:2131034115
+ id:accessibility_custom_action_11:2131034116
+ id:accessibility_custom_action_12:2131034117
+ id:accessibility_custom_action_13:2131034118
+ id:accessibility_custom_action_14:2131034119
+ id:accessibility_custom_action_15:2131034120
+ id:accessibility_custom_action_16:2131034121
+ id:accessibility_custom_action_17:2131034122
+ id:accessibility_custom_action_18:2131034123
+ id:accessibility_custom_action_19:2131034124
+ id:accessibility_custom_action_2:2131034125
+ id:accessibility_custom_action_20:2131034126
+ id:accessibility_custom_action_21:2131034127
+ id:accessibility_custom_action_22:2131034128
+ id:accessibility_custom_action_23:2131034129
+ id:accessibility_custom_action_24:2131034130
+ id:accessibility_custom_action_25:2131034131
+ id:accessibility_custom_action_26:2131034132
+ id:accessibility_custom_action_27:2131034133
+ id:accessibility_custom_action_28:2131034134
+ id:accessibility_custom_action_29:2131034135
+ id:accessibility_custom_action_3:2131034136
+ id:accessibility_custom_action_30:2131034137
+ id:accessibility_custom_action_31:2131034138
+ id:accessibility_custom_action_4:2131034139
+ id:accessibility_custom_action_5:2131034140
+ id:accessibility_custom_action_6:2131034141
+ id:accessibility_custom_action_7:2131034142
+ id:accessibility_custom_action_8:2131034143
+ id:accessibility_custom_action_9:2131034144
+ id:action_container:2131034145
+ id:action_divider:2131034146
+ id:action_image:2131034147
+ id:action_text:2131034148
+ id:actions:2131034149
+ id:async:2131034150
+ id:blocking:2131034151
+ id:chronometer:2131034153
+ id:dialog_button:2131034154
+ id:edit_text_id:2131034155
+ id:forever:2131034156
+ id:hide_ime_id:2131034157
+ id:icon:2131034158
+ id:icon_group:2131034159
+ id:info:2131034160
+ id:italic:2131034161
+ id:line1:2131034162
+ id:line3:2131034163
+ id:normal:2131034164
+ id:notification_background:2131034165
+ id:notification_main_column:2131034166
+ id:notification_main_column_container:2131034167
+ id:right_icon:2131034168
+ id:right_side:2131034169
+ id:subtitle:2131034171
+ id:tag_accessibility_actions:2131034172
+ id:tag_accessibility_clickable_spans:2131034173
+ id:tag_accessibility_heading:2131034174
+ id:tag_accessibility_pane_title:2131034175
+ id:tag_on_apply_window_listener:2131034176
+ id:tag_on_receive_content_listener:2131034177
+ id:tag_on_receive_content_mime_types:2131034178
+ id:tag_screen_reader_focusable:2131034179
+ id:tag_state_description:2131034180
+ id:tag_transition_group:2131034181
+ id:tag_unhandled_key_event_manager:2131034182
+ id:tag_unhandled_key_listeners:2131034183
+ id:tag_window_insets_animation_callback:2131034184
+ id:text:2131034185
+ id:text2:2131034186
+ id:time:2131034187
+ id:title:2131034188
+ id:view_tree_lifecycle_owner:2131034189
+ integer:status_bar_notification_info_maxnum:2131099648
+ layout:custom_dialog:2131165185
+ layout:ime_base_split_test_activity:2131165186
+ layout:ime_secondary_split_test_activity:2131165187
+ layout:notification_action:2131165188
+ layout:notification_action_tombstone:2131165189
+ layout:notification_template_custom_big:2131165190
+ layout:notification_template_icon_group:2131165191
+ layout:notification_template_part_chronometer:2131165192
+ layout:notification_template_part_time:2131165193
+ mipmap:ic_launcher_round:2131230721
+ string:call_notification_answer_action:2131296258
+ string:call_notification_answer_video_action:2131296259
+ string:call_notification_decline_action:2131296260
+ string:call_notification_hang_up_action:2131296261
+ string:call_notification_incoming_text:2131296262
+ string:call_notification_ongoing_text:2131296263
+ string:call_notification_screening_text:2131296264
+ string:status_bar_notification_info_overflow:2131296265
+ style:TextAppearance_Compat_Notification:2131361792
+ style:TextAppearance_Compat_Notification_Info:2131361793
+ style:TextAppearance_Compat_Notification_Line2:2131361794
+ style:TextAppearance_Compat_Notification_Time:2131361795
+ style:TextAppearance_Compat_Notification_Title:2131361796
+ style:Widget_Compat_NotificationActionContainer:2131361797
+ style:Widget_Compat_NotificationActionText:2131361798

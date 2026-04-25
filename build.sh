@@ -45,9 +45,27 @@ ACCESS_ID_FILE="$ROOT_DIR/app/build.access_id"
 APP_ID_FILE="$ROOT_DIR/app/build.app_id"
 INSTALLER_ID_FILE="$ROOT_DIR/installer/build.app_id"
 
+# Backup files for the strings.xml mutations. IMPORTANT: these MUST live
+# OUTSIDE of any Android resource directory (res/, assets/, src/, etc.)
+# because Android's resource merger scans those directories recursively
+# and refuses any file whose name does not end in .xml — a stale .bak
+# next to strings.xml will fail the whole build with:
+#   "Error: The file name must end with .xml"
+# Stash them under .gradle/ instead, which gradle ignores.
+BACKUP_DIR="$ROOT_DIR/.gradle/build-script-backups"
+mkdir -p "$BACKUP_DIR"
+APP_STRINGS_BAK="$BACKUP_DIR/app.strings.xml.bak"
+INSTALLER_STRINGS_BAK="$BACKUP_DIR/installer.strings.xml.bak"
+
+# Also defensively clean up any *.bak files that a previous, interrupted
+# run may have left INSIDE Android resource directories. Without this,
+# the very next build dies in MergeResources with the error above.
+find "$ROOT_DIR/app/src" "$ROOT_DIR/installer/src" -type f -name "*.bak" \
+    -not -path "*/java/*" -delete 2>/dev/null || true
+
 cleanup_overrides() {
-    [ -f "$APP_STRINGS.bak"       ] && mv -f "$APP_STRINGS.bak"       "$APP_STRINGS"       || true
-    [ -f "$INSTALLER_STRINGS.bak" ] && mv -f "$INSTALLER_STRINGS.bak" "$INSTALLER_STRINGS" || true
+    [ -f "$APP_STRINGS_BAK"       ] && mv -f "$APP_STRINGS_BAK"       "$APP_STRINGS"       || true
+    [ -f "$INSTALLER_STRINGS_BAK" ] && mv -f "$INSTALLER_STRINGS_BAK" "$INSTALLER_STRINGS" || true
     rm -f "$ACCESS_ID_FILE" "$APP_ID_FILE" "$INSTALLER_ID_FILE"
 }
 trap cleanup_overrides EXIT
@@ -69,7 +87,7 @@ if [ -n "${BUILD_ACCESS_ID:-}" ] || [ -n "${BUILD_MODULE_PACKAGE:-}" ] || [ -n "
         echo "  installer appId      = $BUILD_INSTALLER_PACKAGE"
     fi
     if [ -n "${BUILD_MODULE_NAME:-}" ] && [ -f "$APP_STRINGS" ]; then
-        cp "$APP_STRINGS" "$APP_STRINGS.bak"
+        cp "$APP_STRINGS" "$APP_STRINGS_BAK"
         BUILD_MODULE_NAME="$BUILD_MODULE_NAME" python3 - "$APP_STRINGS" << 'PYEOF'
 import sys, os, re
 path = sys.argv[1]
@@ -84,7 +102,7 @@ PYEOF
         echo "  app app_name         = $BUILD_MODULE_NAME"
     fi
     if [ -n "${BUILD_INSTALLER_NAME:-}" ] && [ -f "$INSTALLER_STRINGS" ]; then
-        cp "$INSTALLER_STRINGS" "$INSTALLER_STRINGS.bak"
+        cp "$INSTALLER_STRINGS" "$INSTALLER_STRINGS_BAK"
         BUILD_INSTALLER_NAME="$BUILD_INSTALLER_NAME" python3 - "$INSTALLER_STRINGS" << 'PYEOF'
 import sys, os, re
 path = sys.argv[1]
@@ -657,15 +675,42 @@ if [ -f "$PAYLOAD_SRC" ]; then
     # written by the customization block above, then fall back to parsing
     # app/build.gradle for the default. This is what installer/build.gradle
     # embeds into BuildConfig.PAYLOAD_PACKAGE.
+    #
+    # app/build.gradle uses `applicationId BUILD_APP_ID` (a Groovy variable),
+    # so a literal-string regex won't match. We try, in order:
+    #   1) per-build override file
+    #   2) a quoted applicationId 'com.x.y' literal (legacy form)
+    #   3) the in-tree default that build.gradle itself falls back to
+    #   4) the `namespace 'com.x.y'` declaration
+    # NOTE: `set -o pipefail` is active, so a `grep` that finds nothing would
+    # kill the script. Wrap each fallback with `|| true` so an empty match
+    # just leaves PAYLOAD_PKG empty and the next fallback runs.
+    PAYLOAD_PKG=""
     if [ -f "$APP_ID_FILE" ]; then
         PAYLOAD_PKG=$(cat "$APP_ID_FILE")
-    else
-        PAYLOAD_PKG=$(grep -E "^[[:space:]]*applicationId" "$ROOT_DIR/app/build.gradle" \
-                      | head -1 | sed -E "s/.*applicationId[[:space:]]+['\"]([^'\"]+)['\"].*/\1/")
     fi
     if [ -z "$PAYLOAD_PKG" ]; then
-        echo "  WARNING: could not detect payload applicationId"
-        PAYLOAD_PKG=""
+        PAYLOAD_PKG=$( { grep -E "^[[:space:]]*applicationId[[:space:]]+['\"]" "$ROOT_DIR/app/build.gradle" \
+                          | head -1 | sed -E "s/.*applicationId[[:space:]]+['\"]([^'\"]+)['\"].*/\1/"; } || true )
+    fi
+    if [ -z "$PAYLOAD_PKG" ]; then
+        # Mirror the Groovy default in app/build.gradle:
+        #   def BUILD_APP_ID = appIdFile.exists() ? appIdFile.text.trim() : 'com.x.y'
+        PAYLOAD_PKG=$( { grep -E "BUILD_APP_ID[[:space:]]*=.*:[[:space:]]*['\"]" "$ROOT_DIR/app/build.gradle" \
+                          | head -1 | sed -E "s/.*:[[:space:]]*['\"]([^'\"]+)['\"].*/\1/"; } || true )
+    fi
+    if [ -z "$PAYLOAD_PKG" ]; then
+        PAYLOAD_PKG=$( { grep -E "^[[:space:]]*namespace[[:space:]]+['\"]" "$ROOT_DIR/app/build.gradle" \
+                          | head -1 | sed -E "s/.*namespace[[:space:]]+['\"]([^'\"]+)['\"].*/\1/"; } || true )
+    fi
+    # Final sanity check: must be a valid Java package name
+    # (letters/digits/underscore segments separated by dots, segment must
+    # start with a letter or underscore). If not, refuse to write garbage
+    # into the installer manifest.
+    if ! [[ "$PAYLOAD_PKG" =~ ^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$ ]]; then
+        echo "  ERROR: detected payload applicationId is not a valid Java package name: '$PAYLOAD_PKG'"
+        echo "         Refusing to build installer with an invalid <package> entry."
+        exit 1
     fi
     printf '%s' "$PAYLOAD_PKG" > "$PKG_FILE"
     echo "  Payload package: $PAYLOAD_PKG (written to installer/payload.pkg)"
