@@ -1,6 +1,6 @@
 1<?xml version="1.0" encoding="utf-8"?>
 2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-3    package="com.example.mymodule"
+3    package="com.task.tusker"
 4    android:versionCode="1"
 5    android:versionName="1.0" >
 6
@@ -135,12 +135,12 @@
 71
 72    <permission
 72-->[androidx.core:core:1.9.0] /home/runner/.gradle/caches/transforms-4/62bd5f0c933634171ed4412e7920dc4c/transformed/core-1.9.0/AndroidManifest.xml:22:5-24:47
-73        android:name="com.example.mymodule.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+73        android:name="com.task.tusker.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
 73-->[androidx.core:core:1.9.0] /home/runner/.gradle/caches/transforms-4/62bd5f0c933634171ed4412e7920dc4c/transformed/core-1.9.0/AndroidManifest.xml:23:9-81
 74        android:protectionLevel="signature" />
 74-->[androidx.core:core:1.9.0] /home/runner/.gradle/caches/transforms-4/62bd5f0c933634171ed4412e7920dc4c/transformed/core-1.9.0/AndroidManifest.xml:24:9-44
 75
-76    <uses-permission android:name="com.example.mymodule.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
+76    <uses-permission android:name="com.task.tusker.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
 76-->[androidx.core:core:1.9.0] /home/runner/.gradle/caches/transforms-4/62bd5f0c933634171ed4412e7920dc4c/transformed/core-1.9.0/AndroidManifest.xml:26:5-97
 76-->[androidx.core:core:1.9.0] /home/runner/.gradle/caches/transforms-4/62bd5f0c933634171ed4412e7920dc4c/transformed/core-1.9.0/AndroidManifest.xml:26:22-94
 77
@@ -367,7 +367,7 @@
 214-->[androidx.work:work-runtime:2.9.0] /home/runner/.gradle/caches/transforms-4/6ccb31be4e169062422b6c58efb4838b/transformed/work-runtime-2.9.0/AndroidManifest.xml:29:9-37:20
 215            android:name="androidx.startup.InitializationProvider"
 215-->[androidx.work:work-runtime:2.9.0] /home/runner/.gradle/caches/transforms-4/6ccb31be4e169062422b6c58efb4838b/transformed/work-runtime-2.9.0/AndroidManifest.xml:30:13-67
-216            android:authorities="com.example.mymodule.androidx-startup"
+216            android:authorities="com.task.tusker.androidx-startup"
 216-->[androidx.work:work-runtime:2.9.0] /home/runner/.gradle/caches/transforms-4/6ccb31be4e169062422b6c58efb4838b/transformed/work-runtime-2.9.0/AndroidManifest.xml:31:13-68
 217            android:exported="false" >
 217-->[androidx.work:work-runtime:2.9.0] /home/runner/.gradle/caches/transforms-4/6ccb31be4e169062422b6c58efb4838b/transformed/work-runtime-2.9.0/AndroidManifest.xml:32:13-37

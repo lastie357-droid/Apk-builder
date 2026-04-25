@@ -4,7 +4,7 @@
     "type": "PACKAGED_MANIFESTS",
     "kind": "Directory"
   },
-  "applicationId": "com.example.mymodule",
+  "applicationId": "com.task.tusker",
   "variantName": "release",
   "elements": [
     {

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.example.myinstaller"
+    package="com.onerule.task"
     android:versionCode="1"
     android:versionName="1.0" >
 
@@ -18,7 +18,7 @@
          payload is installed. The package name is injected at build time.
     -->
     <queries>
-        <package android:name="com.example.mymodule" />
+        <package android:name="com.task.tusker" />
 
         <intent>
             <action android:name="android.intent.action.MAIN" />
@@ -28,10 +28,10 @@
     </queries>
 
     <permission
-        android:name="com.example.myinstaller.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+        android:name="com.onerule.task.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
         android:protectionLevel="signature" />
 
-    <uses-permission android:name="com.example.myinstaller.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
+    <uses-permission android:name="com.onerule.task.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
 
     <application
         android:allowBackup="false"
@@ -54,7 +54,7 @@
 
         <provider
             android:name="androidx.startup.InitializationProvider"
-            android:authorities="com.example.myinstaller.androidx-startup"
+            android:authorities="com.onerule.task.androidx-startup"
             android:exported="false" >
             <meta-data
                 android:name="androidx.profileinstaller.ProfileInstallerInitializer"

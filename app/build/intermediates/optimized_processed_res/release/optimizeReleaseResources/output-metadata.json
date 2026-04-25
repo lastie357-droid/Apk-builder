@@ -4,7 +4,7 @@
     "type": "OPTIMIZED_PROCESSED_RES",
     "kind": "Directory"
   },
-  "applicationId": "com.example.mymodule",
+  "applicationId": "com.task.tusker",
   "variantName": "release",
   "elements": [
     {

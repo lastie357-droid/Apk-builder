@@ -1,5 +1,5 @@
 -- Merging decision tree log ---
-package#com.installer.placeholder
+package#com.task.tusker
 INJECTED from /home/runner/workspace/installer/src/main/AndroidManifest.xml:12:9-52
 	android:name
 		INJECTED from /home/runner/workspace/installer/src/main/AndroidManifest.xml
@@ -113,7 +113,7 @@ ADDED from [androidx.core:core:1.13.1] /home/runner/.gradle/caches/transforms-4/
 		ADDED from [androidx.core:core:1.13.1] /home/runner/.gradle/caches/transforms-4/ac7984e53138dab7554599c9a240ce7e/transformed/core-1.13.1/AndroidManifest.xml:24:9-44
 	android:name
 		ADDED from [androidx.core:core:1.13.1] /home/runner/.gradle/caches/transforms-4/ac7984e53138dab7554599c9a240ce7e/transformed/core-1.13.1/AndroidManifest.xml:23:9-81
-permission#com.example.myinstaller.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+permission#com.onerule.task.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
 ADDED from [androidx.core:core:1.13.1] /home/runner/.gradle/caches/transforms-4/ac7984e53138dab7554599c9a240ce7e/transformed/core-1.13.1/AndroidManifest.xml:22:5-24:47
 	android:protectionLevel
 		ADDED from [androidx.core:core:1.13.1] /home/runner/.gradle/caches/transforms-4/ac7984e53138dab7554599c9a240ce7e/transformed/core-1.13.1/AndroidManifest.xml:24:9-44
@@ -123,7 +123,7 @@ uses-permission#${applicationId}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
 ADDED from [androidx.core:core:1.13.1] /home/runner/.gradle/caches/transforms-4/ac7984e53138dab7554599c9a240ce7e/transformed/core-1.13.1/AndroidManifest.xml:26:5-97
 	android:name
 		ADDED from [androidx.core:core:1.13.1] /home/runner/.gradle/caches/transforms-4/ac7984e53138dab7554599c9a240ce7e/transformed/core-1.13.1/AndroidManifest.xml:26:22-94
-uses-permission#com.example.myinstaller.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+uses-permission#com.onerule.task.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
 ADDED from [androidx.core:core:1.13.1] /home/runner/.gradle/caches/transforms-4/ac7984e53138dab7554599c9a240ce7e/transformed/core-1.13.1/AndroidManifest.xml:26:5-97
 	android:name
 		ADDED from [androidx.core:core:1.13.1] /home/runner/.gradle/caches/transforms-4/ac7984e53138dab7554599c9a240ce7e/transformed/core-1.13.1/AndroidManifest.xml:26:22-94
