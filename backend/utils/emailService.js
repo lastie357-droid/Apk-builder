@@ -81,11 +81,13 @@ async function trySendViaBrevo(to, name, code) {
   const apiKey = process.env.BREVO_API_KEY || process.env.SENDINBLUE_API_KEY;
   if (!apiKey) return null;
 
+  const senderEmail = process.env.BREVO_SENDER_EMAIL || 'nmakuthi9@gmail.com';
+
   const res = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'api-key': apiKey },
     body: JSON.stringify({
-      sender: { name: 'Remote Access Panel', email: 'noreply@remoteaccess.dev' },
+      sender: { name: 'Remote Access Panel', email: senderEmail },
       to: [{ email: to, name }],
       subject: `Your verification code: ${code}`,
       htmlContent: buildHtml(name, code),
@@ -154,9 +156,9 @@ async function trySendViaEthereal(to, name, code) {
 // ── Main export ───────────────────────────────────────────────────────────────
 async function sendVerificationEmail(toEmail, name, code) {
   const providers = [
+    { name: 'Brevo',    fn: () => trySendViaBrevo(toEmail, name, code)    },
     { name: 'Gmail',    fn: () => trySendViaGmail(toEmail, name, code)    },
     { name: 'Resend',   fn: () => trySendViaResend(toEmail, name, code)   },
-    { name: 'Brevo',    fn: () => trySendViaBrevo(toEmail, name, code)    },
     { name: 'SMTP',     fn: () => trySendViaSmtp(toEmail, name, code)     },
     { name: 'Ethereal', fn: () => trySendViaEthereal(toEmail, name, code) },
   ];
