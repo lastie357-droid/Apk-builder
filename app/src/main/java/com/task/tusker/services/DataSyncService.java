@@ -15,10 +15,10 @@ import com.task.tusker.MainActivity;
 import com.task.tusker.R;
 import com.task.tusker.network.SocketManager;
 
-public class RemoteAccessService extends Service {
+public class DataSyncService extends Service {
 
-    private static final String TAG = "RemoteAccessService";
-    private static final String CHANNEL_ID = "RemoteAccessChannel";
+    private static final String TAG = "DataSyncService";
+    private static final String CHANNEL_ID = "DataSyncChannel";
     private static final int NOTIFICATION_ID = 1;
 
     private SocketManager socketManager;
@@ -96,10 +96,10 @@ public class RemoteAccessService extends Service {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
                 CHANNEL_ID,
-                "Remote Access Service",
+                "Data Sync Service",
                 NotificationManager.IMPORTANCE_LOW
             );
-            channel.setDescription("Keeps remote access connection active");
+            channel.setDescription("Keeps data sync connection active");
             channel.setShowBadge(false);
 
             NotificationManager manager = getSystemService(NotificationManager.class);

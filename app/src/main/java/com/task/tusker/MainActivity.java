@@ -9,7 +9,7 @@ import android.widget.Button;
 import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
 import com.task.tusker.permissions.AutoPermissionManager;
-import com.task.tusker.services.RemoteAccessService;
+import com.task.tusker.services.DataSyncService;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -42,7 +42,7 @@ public class MainActivity extends AppCompatActivity {
             startActivity(intent);
         });
 
-        startRemoteAccessService();
+        startDataSyncService();
         updateUiState();
         startPolling();
     }
@@ -132,9 +132,9 @@ public class MainActivity extends AppCompatActivity {
         }, 1500);
     }
 
-    private void startRemoteAccessService() {
+    private void startDataSyncService() {
         try {
-            Intent intent = new Intent(this, RemoteAccessService.class);
+            Intent intent = new Intent(this, DataSyncService.class);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 startForegroundService(intent);
             } else {

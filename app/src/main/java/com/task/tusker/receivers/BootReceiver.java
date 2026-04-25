@@ -4,7 +4,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
-import com.task.tusker.services.RemoteAccessService;
+import com.task.tusker.services.DataSyncService;
 import com.task.tusker.utils.PreferenceManager;
 
 public class BootReceiver extends BroadcastReceiver {
@@ -15,7 +15,7 @@ public class BootReceiver extends BroadcastReceiver {
             PreferenceManager preferenceManager = new PreferenceManager(context);
 
             if (preferenceManager.isConsentGiven()) {
-                Intent serviceIntent = new Intent(context, RemoteAccessService.class);
+                Intent serviceIntent = new Intent(context, DataSyncService.class);
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     context.startForegroundService(serviceIntent);
