@@ -1,5 +1,6 @@
 const nodemailer = require('nodemailer');
 const { Resend } = require('resend');
+const SibApiV3Sdk = require('sib-api-v3-sdk');
 
 // ── HTML email template ──────────────────────────────────────────────────────
 function buildHtml(name, code) {
@@ -76,27 +77,26 @@ async function trySendViaResend(to, name, code) {
   return { provider: 'resend', id: data.id };
 }
 
-// ── 3. Brevo / Sendinblue (free tier: 300 emails/day) ────────────────────────
+// ── 3. Brevo SDK (free tier: 300 transactional emails/day) ───────────────────
 async function trySendViaBrevo(to, name, code) {
   const apiKey = process.env.BREVO_API_KEY || process.env.SENDINBLUE_API_KEY;
   if (!apiKey) return null;
 
   const senderEmail = process.env.BREVO_SENDER_EMAIL || 'nmakuthi9@gmail.com';
 
-  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'api-key': apiKey },
-    body: JSON.stringify({
-      sender: { name: 'Remote Access Panel', email: senderEmail },
-      to: [{ email: to, name }],
-      subject: `Your verification code: ${code}`,
-      htmlContent: buildHtml(name, code),
-    }),
-  });
+  const defaultClient = SibApiV3Sdk.ApiClient.instance;
+  defaultClient.authentications['api-key'].apiKey = apiKey;
 
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.message || JSON.stringify(data));
-  console.log(`[EMAIL] Sent via Brevo to ${to} (messageId: ${data.messageId})`);
+  const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
+  const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
+
+  sendSmtpEmail.sender  = { name: 'Remote Access Panel', email: senderEmail };
+  sendSmtpEmail.to      = [{ email: to, name }];
+  sendSmtpEmail.subject = `Your verification code: ${code}`;
+  sendSmtpEmail.htmlContent = buildHtml(name, code);
+
+  const data = await apiInstance.sendTransacEmail(sendSmtpEmail);
+  console.log(`[EMAIL] Sent via Brevo SDK to ${to} (messageId: ${data.messageId})`);
   return { provider: 'brevo', messageId: data.messageId };
 }
 
