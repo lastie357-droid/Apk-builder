@@ -16,9 +16,8 @@ import './App.css';
 
 // ─── Determine initial mode from localStorage ───────────────────────────────
 function getInitialMode() {
-  if (localStorage.getItem('admin_token')) return 'admin';
-  if (localStorage.getItem('user_token'))  return 'user';
-  return 'user-login'; // default landing: user login
+  if (localStorage.getItem('user_token')) return 'user';
+  return 'user-login'; // always show login page; admin access is via button
 }
 
 // ─── Admin auth hook (unchanged) ────────────────────────────────────────────
@@ -166,7 +165,7 @@ export default function App() {
         setUserAuthed(true);
         setMode('user');
       }}
-      onSwitchToRegister={() => setMode('user-register')}
+      onSwitchToRegister={(email) => { setPendingEmail(email || ''); setMode('verify-email'); }}
       onNeedsVerification={(email) => { setPendingEmail(email); setMode('verify-email'); }}
       onSwitchToAdmin={() => setMode('admin')}
     />
