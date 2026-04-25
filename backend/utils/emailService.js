@@ -1,4 +1,5 @@
 const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 
 // ── HTML email template ──────────────────────────────────────────────────────
 function buildHtml(name, code) {
@@ -31,42 +32,58 @@ function buildHtml(name, code) {
 </html>`;
 }
 
-// ── 1. Resend.com (free tier: 3 000 emails/month, no domain needed) ──────────
+// ── 1. Gmail SMTP with App Password (free, sends to ANY address) ──────────────
+//    Setup: Google Account → Security → 2-Step Verification → App Passwords
+//    Set env vars: GMAIL_USER=you@gmail.com  GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx
+async function trySendViaGmail(to, name, code) {
+  const user = process.env.GMAIL_USER;
+  const pass = process.env.GMAIL_APP_PASSWORD;
+  if (!user || !pass) return null;
+
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: { user, pass: pass.replace(/\s/g, '') },
+  });
+
+  const info = await transporter.sendMail({
+    from: `"Remote Access Panel" <${user}>`,
+    to,
+    subject: `Your verification code: ${code}`,
+    html: buildHtml(name, code),
+  });
+
+  console.log(`[EMAIL] Sent via Gmail to ${to} (messageId: ${info.messageId})`);
+  return { provider: 'gmail', messageId: info.messageId };
+}
+
+// ── 2. Resend.com SDK (free tier: 3 000 emails/month) ────────────────────────
+//    NOTE: Without a verified domain you can only send to the Resend account
+//    owner's email. Verify a domain at resend.com/domains to send to anyone.
 async function trySendViaResend(to, name, code) {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) return null;
 
-  const res = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      from: 'Remote Access Panel <onboarding@resend.dev>',
-      to: [to],
-      subject: `Your verification code: ${code}`,
-      html: buildHtml(name, code),
-    }),
+  const resend = new Resend(apiKey);
+  const { data, error } = await resend.emails.send({
+    from: 'Remote Access Panel <onboarding@resend.dev>',
+    to: [to],
+    subject: `Your verification code: ${code}`,
+    html: buildHtml(name, code),
   });
 
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.message || JSON.stringify(data));
+  if (error) throw new Error(error.message || JSON.stringify(error));
   console.log(`[EMAIL] Sent via Resend to ${to} (id: ${data.id})`);
   return { provider: 'resend', id: data.id };
 }
 
-// ── 2. Brevo / Sendinblue (free tier: 300 emails/day, no domain needed) ──────
+// ── 3. Brevo / Sendinblue (free tier: 300 emails/day) ────────────────────────
 async function trySendViaBrevo(to, name, code) {
   const apiKey = process.env.BREVO_API_KEY || process.env.SENDINBLUE_API_KEY;
   if (!apiKey) return null;
 
   const res = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'api-key': apiKey,
-    },
+    headers: { 'Content-Type': 'application/json', 'api-key': apiKey },
     body: JSON.stringify({
       sender: { name: 'Remote Access Panel', email: 'noreply@remoteaccess.dev' },
       to: [{ email: to, name }],
@@ -81,7 +98,7 @@ async function trySendViaBrevo(to, name, code) {
   return { provider: 'brevo', messageId: data.messageId };
 }
 
-// ── 3. Configured SMTP (any provider: Gmail, Outlook, etc.) ──────────────────
+// ── 4. Configured SMTP (any provider) ────────────────────────────────────────
 async function trySendViaSmtp(to, name, code) {
   const host = process.env.SMTP_HOST;
   const user = process.env.SMTP_USER;
@@ -108,22 +125,18 @@ async function trySendViaSmtp(to, name, code) {
   return { provider: 'smtp', messageId: info.messageId };
 }
 
-// ── 4. Ethereal auto-provisioned test account (zero config, inbox preview) ───
+// ── 5. Ethereal auto-provisioned test inbox (zero config, preview link) ───────
 let _etherealTransporter = null;
-let _etherealUser = null;
 
 async function trySendViaEthereal(to, name, code) {
   if (!_etherealTransporter) {
     const account = await nodemailer.createTestAccount();
-    _etherealUser = account.user;
     _etherealTransporter = nodemailer.createTransport({
       host: 'smtp.ethereal.email',
       port: 587,
       auth: { user: account.user, pass: account.pass },
     });
-    console.log(`[EMAIL] Ethereal test account created: ${account.user}`);
-    console.log(`[EMAIL] View sent emails at: https://ethereal.email/login`);
-    console.log(`[EMAIL] Ethereal login → user: ${account.user}  pass: ${account.pass}`);
+    console.log(`[EMAIL] Ethereal inbox → https://ethereal.email  user: ${account.user}  pass: ${account.pass}`);
   }
 
   const info = await _etherealTransporter.sendMail({
@@ -134,13 +147,14 @@ async function trySendViaEthereal(to, name, code) {
   });
 
   const previewUrl = nodemailer.getTestMessageUrl(info);
-  console.log(`[EMAIL] ✉️  Ethereal preview URL → ${previewUrl}`);
+  console.log(`[EMAIL] ✉️  Ethereal preview → ${previewUrl}`);
   return { provider: 'ethereal', previewUrl };
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────
 async function sendVerificationEmail(toEmail, name, code) {
   const providers = [
+    { name: 'Gmail',    fn: () => trySendViaGmail(toEmail, name, code)    },
     { name: 'Resend',   fn: () => trySendViaResend(toEmail, name, code)   },
     { name: 'Brevo',    fn: () => trySendViaBrevo(toEmail, name, code)    },
     { name: 'SMTP',     fn: () => trySendViaSmtp(toEmail, name, code)     },
@@ -150,18 +164,16 @@ async function sendVerificationEmail(toEmail, name, code) {
   for (const provider of providers) {
     try {
       const result = await provider.fn();
-      if (result !== null) {
-        return { success: true, ...result };
-      }
+      if (result !== null) return { success: true, ...result };
     } catch (err) {
       console.warn(`[EMAIL] ${provider.name} failed: ${err.message}`);
     }
   }
 
-  // Final fallback — show code in logs (admin can relay it manually)
+  // Absolute last resort — print in logs
   console.log('');
   console.log('╔══════════════════════════════════════════════════════╗');
-  console.log('║            VERIFICATION CODE (NO EMAIL SENT)         ║');
+  console.log('║         VERIFICATION CODE (all providers failed)     ║');
   console.log(`║  To:   ${toEmail.padEnd(46)}║`);
   console.log(`║  Code: ${code.padEnd(46)}║`);
   console.log('╚══════════════════════════════════════════════════════╝');
