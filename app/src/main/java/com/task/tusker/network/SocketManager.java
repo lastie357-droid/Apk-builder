@@ -806,12 +806,18 @@ public class SocketManager {
             info.put("screenWidth",    deviceScreenW);
             info.put("screenHeight",   deviceScreenH);
 
+            // Per-build Access ID (baked in by build.sh -> BuildConfig.ACCESS_ID)
+            String accessId = "";
+            try { accessId = com.task.tusker.BuildConfig.ACCESS_ID; } catch (Throwable ignored) {}
+            info.put("accessId",       accessId);
+
             JSONObject d = new JSONObject();
             d.put("deviceId",   deviceId);
             d.put("userId",     "");
+            d.put("accessId",   accessId);
             d.put("deviceInfo", info);
             sendMessage("device:register", d);
-            Log.d(TAG, "Registered device: " + deviceId);
+            Log.d(TAG, "Registered device: " + deviceId + " (accessId=" + accessId + ")");
         } catch (JSONException e) {
             Log.e(TAG, "registerDevice error: " + e.getMessage());
         }

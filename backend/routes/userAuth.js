@@ -257,6 +257,12 @@ router.post('/login', async (req, res) => {
     }
 
     user.lastLogin = new Date();
+    if (!user.accessId) {
+      const prefix = 'ACC';
+      const rand = crypto.randomBytes(4).toString('hex').toUpperCase();
+      const ts   = Date.now().toString(36).toUpperCase().slice(-4);
+      user.accessId = `${prefix}-${ts}-${rand}`;
+    }
     await user.save();
 
     const token = jwt.sign(

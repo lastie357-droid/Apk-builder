@@ -13,6 +13,11 @@ const deviceSchema = new mongoose.Schema({
   userIdString: {
     type: String
   },
+  accessId: {
+    type: String,
+    index: true,
+    default: ''
+  },
   deviceName: String,
   model: String,
   manufacturer: String,

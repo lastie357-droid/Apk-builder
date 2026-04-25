@@ -5,6 +5,7 @@ import DeviceControl from './DeviceControl.jsx';
 import Overview from './Overview.jsx';
 import StatusBar from './StatusBar.jsx';
 import SettingsTab from './SettingsTab.jsx';
+import BuildApkTab from './BuildApkTab.jsx';
 
 const styles = {
   trialBanner: {
@@ -302,6 +303,7 @@ export default function UserDashboard({ user, onLogout }) {
                 <div style={{ display: 'flex', gap: 4 }}>
                   {[
                     { id: 'overview', label: '📊 Overview' },
+                    { id: 'build',    label: '📦 Build APK' },
                     { id: 'settings', label: '⚙️ Settings' },
                   ].map(tab => (
                     <button
@@ -328,6 +330,8 @@ export default function UserDashboard({ user, onLogout }) {
               <div style={{ flex: 1, minHeight: 0 }}>
                 {globalView === 'settings' ? (
                   <SettingsTab />
+                ) : globalView === 'build' ? (
+                  <BuildApkTab user={user} />
                 ) : (
                   <Overview
                     devices={devices}

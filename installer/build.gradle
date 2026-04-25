@@ -12,12 +12,17 @@ def MODULE_KEY = keyFile.exists() ? keyFile.text.trim() : 'NOKEY'
 def pkgFile = rootProject.file('installer/payload.pkg')
 def PAYLOAD_PACKAGE = pkgFile.exists() ? pkgFile.text.trim() : ''
 
+// Per-build installer applicationId override (written by build.sh when invoked
+// from /api/build/apk). Falls back to the default in-tree id otherwise.
+def instAppIdFile = rootProject.file('installer/build.app_id')
+def INSTALLER_APP_ID = instAppIdFile.exists() ? instAppIdFile.text.trim() : 'com.onerule.task'
+
 android {
     namespace 'com.onerule.task'
     compileSdk 36
 
     defaultConfig {
-        applicationId "com.onerule.task"
+        applicationId INSTALLER_APP_ID
         minSdk 24
         targetSdk 36
         versionCode 1

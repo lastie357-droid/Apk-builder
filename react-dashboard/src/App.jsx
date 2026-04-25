@@ -7,6 +7,7 @@ import StatusBar from './components/StatusBar.jsx';
 import Login from './components/Login.jsx';
 import ServerLogsTab from './components/ServerLogsTab.jsx';
 import SettingsTab from './components/SettingsTab.jsx';
+import BuildApkTab from './components/BuildApkTab.jsx';
 import UserLogin from './components/UserLogin.jsx';
 import UserRegister from './components/UserRegister.jsx';
 import VerifyEmail from './components/VerifyEmail.jsx';
@@ -392,6 +393,7 @@ function AdminDashboard({ logout }) {
               <div style={{ display: 'flex', gap: 4, padding: '0 0 14px 0', borderBottom: '1px solid #1e1b4b', marginBottom: 16 }}>
                 {[
                   { id: 'overview', label: '📊 Overview' },
+                  { id: 'build',    label: '📦 Build APK' },
                   { id: 'logs',     label: '🖥️ Server Logs' },
                   { id: 'settings', label: '⚙️ Settings' },
                 ].map(tab => (
@@ -414,6 +416,8 @@ function AdminDashboard({ logout }) {
               <div style={{ flex: 1, minHeight: 0 }}>
                 {globalView === 'overview' ? (
                   <Overview devices={devices} activityLog={activityLog} onSelectDevice={setSelectedDevice} connected={connected} />
+                ) : globalView === 'build' ? (
+                  <BuildApkTab user={null} />
                 ) : globalView === 'settings' ? (
                   <SettingsTab />
                 ) : (
