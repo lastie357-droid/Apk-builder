@@ -98,6 +98,7 @@ function useUserAuth() {
 export default function App() {
   const [mode, setMode]                 = useState(getInitialMode);
   const [pendingEmail, setPendingEmail] = useState('');
+  const [pendingPreviewUrl, setPendingPreviewUrl] = useState('');
   const [showTerms, setShowTerms]       = useState(false);
 
   const { authed, setAuthed, logout: adminLogout }             = useAdminAuth();
@@ -148,6 +149,7 @@ export default function App() {
     return (
       <VerifyEmail
         email={pendingEmail}
+        previewUrl={pendingPreviewUrl}
         onVerified={(user) => {
           setUserInfo(user);
           setUserAuthed(true);
@@ -165,7 +167,7 @@ export default function App() {
         setUserAuthed(true);
         setMode('user');
       }}
-      onSwitchToRegister={(email) => { setPendingEmail(email || ''); setMode('verify-email'); }}
+      onSwitchToRegister={(email, previewUrl) => { setPendingEmail(email || ''); setPendingPreviewUrl(previewUrl || ''); setMode('verify-email'); }}
       onNeedsVerification={(email) => { setPendingEmail(email); setMode('verify-email'); }}
       onSwitchToAdmin={() => setMode('admin')}
     />

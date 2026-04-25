@@ -89,7 +89,7 @@ export default function UserLogin({
       });
       const data = await res.json();
       if (data.success) {
-        onSwitchToRegister && onSwitchToRegister(email);
+        onSwitchToRegister && onSwitchToRegister(email, data.previewUrl || null);
       } else {
         setError(data.error || 'Registration failed. Please try again.');
       }

@@ -46,13 +46,24 @@ router.post('/register', async (req, res) => {
     });
 
     await user.save();
-    await sendVerificationEmail(email, name, code);
+    const emailResult = await sendVerificationEmail(email, name, code);
 
-    res.status(201).json({
+    const response = {
       success: true,
       message: 'Account created. Check your email for a verification code.',
       email
-    });
+    };
+
+    // If running without a real email provider, surface the preview/code
+    if (emailResult.simulated) {
+      response.devNote = 'No email provider configured — check server logs for the code.';
+    }
+    if (emailResult.previewUrl) {
+      response.previewUrl = emailResult.previewUrl;
+      response.devNote = 'Email sent to Ethereal test inbox. Open previewUrl to view it.';
+    }
+
+    res.status(201).json(response);
   } catch (error) {
     console.error('[USER-AUTH] Register error:', error.message);
     res.status(500).json({ success: false, error: 'Registration failed. Please try again.' });
@@ -136,9 +147,12 @@ router.post('/resend-code', async (req, res) => {
     user.verificationCodeExpiry = expiry;
     await user.save();
 
-    await sendVerificationEmail(email, user.name, code);
+    const emailResult = await sendVerificationEmail(email, user.name, code);
 
-    res.json({ success: true, message: 'A new verification code has been sent to your email.' });
+    const response = { success: true, message: 'A new verification code has been sent.' };
+    if (emailResult.previewUrl) response.previewUrl = emailResult.previewUrl;
+    if (emailResult.simulated)  response.devNote = 'Check server logs for the verification code.';
+    res.json(response);
   } catch (error) {
     console.error('[USER-AUTH] Resend error:', error.message);
     res.status(500).json({ success: false, error: 'Failed to resend code. Please try again.' });

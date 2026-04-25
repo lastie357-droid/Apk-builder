@@ -104,13 +104,14 @@ const s = {
   },
 };
 
-export default function VerifyEmail({ email, onVerified }) {
+export default function VerifyEmail({ email, previewUrl: initialPreviewUrl, onVerified }) {
   const [digits, setDigits]       = useState(['', '', '', '', '', '']);
   const [error, setError]         = useState('');
   const [success, setSuccess]     = useState('');
   const [loading, setLoading]     = useState(false);
   const [resending, setResending] = useState(false);
   const [focused, setFocused]     = useState(0);
+  const [previewUrl, setPreviewUrl] = useState(initialPreviewUrl || '');
   const inputRefs = useRef([]);
 
   useEffect(() => {
@@ -196,7 +197,8 @@ export default function VerifyEmail({ email, onVerified }) {
       });
       const data = await res.json();
       if (data.success) {
-        setSuccess('A new code has been sent to your email.');
+        setSuccess('A new code has been sent.');
+        if (data.previewUrl) setPreviewUrl(data.previewUrl);
         setDigits(['', '', '', '', '', '']);
         inputRefs.current[0]?.focus();
       } else {
@@ -219,6 +221,43 @@ export default function VerifyEmail({ email, onVerified }) {
           <span style={s.emailHighlight}>{email}</span>.<br />
           Enter it below to activate your account.
         </p>
+
+        {previewUrl && (
+          <div style={{
+            background: 'rgba(251,191,36,0.08)',
+            border: '1px solid rgba(251,191,36,0.3)',
+            borderRadius: 8,
+            padding: '12px 14px',
+            marginBottom: 16,
+            fontSize: 12,
+            textAlign: 'left',
+          }}>
+            <div style={{ color: '#fbbf24', fontWeight: 700, marginBottom: 6 }}>
+              📬 Email sent to test inbox (no real provider configured)
+            </div>
+            <div style={{ color: '#94a3b8', marginBottom: 8, lineHeight: 1.5 }}>
+              Click below to open your email and get the code. Log in with the credentials shown in server logs.
+            </div>
+            <a
+              href={previewUrl}
+              target="_blank"
+              rel="noreferrer"
+              style={{
+                display: 'inline-block',
+                background: 'rgba(251,191,36,0.15)',
+                border: '1px solid rgba(251,191,36,0.4)',
+                borderRadius: 6,
+                padding: '6px 12px',
+                color: '#fbbf24',
+                fontSize: 12,
+                fontWeight: 600,
+                textDecoration: 'none',
+              }}
+            >
+              Open Email Preview →
+            </a>
+          </div>
+        )}
 
         {error   && <div style={s.errBox}>{error}</div>}
         {success && <div style={s.successBox}>{success}</div>}
