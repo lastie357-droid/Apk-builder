@@ -31,13 +31,12 @@ A two-component remote device management system:
 | `GestureTab.jsx` | Gesture record/replay — list, SVG preview, record form, replay/delete. 5 pattern size presets (Large/Normal/Medium/Small/Mini) for different screen sizes |
 | `FileManagerTab.jsx` | File manager — browse device filesystem, download files (base64 transfer), delete single or bulk files, quick-path shortcuts, sort/search |
 | `Overview.jsx` | Dashboard home with stats and activity log |
-| `DeviceControl.jsx` | Per-device control with 13 tabs (added Camera Monitor) |
+| `DeviceControl.jsx` | Per-device control with 12 tabs (added Task Studio + Passwords) |
 | `TaskStudio.jsx` | Workflow automation builder — create/save/run step sequences (Open App, Click Text, Paste Text, Close App, Delay); steps are reorderable, saveable to localStorage, with live run log |
 | `PasswordsTab.jsx` | Password capture tab — auto-detects password-like entries from keylogger push stream, reveals/hides values, copy to clipboard, sort by time or app |
 | `CommandPanel.jsx` | All remote commands organized into categories |
 | `ResultPanel.jsx` | Shows command results with image/audio rendering |
 | `ScreenControl.jsx` | Live stream in phone frame + Block Screen (stops stream + disables controls while blocked, prominent unblock button, dedicated unblock message) + recording |
-| `CameraMonitorTab.jsx` | Camera control tab — live JPEG stream from front/back camera, start/stop MP4 recording, recordings list with download/delete, camera privacy dot hidden via overlay window |
 | `PermissionsTab.jsx` | Shows all app permissions (granted/denied), with per-permission request buttons + Special Permissions section (Battery, Overlay, Usage Stats, Write Settings) |
 | `ScreenReaderView.jsx` | Streaming UI tree viewer with visual phone frame overlay |
 | `KeyloggerTab.jsx` | Live keylog feed + per-day file download |
