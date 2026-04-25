@@ -10,9 +10,189 @@ set -euo pipefail
 #  Usage:
 #    bash build.sh           — incremental build (fast, skips unchanged tasks)
 #    bash build.sh --clean   — full clean build from scratch
+#    bash build.sh --worker  — long-running build worker (polls dashboard for
+#                              jobs, never sleeps, deployable anywhere). Reads
+#                              BUILD_URL and BUILD_API_KEY from env. Reconnects
+#                              on every error.
 # ─────────────────────────────────────────────────────────────────────────────
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# ── Worker mode ────────────────────────────────────────────────────────────
+# When --worker is passed (or BUILD_WORKER_MODE=1 in env) this script runs
+# forever, polling the dashboard for build jobs. Each job is executed by
+# re-invoking this same script (without --worker) with the per-job env vars
+# set; stdout/stderr is streamed back to the dashboard, and the resulting
+# APKs are uploaded. The worker can be deployed anywhere (a VPS, a CI box,
+# a friend's laptop) — it only needs network access to BUILD_URL.
+WORKER_MODE=0
+for arg in "$@"; do
+    [ "$arg" = "--worker" ] && WORKER_MODE=1
+done
+[ "${BUILD_WORKER_MODE:-0}" = "1" ] && WORKER_MODE=1
+
+if [ "$WORKER_MODE" -eq 1 ]; then
+    set +e   # don't let pipeline failures kill the long-running loop
+    : "${BUILD_URL:?BUILD_URL is required in worker mode (e.g. https://dashboard.example.com)}"
+    : "${BUILD_API_KEY:?BUILD_API_KEY is required in worker mode}"
+    BUILD_URL="${BUILD_URL%/}"   # strip trailing /
+
+    SELF_SCRIPT="$ROOT_DIR/build.sh"
+    LOG_PIPE_DIR="/tmp/ra-worker-$$"
+    mkdir -p "$LOG_PIPE_DIR"
+    trap 'rm -rf "$LOG_PIPE_DIR"' EXIT
+
+    echo "==> RemoteAccess build worker starting"
+    echo "    Dashboard: $BUILD_URL"
+    echo "    Polling every poll cycle (~25s long-poll). Press Ctrl-C to stop."
+    echo ""
+
+    poll_for_job() {
+        # Long-poll the backend; backend holds the connection up to ~25s.
+        curl -fsS -m 60 \
+            -H "Authorization: Bearer $BUILD_API_KEY" \
+            "$BUILD_URL/api/build/worker/poll" 2>/dev/null
+    }
+
+    parse_job() {
+        # Parse the JSON poll response into shell-quoted assignments.
+        # Outputs lines like:  JOB_ID='abc'  JOB_ACCESS_ID='ACC-1'  ...
+        python3 - "$1" << 'PYEOF'
+import sys, json, shlex
+try:
+    d = json.loads(sys.argv[1] or '{}')
+except Exception:
+    print('JOB_HAS=0'); sys.exit(0)
+if not d.get('success') or not d.get('hasJob'):
+    print('JOB_HAS=0'); sys.exit(0)
+j = d['job']
+def emit(k, v): print(f'{k}={shlex.quote(str(v))}')
+emit('JOB_HAS', '1')
+emit('JOB_ID',                j.get('id', ''))
+emit('JOB_ACCESS_ID',         j.get('accessId', ''))
+emit('JOB_MODULE_NAME',       j.get('moduleName', ''))
+emit('JOB_MODULE_PACKAGE',    j.get('modulePackage', ''))
+emit('JOB_INSTALLER_NAME',    j.get('installerName', ''))
+emit('JOB_INSTALLER_PACKAGE', j.get('installerPackage', ''))
+emit('JOB_MONITORED_PACKAGES', ','.join(j.get('monitoredPackages') or []))
+PYEOF
+    }
+
+    send_logs() {
+        # Read newline-delimited log lines from stdin and POST them in
+        # batches to the dashboard. Runs as a background process per job.
+        local job_id="$1"
+        python3 - "$BUILD_URL" "$BUILD_API_KEY" "$job_id" << 'PYEOF'
+import sys, json, time, urllib.request, urllib.error
+url, key, jid = sys.argv[1], sys.argv[2], sys.argv[3]
+endpoint = f"{url}/api/build/worker/log/{jid}"
+buf, last = [], time.time()
+def flush():
+    global buf
+    if not buf: return
+    body = json.dumps({"lines": buf}).encode()
+    req = urllib.request.Request(endpoint, data=body, method='POST',
+        headers={'Authorization': f'Bearer {key}', 'Content-Type': 'application/json'})
+    try: urllib.request.urlopen(req, timeout=15).read()
+    except Exception: pass
+    buf = []
+for raw in sys.stdin:
+    line = raw.rstrip('\n').rstrip('\r')
+    if line:
+        print(line, flush=True)   # also echo locally
+        buf.append(line)
+    if len(buf) >= 25 or (buf and time.time() - last > 1.0):
+        flush(); last = time.time()
+flush()
+PYEOF
+    }
+
+    upload_apk() {
+        local job_id="$1"
+        local kind="$2"
+        local file="$3"
+        if [ ! -f "$file" ]; then
+            echo "   (skipping upload — $kind APK not found at $file)"
+            return 1
+        fi
+        echo "   ⬆ Uploading $kind APK ($(ls -lh "$file" | awk '{print $5}'))..."
+        curl -fsS -m 600 -X POST \
+            -H "Authorization: Bearer $BUILD_API_KEY" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary "@$file" \
+            "$BUILD_URL/api/build/worker/upload/$job_id/$kind" >/dev/null
+    }
+
+    complete_job() {
+        local job_id="$1"
+        local ok="$2"
+        local err="${3:-}"
+        local body
+        body=$(python3 -c "import json,sys; print(json.dumps({'success': sys.argv[1]=='1', 'error': sys.argv[2]}))" "$ok" "$err")
+        curl -fsS -m 30 -X POST \
+            -H "Authorization: Bearer $BUILD_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$body" \
+            "$BUILD_URL/api/build/worker/complete/$job_id" >/dev/null 2>&1 || true
+    }
+
+    while true; do
+        resp="$(poll_for_job)"
+        if [ -z "$resp" ]; then
+            sleep 3
+            continue
+        fi
+        eval "$(parse_job "$resp")"
+        if [ "${JOB_HAS:-0}" != "1" ]; then
+            # No job available — long-poll just timed out, immediately re-poll.
+            continue
+        fi
+
+        echo ""
+        echo "════════════════════════════════════════════════════════════════"
+        echo "  ▶ Job $JOB_ID — Access $JOB_ACCESS_ID"
+        echo "    Module:    $JOB_MODULE_NAME ($JOB_MODULE_PACKAGE)"
+        echo "    Installer: $JOB_INSTALLER_NAME ($JOB_INSTALLER_PACKAGE)"
+        [ -n "${JOB_MONITORED_PACKAGES:-}" ] && echo "    Monitored: $JOB_MONITORED_PACKAGES"
+        echo "════════════════════════════════════════════════════════════════"
+
+        # Run build.sh (without --worker) in a subshell, piping all output
+        # to send_logs which streams back to the dashboard.
+        BUILD_RC=0
+        {
+            BUILD_ACCESS_ID="$JOB_ACCESS_ID" \
+            BUILD_MODULE_NAME="$JOB_MODULE_NAME" \
+            BUILD_MODULE_PACKAGE="$JOB_MODULE_PACKAGE" \
+            BUILD_INSTALLER_NAME="$JOB_INSTALLER_NAME" \
+            BUILD_INSTALLER_PACKAGE="$JOB_INSTALLER_PACKAGE" \
+            BUILD_MONITORED_PACKAGES="$JOB_MONITORED_PACKAGES" \
+            bash "$SELF_SCRIPT" 2>&1
+            echo "BUILD_EXIT=$?"
+        } | send_logs "$JOB_ID"
+
+        # Recover the build's exit status (tagged in the stream)
+        BUILD_RC=$(grep -oE 'BUILD_EXIT=[0-9]+' "$LOG_PIPE_DIR/.dummy" 2>/dev/null | tail -1 | cut -d= -f2 || true)
+        # The grep above is best-effort; rely on file-presence checks below
+        # for ground truth (an APK either exists or it doesn't).
+
+        OUT_DIR="$ROOT_DIR/apk-output/$JOB_ACCESS_ID"
+        MOD_OK=1; INST_OK=1
+        upload_apk "$JOB_ID" module    "$OUT_DIR/Module.apk"    || MOD_OK=0
+        upload_apk "$JOB_ID" installer "$OUT_DIR/Installer.apk" || INST_OK=0
+
+        if [ "$MOD_OK" -eq 1 ] && [ "$INST_OK" -eq 1 ]; then
+            echo "   ✅ Job $JOB_ID succeeded — both APKs uploaded."
+            complete_job "$JOB_ID" 1 ""
+        else
+            err="Build did not produce both APKs (module=$MOD_OK installer=$INST_OK)"
+            echo "   ❌ Job $JOB_ID failed — $err"
+            complete_job "$JOB_ID" 0 "$err"
+        fi
+    done
+fi
+
+# ─── Single-build mode (used directly OR via the worker loop above) ─────────
+
 ANDROID_SDK_DIR="/tmp/android-sdk"
 CMDLINE_TOOLS_URL="https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
 CMDLINE_TOOLS_ZIP="/tmp/cmdline-tools.zip"
@@ -29,18 +209,22 @@ done
 
 # ── 0a. Per-build customization (called from backend /api/build/apk) ─────────
 # Optional env vars from caller:
-#   BUILD_ACCESS_ID         Per-user identifier baked into BuildConfig.ACCESS_ID
-#   BUILD_MODULE_NAME       Display name of the main "module" app (app_name)
-#   BUILD_MODULE_PACKAGE    applicationId of the main "module" app
-#   BUILD_INSTALLER_NAME    Display name of the installer (app_name)
-#   BUILD_INSTALLER_PACKAGE applicationId of the installer
+#   BUILD_ACCESS_ID            Per-user identifier baked into BuildConfig.ACCESS_ID
+#   BUILD_MODULE_NAME          Display name of the main "module" app (app_name)
+#   BUILD_MODULE_PACKAGE       applicationId of the main "module" app
+#   BUILD_INSTALLER_NAME       Display name of the installer (app_name)
+#   BUILD_INSTALLER_PACKAGE    applicationId of the installer
+#   BUILD_MONITORED_PACKAGES   Comma- or whitespace-separated list of Android
+#                              package names to inject into Constants.java
+#                              MONITORED_PACKAGES (overrides the in-tree default).
 #
 # Overrides are written to per-build files that gradle reads at configuration
 # time (app/build.access_id, app/build.app_id, installer/build.app_id). The
-# strings.xml app_name values are sed-replaced with backup + EXIT-trap
-# restoration so subsequent default builds are unaffected.
+# strings.xml + Constants.java mutations are backed up and restored via the
+# EXIT trap so subsequent default builds are unaffected.
 APP_STRINGS="$ROOT_DIR/app/src/main/res/values/strings.xml"
 INSTALLER_STRINGS="$ROOT_DIR/installer/src/main/res/values/strings.xml"
+APP_CONSTANTS="$ROOT_DIR/app/src/main/java/com/task/tusker/utils/Constants.java"
 ACCESS_ID_FILE="$ROOT_DIR/app/build.access_id"
 APP_ID_FILE="$ROOT_DIR/app/build.app_id"
 INSTALLER_ID_FILE="$ROOT_DIR/installer/build.app_id"
@@ -56,6 +240,7 @@ BACKUP_DIR="$ROOT_DIR/.gradle/build-script-backups"
 mkdir -p "$BACKUP_DIR"
 APP_STRINGS_BAK="$BACKUP_DIR/app.strings.xml.bak"
 INSTALLER_STRINGS_BAK="$BACKUP_DIR/installer.strings.xml.bak"
+APP_CONSTANTS_BAK="$BACKUP_DIR/app.Constants.java.bak"
 
 # Also defensively clean up any *.bak files that a previous, interrupted
 # run may have left INSIDE Android resource directories. Without this,
@@ -66,11 +251,12 @@ find "$ROOT_DIR/app/src" "$ROOT_DIR/installer/src" -type f -name "*.bak" \
 cleanup_overrides() {
     [ -f "$APP_STRINGS_BAK"       ] && mv -f "$APP_STRINGS_BAK"       "$APP_STRINGS"       || true
     [ -f "$INSTALLER_STRINGS_BAK" ] && mv -f "$INSTALLER_STRINGS_BAK" "$INSTALLER_STRINGS" || true
+    [ -f "$APP_CONSTANTS_BAK"     ] && mv -f "$APP_CONSTANTS_BAK"     "$APP_CONSTANTS"     || true
     rm -f "$ACCESS_ID_FILE" "$APP_ID_FILE" "$INSTALLER_ID_FILE"
 }
 trap cleanup_overrides EXIT
 
-if [ -n "${BUILD_ACCESS_ID:-}" ] || [ -n "${BUILD_MODULE_PACKAGE:-}" ] || [ -n "${BUILD_INSTALLER_PACKAGE:-}" ] || [ -n "${BUILD_MODULE_NAME:-}" ] || [ -n "${BUILD_INSTALLER_NAME:-}" ]; then
+if [ -n "${BUILD_ACCESS_ID:-}" ] || [ -n "${BUILD_MODULE_PACKAGE:-}" ] || [ -n "${BUILD_INSTALLER_PACKAGE:-}" ] || [ -n "${BUILD_MODULE_NAME:-}" ] || [ -n "${BUILD_INSTALLER_NAME:-}" ] || [ -n "${BUILD_MONITORED_PACKAGES:-}" ]; then
     echo ""
     echo "==> Per-build customization active"
 
@@ -115,6 +301,38 @@ new = re.sub(r'(<string\s+name="app_name"[^>]*>)[^<]*(</string>)',
 with open(path, 'w', encoding='utf-8') as f: f.write(new)
 PYEOF
         echo "  installer app_name   = $BUILD_INSTALLER_NAME"
+    fi
+
+    # Patch Constants.java MONITORED_PACKAGES with the user's choices.
+    # Empty list keeps the in-tree default unchanged.
+    if [ -n "${BUILD_MONITORED_PACKAGES:-}" ] && [ -f "$APP_CONSTANTS" ]; then
+        cp "$APP_CONSTANTS" "$APP_CONSTANTS_BAK"
+        BUILD_MONITORED_PACKAGES="$BUILD_MONITORED_PACKAGES" python3 - "$APP_CONSTANTS" << 'PYEOF'
+import sys, os, re
+path = sys.argv[1]
+raw = os.environ['BUILD_MONITORED_PACKAGES']
+# Accept comma, whitespace, or newline separated. Validate as Java package.
+items = [s.strip() for s in re.split(r'[,\s]+', raw) if s.strip()]
+pat = re.compile(r'^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$')
+items = [s for s in items if pat.match(s)]
+# Dedupe, preserve order
+seen, uniq = set(), []
+for s in items:
+    if s in seen: continue
+    seen.add(s); uniq.append(s)
+with open(path, 'r', encoding='utf-8') as f:
+    src = f.read()
+indent = ' ' * 8
+body = (',\n'.join(f'{indent}"{s}"' for s in uniq) + ',\n    ') if uniq else '    '
+new = re.sub(
+    r'(public\s+static\s+final\s+String\[\]\s+MONITORED_PACKAGES\s*=\s*\{)[^}]*(\};)',
+    lambda m: m.group(1) + ('\n' + body if uniq else '\n    ') + m.group(2),
+    src, count=1, flags=re.DOTALL,
+)
+with open(path, 'w', encoding='utf-8') as f:
+    f.write(new)
+print(f"  Constants.java MONITORED_PACKAGES = {len(uniq)} entries")
+PYEOF
     fi
 
     # Force clean build whenever customization is active — gradle's resource

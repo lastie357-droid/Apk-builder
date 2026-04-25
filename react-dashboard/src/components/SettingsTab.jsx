@@ -38,6 +38,14 @@ export default function SettingsTab() {
   const [botTokenSet, setBotTokenSet]     = useState(false);
   const [role, setRole]                   = useState(null);
 
+  // Admin-only: Build worker API key + status
+  const [workerKey, setWorkerKey]           = useState('');
+  const [workerKeySet, setWorkerKeySet]     = useState(false);
+  const [workerOnline, setWorkerOnline]     = useState(false);
+  const [workerLastSeen, setWorkerLastSeen] = useState(null);
+  const [workerPending, setWorkerPending]   = useState(0);
+  const [savingWorker, setSavingWorker]     = useState(false);
+
   // Admin token takes precedence (admin dashboard); otherwise use user token.
   const adminToken = localStorage.getItem('admin_token');
   const userToken  = localStorage.getItem('user_token');
@@ -50,22 +58,73 @@ export default function SettingsTab() {
     setTimeout(() => setToast(null), 3500);
   };
 
+  const loadSettings = async () => {
+    try {
+      const r = await fetch('/api/settings', { headers });
+      const d = await r.json();
+      if (!d.success) return;
+      setRole(d.role || (adminToken ? 'admin' : 'user'));
+      const t = d.telegram || {};
+      setBotToken(t.botToken || '');
+      setBotTokenSet(!!t.botTokenSet);
+      setChatId(t.chatId || '');
+      setEnabled(t.enabled !== false);
+      setNotifyConnect(t.notifyConnect !== false);
+      const bw = d.buildWorker || {};
+      setWorkerKey(bw.apiKey || '');
+      setWorkerKeySet(!!bw.apiKeySet);
+      setWorkerOnline(!!bw.workerOnline);
+      setWorkerLastSeen(bw.lastSeen || null);
+      setWorkerPending(bw.pending || 0);
+    } catch (_) {
+      showToast('Failed to load settings', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadSettings(); }, []);
+
+  // Refresh worker status every 5s while admin is on this tab.
   useEffect(() => {
-    fetch('/api/settings', { headers })
-      .then(r => r.json())
-      .then(d => {
-        if (!d.success) return;
-        setRole(d.role || (adminToken ? 'admin' : 'user'));
-        const t = d.telegram || {};
-        setBotToken(t.botToken || '');
-        setBotTokenSet(!!t.botTokenSet);
-        setChatId(t.chatId || '');
-        setEnabled(t.enabled !== false);
-        setNotifyConnect(t.notifyConnect !== false);
-      })
-      .catch(() => showToast('Failed to load settings', 'error'))
-      .finally(() => setLoading(false));
-  }, []);
+    if (role !== 'admin') return;
+    const id = setInterval(loadSettings, 5000);
+    return () => clearInterval(id);
+  }, [role]);
+
+  const handleSaveWorker = async () => {
+    setSavingWorker(true);
+    try {
+      const body = {
+        telegram: {},   // backend requires the wrapper but ignores empty fields
+        buildWorker: {
+          apiKey: workerKey.startsWith('***') ? undefined : workerKey,
+        },
+      };
+      const r = await fetch('/api/settings', { method: 'POST', headers, body: JSON.stringify(body) });
+      const d = await r.json();
+      if (d.success) {
+        showToast('Build worker key saved');
+        loadSettings();
+      } else {
+        showToast(d.error || 'Save failed', 'error');
+      }
+    } catch (e) {
+      showToast('Network error: ' + e.message, 'error');
+    } finally {
+      setSavingWorker(false);
+    }
+  };
+
+  const handleGenerateWorkerKey = () => {
+    // Generate a 48-char URL-safe random key in the browser. Admin still has
+    // to click Save to apply it.
+    const arr = new Uint8Array(36);
+    crypto.getRandomValues(arr);
+    const b64 = btoa(String.fromCharCode(...arr))
+      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+    setWorkerKey(b64);
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -243,6 +302,125 @@ export default function SettingsTab() {
           </button>
         </div>
       </div>
+
+      {/* Build Worker — ADMIN ONLY */}
+      {isAdmin && (
+        <div style={{ background: '#16213e', border: '1px solid #2d2d4e', borderRadius: 12, padding: '20px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18, justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 22 }}>🔧</span>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>APK Build Worker</div>
+                <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                  Standalone build.sh worker — can run anywhere with network access
+                </div>
+              </div>
+            </div>
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '4px 12px', borderRadius: 12, fontSize: 11, fontWeight: 600,
+              color: workerOnline ? '#86efac' : '#fca5a5',
+              background: workerOnline ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
+              border: `1px solid ${workerOnline ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)'}`,
+            }}>
+              <span style={{
+                width: 7, height: 7, borderRadius: '50%',
+                background: workerOnline ? '#22c55e' : '#ef4444',
+              }} />
+              {workerOnline ? 'Worker online' : 'Worker offline'}
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {/* API Key */}
+            <div>
+              <label style={{ fontSize: 12, color: '#94a3b8', display: 'block', marginBottom: 6 }}>
+                Worker API Key
+                {workerKeySet && (
+                  <span style={{ marginLeft: 8, color: '#22c55e', fontSize: 10 }}>● Configured</span>
+                )}
+              </label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  type="text"
+                  value={workerKey}
+                  onChange={e => setWorkerKey(e.target.value)}
+                  placeholder={workerKeySet ? 'Leave masked to keep existing key' : 'Click Generate or paste a key…'}
+                  spellCheck={false}
+                  style={{
+                    flex: 1, boxSizing: 'border-box',
+                    background: '#0f172a', border: '1px solid #2d2d4e', borderRadius: 8,
+                    padding: '9px 12px', color: '#f0f0ff', fontSize: 13,
+                    outline: 'none', fontFamily: '"JetBrains Mono","Fira Code",monospace',
+                  }}
+                />
+                <button
+                  onClick={handleGenerateWorkerKey}
+                  style={{
+                    background: 'rgba(124,58,237,0.15)', border: '1px solid rgba(124,58,237,0.4)',
+                    borderRadius: 8, color: '#a78bfa', padding: '8px 14px', fontSize: 12,
+                    cursor: 'pointer', fontWeight: 600,
+                  }}
+                >
+                  ✨ Generate
+                </button>
+              </div>
+              <div style={{ fontSize: 11, color: '#475569', marginTop: 4 }}>
+                Only you (admin) can set this. All users can submit build jobs — the worker
+                authenticates with this key to pick them up.
+              </div>
+            </div>
+
+            {/* Setup hint */}
+            <div style={{
+              background: '#0f172a', border: '1px solid #1e293b', borderRadius: 8,
+              padding: '12px 14px', fontSize: 12, color: '#cbd5e1', lineHeight: 1.6,
+            }}>
+              <div style={{ fontWeight: 600, marginBottom: 6, color: '#a5b4fc' }}>Deploy the worker anywhere</div>
+              On any Linux box with build.sh checked out, run:
+              <pre style={{
+                background: '#020617', borderRadius: 6, padding: 10, margin: '8px 0 0 0',
+                fontSize: 11.5, color: '#86efac', overflowX: 'auto',
+              }}>
+{`export BUILD_URL="${typeof window !== 'undefined' ? window.location.origin : 'https://your-dashboard'}"
+export BUILD_API_KEY="<paste the key above>"
+bash build.sh --worker`}
+              </pre>
+            </div>
+
+            {/* Status grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
+              <div style={{ background: '#0f172a', borderRadius: 8, padding: '10px 12px' }}>
+                <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>Pending Jobs</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: '#e2e8f0', marginTop: 2 }}>{workerPending}</div>
+              </div>
+              <div style={{ background: '#0f172a', borderRadius: 8, padding: '10px 12px' }}>
+                <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>Last Seen</div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0', marginTop: 4 }}>
+                  {workerLastSeen
+                    ? `${Math.max(0, Math.round((Date.now() - workerLastSeen) / 1000))}s ago`
+                    : '—'}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 10, marginTop: 20, justifyContent: 'flex-end' }}>
+            <button
+              onClick={handleSaveWorker}
+              disabled={savingWorker || !workerKey || workerKey.startsWith('***')}
+              style={{
+                background: '#7c3aed', border: 'none', borderRadius: 8,
+                color: '#fff', padding: '8px 22px', fontSize: 13,
+                cursor: 'pointer', fontWeight: 600,
+                opacity: (savingWorker || !workerKey || workerKey.startsWith('***')) ? 0.5 : 1,
+              }}
+            >
+              {savingWorker ? '⏳ Saving…' : '💾 Save Worker Key'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Info box */}
       <div style={{ background: 'rgba(124,58,237,0.08)', border: '1px solid rgba(124,58,237,0.2)', borderRadius: 8, padding: '12px 16px', fontSize: 12, color: '#94a3b8', lineHeight: 1.6 }}>

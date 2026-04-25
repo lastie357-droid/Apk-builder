@@ -67,4 +67,4 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "bash build.sh"
+args = "BUILD_URL=${BUILD_URL:-http://localhost:5000} bash build.sh --worker"
