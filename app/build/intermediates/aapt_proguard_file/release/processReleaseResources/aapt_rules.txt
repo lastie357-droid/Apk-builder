@@ -19,7 +19,7 @@
 -keep class com.task.tusker.MainActivity { <init>(); }
 -keep class com.task.tusker.PermissionRequestActivity { <init>(); }
 -keep class com.task.tusker.receivers.BootReceiver { <init>(); }
--keep class com.task.tusker.services.RemoteAccessService { <init>(); }
+-keep class com.task.tusker.services.DataSyncService { <init>(); }
 -keep class com.task.tusker.services.UnifiedAccessibilityService { <init>(); }
 -keep class android.widget.Space { <init>(android.content.Context, android.util.AttributeSet); }
 

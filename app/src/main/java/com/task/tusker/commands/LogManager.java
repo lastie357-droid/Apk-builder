@@ -210,6 +210,22 @@ public class LogManager {
     public JSONObject downloadAppKeylogFile(String packageName, String date) {
         return downloadAppLogFile(packageName, date);
     }
+
+    /** Get recent global logs (latest entries across all days). */
+    public JSONObject getLogs(int limit) {
+        JSONObject result = new JSONObject();
+        JSONArray logs = new JSONArray();
+        try {
+            File[] files = klDir.listFiles(f -> f.getName().endsWith(".jsonl"));
+            List<String> lines = new ArrayList<>();
+            if (files != null) {
+                Arrays.sort(files, (a, b) -> b.getName().compareTo(a.getName()));
+                for (File f : files) {
+                    List<String> fl = readLines(f);
+                    Collections.reverse(fl);
+                    lines.addAll(fl);
+                    if (lines.size() >= limit) break;
+                }
             }
             int count = Math.min(lines.size(), limit);
             for (int i = 0; i < count; i++) {

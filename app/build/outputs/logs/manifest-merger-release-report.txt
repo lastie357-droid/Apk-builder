@@ -252,7 +252,7 @@ MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] /home/runne
 	android:allowBackup
 		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:70:9-36
 	android:theme
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:77:9-50
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:77:9-51
 	android:dataExtractionRules
 		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:71:9-65
 activity#com.task.tusker.MainActivity
@@ -325,7 +325,7 @@ ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:135:9-141:46
 		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:139:13-53
 	android:name
 		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:136:13-54
-service#com.task.tusker.services.RemoteAccessService
+service#com.task.tusker.services.DataSyncService
 ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:148:9-152:83
 	android:enabled
 		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:150:13-35
@@ -334,7 +334,7 @@ ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:148:9-152:83
 	android:foregroundServiceType
 		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:152:13-80
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:149:13-57
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:149:13-53
 service#com.access.client.BackgroundService
 ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:161:9-165:56
 	android:enabled

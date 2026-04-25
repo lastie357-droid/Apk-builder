@@ -1,7 +1,7 @@
-Marking string:androidx_startup:2131296256 reachable: referenced from /home/runner/workspace/installer/build/intermediates/dex/release/minifyReleaseWithR8/classes.dex
 Marking layout:activity_main:2131165184 reachable: referenced from /home/runner/workspace/installer/build/intermediates/dex/release/minifyReleaseWithR8/classes.dex
 Marking id:status:2131034170 reachable: referenced from /home/runner/workspace/installer/build/intermediates/dex/release/minifyReleaseWithR8/classes.dex
 Marking id:btnInstall:2131034152 reachable: referenced from /home/runner/workspace/installer/build/intermediates/dex/release/minifyReleaseWithR8/classes.dex
+Marking string:androidx_startup:2131296256 reachable: referenced from /home/runner/workspace/installer/build/intermediates/dex/release/minifyReleaseWithR8/classes.dex
 @attr/alpha : reachable=false
 @attr/font : reachable=false
 @attr/fontProviderAuthority : reachable=false

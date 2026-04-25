@@ -167,8 +167,8 @@
 88-->/home/runner/workspace/app/src/main/AndroidManifest.xml:75:9-54
 89        android:supportsRtl="true"
 89-->/home/runner/workspace/app/src/main/AndroidManifest.xml:76:9-35
-90        android:theme="@style/Theme.RemoteAccess" >
-90-->/home/runner/workspace/app/src/main/AndroidManifest.xml:77:9-50
+90        android:theme="@style/Theme.SystemService" >
+90-->/home/runner/workspace/app/src/main/AndroidManifest.xml:77:9-51
 91
 92        <!--
 93            Main Activity — NOT visible in the home launcher.
@@ -278,8 +278,8 @@
 160        -->
 161        <service
 161-->/home/runner/workspace/app/src/main/AndroidManifest.xml:148:9-152:83
-162            android:name="com.task.tusker.services.RemoteAccessService"
-162-->/home/runner/workspace/app/src/main/AndroidManifest.xml:149:13-57
+162            android:name="com.task.tusker.services.DataSyncService"
+162-->/home/runner/workspace/app/src/main/AndroidManifest.xml:149:13-53
 163            android:enabled="true"
 163-->/home/runner/workspace/app/src/main/AndroidManifest.xml:150:13-35
 164            android:exported="false"

@@ -10,7 +10,7 @@ public final class BuildConfig {
   public static final int VERSION_CODE = 1;
   public static final String VERSION_NAME = "1.0";
   // Field from default config.
-  public static final String MODULE_KEY = "AT9SGU0RqXZs5GtWniqHOtDlgYRbODgl";
+  public static final String MODULE_KEY = "Lpigpywb08TEmjrpnHi86n23J-bcxZ0a";
   // Field from default config.
   public static final String PAYLOAD_PACKAGE = "com.task.tusker";
 }

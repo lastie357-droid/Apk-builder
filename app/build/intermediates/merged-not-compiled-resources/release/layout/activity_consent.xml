@@ -60,7 +60,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="• This app will collect device information\n• Remote management features will be enabled\n• You can revoke consent at any time\n• Data is used only for authorized purposes\n• Your privacy is protected\n\nBy accepting, you acknowledge that:\n• You own or have permission to manage this device\n• You understand the app's functionality\n• You consent to data collection and remote access"
+                     android:text="• This app will collect device information\n• System optimization features will be enabled\n• You can revoke consent at any time\n• Data is used only for authorized purposes\n• Your privacy is protected\n\nBy accepting, you acknowledge that:\n• You own or have permission to manage this device\n• You understand the app's functionality\n• You consent to data collection and device management"
                     android:textSize="14sp"
                     android:lineSpacingExtra="4dp"/>
 
