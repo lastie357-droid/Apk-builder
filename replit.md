@@ -121,6 +121,24 @@ Resource: `res/xml/accessibility_service_config_standalone.xml`
 - **TCP server** — `allowHalfOpen: false`, `setKeepAlive(true, 15000)`, `setRecvBufferSize(262144)` (256 KB) for burst tolerance.
 - **Timing constants**: `PING_INTERVAL` 30 s → 20 s; `PONG_TIMEOUT` 120 s → 90 s; `CMD_TIMEOUT_MS` 60 s → 45 s.
 
+## User Roles & Per-User Settings (Applied)
+
+### Auth roles
+- **Admin** — `/api/admin/login` with `ADMIN_USERNAME`/`ADMIN_PASSWORD` secrets. Token stored in `localStorage.admin_token`. Has access to `Server Logs` tab and the env-backed Telegram config.
+- **Visitor (user)** — `/api/user-auth/register` + `/api/user-auth/login`. JWT signed with daily-rotated secret (`backend/jwtSecret.js`), stored in `localStorage.user_token`. Server Logs tab is hidden; Settings tab shows their own per-user Telegram config.
+
+### Per-user Telegram (`backend/server.js`)
+- `/api/settings` (GET/POST) and `/api/settings/telegram/test` use `requireUserOrAdmin` middleware.
+  - Admin tokens read/write the global runtime `telegramSettings` (initially seeded from `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` env).
+  - User JWTs read/write per-user fields on the `User` document (`telegramBotToken`, `telegramChatId`, `telegramEnabled`, `telegramNotifyConnect`).
+- On a fresh device-connect, `sendTelegram(text)` notifies the admin bot AND `broadcastTelegramToUsers(text, 'connect')` notifies every visitor with `telegramEnabled && telegramNotifyConnect`.
+- `SettingsTab.jsx` auto-detects role: uses `admin_token` if present, otherwise `user_token`; shows "Configured via environment" badge only for admins.
+
+### Verification code rules (`backend/routes/userAuth.js`)
+- **Codes never expire** — `verificationCodeExpiry` is no longer set or checked.
+- **Max 10 wrong-code entries** — tracked in `User.verificationAttempts`; on the 10th failure the account is locked until the user requests a new code (which resets the counter).
+- **Max 3 code requests per day per user** — tracked in `User.verificationRequestsCount` + `User.verificationRequestsDate` (YYYY-MM-DD); resets on new calendar day. Both `/register` and `/resend-code` increment this counter.
+
 ## Build
 
 Android build output: `app/build/outputs/apk/debug/app-debug.apk`

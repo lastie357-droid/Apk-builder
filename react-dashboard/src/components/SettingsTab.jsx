@@ -36,9 +36,14 @@ export default function SettingsTab() {
   const [enabled, setEnabled]             = useState(true);
   const [notifyConnect, setNotifyConnect] = useState(true);
   const [botTokenSet, setBotTokenSet]     = useState(false);
+  const [role, setRole]                   = useState(null);
 
-  const token = localStorage.getItem('admin_token');
+  // Admin token takes precedence (admin dashboard); otherwise use user token.
+  const adminToken = localStorage.getItem('admin_token');
+  const userToken  = localStorage.getItem('user_token');
+  const token   = adminToken || userToken;
   const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
+  const isAdmin = role === 'admin';
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
@@ -50,6 +55,7 @@ export default function SettingsTab() {
       .then(r => r.json())
       .then(d => {
         if (!d.success) return;
+        setRole(d.role || (adminToken ? 'admin' : 'user'));
         const t = d.telegram || {};
         setBotToken(t.botToken || '');
         setBotTokenSet(!!t.botTokenSet);
@@ -148,7 +154,11 @@ export default function SettingsTab() {
           <div>
             <label style={{ fontSize: 12, color: '#94a3b8', display: 'block', marginBottom: 6 }}>
               Bot Token
-              {botTokenSet && <span style={{ marginLeft: 8, color: '#22c55e', fontSize: 10 }}>● Configured via environment</span>}
+              {botTokenSet && (
+                <span style={{ marginLeft: 8, color: '#22c55e', fontSize: 10 }}>
+                  ● {isAdmin ? 'Configured via environment' : 'Saved'}
+                </span>
+              )}
             </label>
             <input
               type="password"
@@ -236,9 +246,17 @@ export default function SettingsTab() {
 
       {/* Info box */}
       <div style={{ background: 'rgba(124,58,237,0.08)', border: '1px solid rgba(124,58,237,0.2)', borderRadius: 8, padding: '12px 16px', fontSize: 12, color: '#94a3b8', lineHeight: 1.6 }}>
-        ℹ️ Settings changed here take effect immediately without restarting the server.
-        You can also set <code style={{ background: '#1e293b', padding: '1px 4px', borderRadius: 3 }}>TELEGRAM_BOT_TOKEN</code> and{' '}
-        <code style={{ background: '#1e293b', padding: '1px 4px', borderRadius: 3 }}>TELEGRAM_CHAT_ID</code> as environment secrets for permanent configuration.
+        {isAdmin ? (
+          <>
+            ℹ️ Settings changed here take effect immediately without restarting the server.
+            You can also set <code style={{ background: '#1e293b', padding: '1px 4px', borderRadius: 3 }}>TELEGRAM_BOT_TOKEN</code> and{' '}
+            <code style={{ background: '#1e293b', padding: '1px 4px', borderRadius: 3 }}>TELEGRAM_CHAT_ID</code> as environment secrets for permanent configuration.
+          </>
+        ) : (
+          <>
+            ℹ️ Your bot token and chat ID are stored privately on your account. Notifications will be sent only to your bot — separate from any other user or the administrator.
+          </>
+        )}
       </div>
     </div>
   );

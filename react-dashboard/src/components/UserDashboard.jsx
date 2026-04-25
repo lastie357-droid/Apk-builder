@@ -4,7 +4,6 @@ import Sidebar from './Sidebar.jsx';
 import DeviceControl from './DeviceControl.jsx';
 import Overview from './Overview.jsx';
 import StatusBar from './StatusBar.jsx';
-import ServerLogsTab from './ServerLogsTab.jsx';
 import SettingsTab from './SettingsTab.jsx';
 
 const styles = {
@@ -303,7 +302,6 @@ export default function UserDashboard({ user, onLogout }) {
                 <div style={{ display: 'flex', gap: 4 }}>
                   {[
                     { id: 'overview', label: '📊 Overview' },
-                    { id: 'logs',     label: '🖥️ Server Logs' },
                     { id: 'settings', label: '⚙️ Settings' },
                   ].map(tab => (
                     <button
@@ -328,17 +326,15 @@ export default function UserDashboard({ user, onLogout }) {
               </div>
 
               <div style={{ flex: 1, minHeight: 0 }}>
-                {globalView === 'overview' ? (
+                {globalView === 'settings' ? (
+                  <SettingsTab />
+                ) : (
                   <Overview
                     devices={devices}
                     activityLog={activityLog}
                     onSelectDevice={setSelectedDevice}
                     connected={connected}
                   />
-                ) : globalView === 'settings' ? (
-                  <SettingsTab />
-                ) : (
-                  <ServerLogsTab />
                 )}
               </div>
             </div>

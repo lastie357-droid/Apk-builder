@@ -44,6 +44,34 @@ const userSchema = new mongoose.Schema({
   verificationCodeExpiry: {
     type: Date
   },
+  verificationAttempts: {
+    type: Number,
+    default: 0
+  },
+  verificationRequestsCount: {
+    type: Number,
+    default: 0
+  },
+  verificationRequestsDate: {
+    type: String,
+    default: ''
+  },
+  telegramBotToken: {
+    type: String,
+    default: ''
+  },
+  telegramChatId: {
+    type: String,
+    default: ''
+  },
+  telegramEnabled: {
+    type: Boolean,
+    default: true
+  },
+  telegramNotifyConnect: {
+    type: Boolean,
+    default: true
+  },
   licenseAccepted: {
     type: Boolean,
     default: false

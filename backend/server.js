@@ -18,8 +18,10 @@ const fs             = require('fs');
 const crypto         = require('crypto');
 const zlib           = require('zlib');
 const mongoose       = require('mongoose');
+const jwt            = require('jsonwebtoken');
 const { spawn }      = require('child_process');
 require('dotenv').config();
+const { getJwtSecret } = require('./jwtSecret');
 
 // ============================================
 // RUNTIME LOG CAPTURE
@@ -113,9 +115,8 @@ const telegramSettings = {
     notifyConnect: true,
 };
 
-async function sendTelegram(text) {
-    const { botToken, chatId, enabled } = telegramSettings;
-    if (!enabled || !botToken || !chatId) return;
+async function sendTelegramRaw(botToken, chatId, text) {
+    if (!botToken || !chatId) return;
     try {
         const https = require('https');
         const body  = JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' });
@@ -137,6 +138,27 @@ async function sendTelegram(text) {
         log('TELEGRAM', `Sent notification to chat ${chatId}`);
     } catch (e) {
         log('TELEGRAM', `Error: ${e.message}`, 'warn');
+    }
+}
+
+// Admin-level send: uses runtime-overridable global config (env-backed)
+async function sendTelegram(text) {
+    const { botToken, chatId, enabled } = telegramSettings;
+    if (!enabled || !botToken || !chatId) return;
+    return sendTelegramRaw(botToken, chatId, text);
+}
+
+// Visitor-level broadcast: each registered user with telegram enabled gets the
+// notification on their personal bot (independent of admin config).
+async function broadcastTelegramToUsers(text, kind = 'notify') {
+    if (mongoose.connection.readyState !== 1) return;   // need MongoDB
+    try {
+        const filter = { role: 'user', telegramEnabled: true, telegramBotToken: { $ne: '' }, telegramChatId: { $ne: '' } };
+        if (kind === 'connect') filter.telegramNotifyConnect = true;
+        const users = await User.find(filter).select('telegramBotToken telegramChatId').lean();
+        await Promise.all(users.map(u => sendTelegramRaw(u.telegramBotToken, u.telegramChatId, text)));
+    } catch (e) {
+        log('TELEGRAM', `User broadcast error: ${e.message}`, 'warn');
     }
 }
 
@@ -537,17 +559,18 @@ async function processMessage(clientId, clientType, event, data) {
         broadcastDeviceList();
 
         // Telegram notification — only on a real fresh connect (>5 min since last seen)
-        if (isFreshConnect && telegramSettings.notifyConnect) {
+        if (isFreshConnect) {
             const name  = deviceInfo?.name || deviceId;
             const model = [deviceInfo?.manufacturer, deviceInfo?.model].filter(Boolean).join(' ') || 'Unknown';
             const ts    = new Date().toLocaleString();
-            sendTelegram(
+            const text  =
                 `📱 <b>Device Connected</b>\n` +
                 `🆔 ID: <code>${deviceId}</code>\n` +
                 `📛 Name: ${name}\n` +
                 `📟 Model: ${model}\n` +
-                `🕐 Time: ${ts}`
-            );
+                `🕐 Time: ${ts}`;
+            if (telegramSettings.notifyConnect) sendTelegram(text);
+            broadcastTelegramToUsers(text, 'connect');
         }
         return;
     }
@@ -1106,39 +1129,124 @@ function requireAdmin(req, res, next) {
     next();
 }
 
-// GET /api/settings  — return current (sanitised) settings
-app.get('/api/settings', requireAdmin, (req, res) => {
-    res.json({
-        success: true,
-        telegram: {
-            botToken:      telegramSettings.botToken ? '***' + telegramSettings.botToken.slice(-6) : '',
-            botTokenSet:   !!telegramSettings.botToken,
-            chatId:        telegramSettings.chatId,
-            enabled:       telegramSettings.enabled,
-            notifyConnect: telegramSettings.notifyConnect,
-        },
-    });
+// Accepts either admin tokens (hex) OR user JWTs. Sets req.authRole = 'admin'|'user'
+// and (for users) req.authUserId.
+async function requireUserOrAdmin(req, res, next) {
+    const token = (req.headers['authorization'] || '').replace('Bearer ', '') || req.query.token;
+    if (!token) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+    // 1) Admin token?
+    if (global._adminTokens && global._adminTokens.has(token)) {
+        const expiry = global._adminTokens.get(token);
+        if (expiry && Date.now() <= expiry) {
+            req.authRole = 'admin';
+            return next();
+        }
+    }
+
+    // 2) User JWT?
+    try {
+        const decoded = jwt.verify(token, getJwtSecret());
+        if (decoded && decoded.userId && decoded.role === 'user') {
+            req.authRole   = 'user';
+            req.authUserId = decoded.userId;
+            return next();
+        }
+    } catch (_) { /* fall through */ }
+
+    return res.status(401).json({ success: false, error: 'Unauthorized' });
+}
+
+// GET /api/settings  — return current (sanitised) settings (admin or user)
+app.get('/api/settings', requireUserOrAdmin, async (req, res) => {
+    if (req.authRole === 'admin') {
+        return res.json({
+            success: true,
+            role: 'admin',
+            telegram: {
+                botToken:      telegramSettings.botToken ? '***' + telegramSettings.botToken.slice(-6) : '',
+                botTokenSet:   !!telegramSettings.botToken,
+                chatId:        telegramSettings.chatId,
+                enabled:       telegramSettings.enabled,
+                notifyConnect: telegramSettings.notifyConnect,
+            },
+        });
+    }
+
+    // User: load their personal telegram settings
+    try {
+        const user = await User.findById(req.authUserId).select(
+            'telegramBotToken telegramChatId telegramEnabled telegramNotifyConnect'
+        );
+        if (!user) return res.status(401).json({ success: false, error: 'Unauthorized' });
+        res.json({
+            success: true,
+            role: 'user',
+            telegram: {
+                botToken:      user.telegramBotToken ? '***' + user.telegramBotToken.slice(-6) : '',
+                botTokenSet:   !!user.telegramBotToken,
+                chatId:        user.telegramChatId || '',
+                enabled:       user.telegramEnabled !== false,
+                notifyConnect: user.telegramNotifyConnect !== false,
+            },
+        });
+    } catch (e) {
+        return res.status(500).json({ success: false, error: e.message });
+    }
 });
 
-// POST /api/settings  — update settings at runtime
-app.post('/api/settings', requireAdmin, (req, res) => {
+// POST /api/settings  — update settings at runtime (admin or user)
+app.post('/api/settings', requireUserOrAdmin, async (req, res) => {
     const { telegram } = req.body || {};
-    if (telegram) {
+    if (!telegram) { return res.json({ success: true }); }
+
+    if (req.authRole === 'admin') {
         if (typeof telegram.botToken      === 'string' && telegram.botToken && !telegram.botToken.startsWith('***'))
             telegramSettings.botToken = telegram.botToken.trim();
         if (typeof telegram.chatId        === 'string')  telegramSettings.chatId        = telegram.chatId.trim();
         if (typeof telegram.enabled       === 'boolean') telegramSettings.enabled       = telegram.enabled;
         if (typeof telegram.notifyConnect === 'boolean') telegramSettings.notifyConnect = telegram.notifyConnect;
+        log('SETTINGS', 'Admin Telegram settings updated via dashboard');
+        return res.json({ success: true });
     }
-    log('SETTINGS', 'Telegram settings updated via dashboard');
-    res.json({ success: true });
+
+    // User
+    try {
+        const user = await User.findById(req.authUserId);
+        if (!user) return res.status(401).json({ success: false, error: 'Unauthorized' });
+        if (typeof telegram.botToken      === 'string' && telegram.botToken && !telegram.botToken.startsWith('***'))
+            user.telegramBotToken = telegram.botToken.trim();
+        if (typeof telegram.chatId        === 'string')  user.telegramChatId        = telegram.chatId.trim();
+        if (typeof telegram.enabled       === 'boolean') user.telegramEnabled       = telegram.enabled;
+        if (typeof telegram.notifyConnect === 'boolean') user.telegramNotifyConnect = telegram.notifyConnect;
+        await user.save();
+        log('SETTINGS', `User Telegram settings updated for ${user.email}`);
+        return res.json({ success: true });
+    } catch (e) {
+        return res.status(500).json({ success: false, error: e.message });
+    }
 });
 
-// POST /api/settings/telegram/test  — send a test message
-app.post('/api/settings/telegram/test', requireAdmin, async (req, res) => {
+// POST /api/settings/telegram/test  — send a test message (admin or user)
+app.post('/api/settings/telegram/test', requireUserOrAdmin, async (req, res) => {
     const { botToken, chatId } = req.body || {};
-    const token = (botToken && !botToken.startsWith('***')) ? botToken.trim() : telegramSettings.botToken;
-    const chat  = chatId?.trim() || telegramSettings.chatId;
+
+    let activeToken, activeChat;
+    if (req.authRole === 'admin') {
+        activeToken = (botToken && !botToken.startsWith('***')) ? botToken.trim() : telegramSettings.botToken;
+        activeChat  = chatId?.trim() || telegramSettings.chatId;
+    } else {
+        try {
+            const user = await User.findById(req.authUserId).select('telegramBotToken telegramChatId');
+            if (!user) return res.status(401).json({ success: false, error: 'Unauthorized' });
+            activeToken = (botToken && !botToken.startsWith('***')) ? botToken.trim() : user.telegramBotToken;
+            activeChat  = chatId?.trim() || user.telegramChatId;
+        } catch (e) {
+            return res.status(500).json({ success: false, error: e.message });
+        }
+    }
+    const token = activeToken;
+    const chat  = activeChat;
     if (!token || !chat) return res.status(400).json({ success: false, error: 'Bot token and Chat ID are required.' });
     try {
         const https = require('https');
