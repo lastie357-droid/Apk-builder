@@ -13230,7 +13230,6 @@ com.task.tusker.permissions.AutoPermissionManager:
     public static void requestManageExternalStorage()
 com.task.tusker.services.RemoteAccessService:
     public static void connectToServer()
-    public static android.app.Notification createNotification()
     public static void createNotificationChannel()
 com.task.tusker.services.UnifiedAccessibilityService$$InternalSyntheticLambda$4$334904be5b4691b4d60b1f955cc414b5347a734027de08854fc1075d88be988a$0:
     public final synthetic java.lang.String f$1

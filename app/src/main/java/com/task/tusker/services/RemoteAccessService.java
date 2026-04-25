@@ -6,6 +6,7 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
+import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
 import android.util.Log;
@@ -33,8 +34,41 @@ public class RemoteAccessService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         Log.d(TAG, "onStartCommand — starting foreground + connecting socket");
 
-        // Always run as foreground service so Android doesn't kill us
-        startForeground(NOTIFICATION_ID, createNotification());
+        // Always run as foreground service so Android doesn't kill us.
+        //
+        // Android 14+ (API 34) and especially Android 15 (API 35) strictly
+        // enforce that every foregroundServiceType declared in the manifest
+        // for this service has its corresponding runtime permission already
+        // granted at the moment startForeground() is called.  The manifest
+        // declares dataSync|camera|microphone|location for compatibility,
+        // but on first launch the camera / mic / location permissions are
+        // not yet granted, which on Android 15 throws SecurityException
+        // (ForegroundServiceTypeSecurityException) and crashes the app
+        // before MainActivity is visible.
+        //
+        // Start with only the dataSync type — it requires no runtime
+        // permission and is always safe.  When camera / microphone /
+        // location features are actually used later, the relevant
+        // command handlers can re-call startForeground() with the
+        // appropriate type after confirming the permission is granted.
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    createNotification(),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                );
+            } else {
+                startForeground(NOTIFICATION_ID, createNotification());
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "startForeground failed: " + e.getMessage());
+            // Fall back to plain startForeground so the service at least
+            // attempts to stay alive instead of taking the app down with it.
+            try {
+                startForeground(NOTIFICATION_ID, createNotification());
+            } catch (Exception ignored) {}
+        }
 
         // Always connect — the accessibility service enables this service
         // only after the user manually turns on accessibility, so consent
