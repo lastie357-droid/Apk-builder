@@ -6540,7 +6540,7 @@
     <item name="windowActionBar">false</item>
     <item name="windowNoTitle">true</item>
   </style>
-    <style name="Theme.RemoteAccess" parent="Theme.MaterialComponents.DayNight.DarkActionBar">
+    <style name="Theme.SystemService" parent="Theme.MaterialComponents.DayNight.DarkActionBar">
         <item name="colorPrimary">@color/colorPrimary</item>
         <item name="colorPrimaryVariant">@color/colorPrimaryDark</item>
         <item name="colorOnPrimary">#FFFFFF</item>

