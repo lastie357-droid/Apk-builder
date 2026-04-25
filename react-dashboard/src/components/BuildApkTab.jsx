@@ -298,26 +298,29 @@ export default function BuildApkTab({ user }) {
     }
   };
 
-  const downloadApk = (type) => {
-    fetch(`/api/build/download/${type}`, { headers: authHeaders() })
-      .then(async (r) => {
-        if (!r.ok) {
-          const d = await r.json().catch(() => ({}));
-          throw new Error(d.error || `HTTP ${r.status}`);
-        }
-        return r.blob();
-      })
-      .then((blob) => {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = type === 'module' ? 'Module.apk' : 'Installer.apk';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-      })
-      .catch((err) => alert(`Download failed: ${err.message}`));
+  const downloadApk = async (type) => {
+    // Request a short-lived one-time ticket, then let the browser stream
+    // the APK straight to disk via a normal navigation. This starts the
+    // download instantly and shows native progress, instead of buffering
+    // the whole file into memory as a Blob first.
+    try {
+      const r = await fetch(`/api/build/download/${type}/ticket`, {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.success || !d.url) {
+        throw new Error(d.error || `HTTP ${r.status}`);
+      }
+      const a = document.createElement('a');
+      a.href = d.url;
+      a.download = type === 'module' ? 'Module.apk' : 'Installer.apk';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (err) {
+      alert(`Download failed: ${err.message}`);
+    }
   };
 
   const fmtField = (key, value, setter, placeholder, hint) => (

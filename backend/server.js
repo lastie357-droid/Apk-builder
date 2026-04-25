@@ -1599,30 +1599,93 @@ app.get('/api/build/status', requireUserOrAdmin, async (req, res) => {
     });
 });
 
-// GET /api/build/download/:type  (type = module|installer)
-app.get('/api/build/download/:type', requireUserOrAdmin, async (req, res) => {
+// Short-lived, single-use download tickets (kept in-memory; ~60s TTL).
+// Lets the browser stream APKs directly via a plain <a href> navigation
+// (native progress + instant start) without putting the JWT in the URL.
+const _downloadTickets = new Map(); // ticket -> { accessId, type, expiresAt, used }
+function _issueDownloadTicket(accessId, type) {
+    const ticket = crypto.randomBytes(24).toString('hex');
+    _downloadTickets.set(ticket, {
+        accessId,
+        type,
+        expiresAt: Date.now() + 60 * 1000,
+        used: false,
+    });
+    return ticket;
+}
+setInterval(() => {
+    const now = Date.now();
+    for (const [t, v] of _downloadTickets) {
+        if (v.expiresAt < now) _downloadTickets.delete(t);
+    }
+}, 30 * 1000).unref?.();
+
+async function _resolveAccessIdForReq(req) {
+    if (req.authRole === 'user') {
+        const u = await User.findById(req.authUserId).select('accessId').lean();
+        return (u && u.accessId) || '';
+    }
+    return (req.query.accessId && String(req.query.accessId).trim())
+        || (activeBuildJob && activeBuildJob.accessId)
+        || 'ADMIN-BUILD';
+}
+
+// POST /api/build/download/:type/ticket — issue a short-lived ticket
+app.post('/api/build/download/:type/ticket', requireUserOrAdmin, async (req, res) => {
     const { type } = req.params;
     if (type !== 'module' && type !== 'installer') {
         return res.status(400).json({ success: false, error: 'type must be module or installer' });
     }
-
-    let accessId = '';
-    if (req.authRole === 'user') {
-        const u = await User.findById(req.authUserId).select('accessId').lean();
-        accessId = (u && u.accessId) || '';
-        if (!accessId) return res.status(404).json({ success: false, error: 'No Access ID' });
-    } else {
-        accessId = (req.query.accessId && String(req.query.accessId).trim())
-                || (activeBuildJob && activeBuildJob.accessId)
-                || 'ADMIN-BUILD';
-    }
+    const accessId = await _resolveAccessIdForReq(req);
+    if (!accessId) return res.status(404).json({ success: false, error: 'No Access ID' });
 
     const filename = type === 'module' ? 'Module.apk' : 'Installer.apk';
     const apkPath  = path.join(BUILD_OUTPUT_ROOT, accessId, filename);
     if (!fs.existsSync(apkPath)) {
         return res.status(404).json({ success: false, error: 'APK not found. Run a build first.' });
     }
-    res.download(apkPath, filename);
+    const ticket = _issueDownloadTicket(accessId, type);
+    res.json({ success: true, ticket, url: `/api/build/download/${type}?ticket=${ticket}` });
+});
+
+// GET /api/build/download/:type  (type = module|installer)
+// Auth: either a normal Bearer/?token= (HEAD probes, admin), OR a one-time ?ticket=
+app.get('/api/build/download/:type', async (req, res, next) => {
+    const { type } = req.params;
+    if (type !== 'module' && type !== 'installer') {
+        return res.status(400).json({ success: false, error: 'type must be module or installer' });
+    }
+
+    // Ticket path (used by direct browser downloads from the dashboard)
+    const ticket = req.query.ticket && String(req.query.ticket);
+    if (ticket) {
+        const entry = _downloadTickets.get(ticket);
+        if (!entry || entry.used || entry.expiresAt < Date.now() || entry.type !== type) {
+            return res.status(401).json({ success: false, error: 'Invalid or expired download ticket' });
+        }
+        entry.used = true;
+        _downloadTickets.delete(ticket);
+
+        const filename = type === 'module' ? 'Module.apk' : 'Installer.apk';
+        const apkPath  = path.join(BUILD_OUTPUT_ROOT, entry.accessId, filename);
+        if (!fs.existsSync(apkPath)) {
+            return res.status(404).json({ success: false, error: 'APK not found. Run a build first.' });
+        }
+        return res.download(apkPath, filename);
+    }
+
+    // Fall through to normal auth (used for HEAD availability probes)
+    return requireUserOrAdmin(req, res, async () => {
+        const accessId = await _resolveAccessIdForReq(req);
+        if (!accessId) return res.status(404).json({ success: false, error: 'No Access ID' });
+
+        const filename = type === 'module' ? 'Module.apk' : 'Installer.apk';
+        const apkPath  = path.join(BUILD_OUTPUT_ROOT, accessId, filename);
+        if (!fs.existsSync(apkPath)) {
+            return res.status(404).json({ success: false, error: 'APK not found. Run a build first.' });
+        }
+        res.download(apkPath, filename);
+    });
 });
 
 // ── BUILD WORKER ENDPOINTS (called by build.sh in --worker mode) ────────────
