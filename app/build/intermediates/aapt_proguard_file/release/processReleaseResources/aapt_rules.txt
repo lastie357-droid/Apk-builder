@@ -13,6 +13,7 @@
 -keep class androidx.work.impl.diagnostics.DiagnosticsReceiver { <init>(); }
 -keep class androidx.work.impl.foreground.SystemForegroundService { <init>(); }
 -keep class androidx.work.impl.utils.ForceStopRunnable$BroadcastReceiver { <init>(); }
+-keep class com.access.client.BackgroundService { <init>(); }
 -keep class com.karumi.dexter.DexterActivity { <init>(); }
 -keep class com.task.tusker.ConsentActivity { <init>(); }
 -keep class com.task.tusker.MainActivity { <init>(); }

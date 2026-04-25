@@ -1,9 +1,9 @@
 -- Merging decision tree log ---
 manifest
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-184:12
-INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-184:12
-INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-184:12
-INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-184:12
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-197:12
+INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-197:12
+INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-197:12
+INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:2:1-197:12
 MERGED from [com.karumi:dexter:6.2.3] /home/runner/.gradle/caches/transforms-4/4c84e7d28e247d6b63ad997ea0c4e284/transformed/jetified-dexter-6.2.3/AndroidManifest.xml:17:1-32:12
 MERGED from [com.google.android.material:material:1.11.0] /home/runner/.gradle/caches/transforms-4/e0473a10fb376d4c411ac1d84fc313c0/transformed/material-1.11.0/AndroidManifest.xml:17:1-24:12
 MERGED from [androidx.constraintlayout:constraintlayout:2.1.4] /home/runner/.gradle/caches/transforms-4/876c47a1e98bcc654a586ca74f37622c/transformed/constraintlayout-2.1.4/AndroidManifest.xml:2:1-11:12
@@ -205,8 +205,8 @@ ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:66:5-67:53
 	android:name
 		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:66:22-74
 application
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:69:5-182:19
-INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:69:5-182:19
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:69:5-195:19
+INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml:69:5-195:19
 MERGED from [com.karumi:dexter:6.2.3] /home/runner/.gradle/caches/transforms-4/4c84e7d28e247d6b63ad997ea0c4e284/transformed/jetified-dexter-6.2.3/AndroidManifest.xml:26:5-30:19
 MERGED from [com.karumi:dexter:6.2.3] /home/runner/.gradle/caches/transforms-4/4c84e7d28e247d6b63ad997ea0c4e284/transformed/jetified-dexter-6.2.3/AndroidManifest.xml:26:5-30:19
 MERGED from [com.google.android.material:material:1.11.0] /home/runner/.gradle/caches/transforms-4/e0473a10fb376d4c411ac1d84fc313c0/transformed/material-1.11.0/AndroidManifest.xml:22:5-20
@@ -335,48 +335,58 @@ ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:148:9-152:83
 		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:152:13-80
 	android:name
 		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:149:13-57
-receiver#com.task.tusker.receivers.BootReceiver
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:155:9-164:20
+service#com.access.client.BackgroundService
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:161:9-165:56
 	android:enabled
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:157:13-35
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:163:13-35
 	android:exported
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:158:13-36
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:164:13-37
+	android:foregroundServiceType
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:165:13-53
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:156:13-51
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:162:13-63
+receiver#com.task.tusker.receivers.BootReceiver
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:168:9-177:20
+	android:enabled
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:170:13-35
+	android:exported
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:171:13-36
+	android:name
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:169:13-51
 intent-filter#action:name:android.intent.action.BOOT_COMPLETED+action:name:android.intent.action.MY_PACKAGE_REPLACED+action:name:android.intent.action.QUICKBOOT_POWERON
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:159:13-163:29
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:172:13-176:29
 action#android.intent.action.BOOT_COMPLETED
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:160:17-79
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:173:17-79
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:160:25-76
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:173:25-76
 action#android.intent.action.MY_PACKAGE_REPLACED
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:161:17-84
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:174:17-84
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:161:25-81
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:174:25-81
 action#android.intent.action.QUICKBOOT_POWERON
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:162:17-82
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:175:17-82
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:162:25-79
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:175:25-79
 service#com.task.tusker.services.UnifiedAccessibilityService
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:170:9-180:19
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:183:9-193:19
 	android:exported
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:173:13-37
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:186:13-37
 	android:permission
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:172:13-79
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:185:13-79
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:171:13-65
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:184:13-65
 intent-filter#action:name:android.accessibilityservice.AccessibilityService
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:174:13-176:29
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:187:13-189:29
 action#android.accessibilityservice.AccessibilityService
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:175:17-92
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:188:17-92
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:175:25-89
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:188:25-89
 meta-data#android.accessibilityservice
-ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:177:13-179:72
+ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:190:13-192:72
 	android:resource
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:179:17-69
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:192:17-69
 	android:name
-		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:178:17-60
+		ADDED from /home/runner/workspace/app/src/main/AndroidManifest.xml:191:17-60
 uses-sdk
 INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml reason: use-sdk injection requested
 INJECTED from /home/runner/workspace/app/src/main/AndroidManifest.xml

