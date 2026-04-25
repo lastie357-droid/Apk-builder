@@ -1,196 +1,86 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { useTcpStream } from './hooks/useTcpStream.js';
-import Sidebar from './components/Sidebar.jsx';
-import DeviceControl from './components/DeviceControl.jsx';
-import Overview from './components/Overview.jsx';
-import StatusBar from './components/StatusBar.jsx';
-import Login from './components/Login.jsx';
-import ServerLogsTab from './components/ServerLogsTab.jsx';
-import SettingsTab from './components/SettingsTab.jsx';
-import UserLogin from './components/UserLogin.jsx';
-import UserRegister from './components/UserRegister.jsx';
-import VerifyEmail from './components/VerifyEmail.jsx';
-import TermsAndConditions from './components/TermsAndConditions.jsx';
-import UserDashboard from './components/UserDashboard.jsx';
-import './App.css';
+import { useTcpStream } from '../hooks/useTcpStream.js';
+import Sidebar from './Sidebar.jsx';
+import DeviceControl from './DeviceControl.jsx';
+import Overview from './Overview.jsx';
+import StatusBar from './StatusBar.jsx';
+import ServerLogsTab from './ServerLogsTab.jsx';
+import SettingsTab from './SettingsTab.jsx';
 
-// ─── Determine initial mode from localStorage ───────────────────────────────
-function getInitialMode() {
-  if (localStorage.getItem('admin_token')) return 'admin';
-  if (localStorage.getItem('user_token'))  return 'user';
-  return 'user-login'; // default landing: user login
-}
+const styles = {
+  trialBanner: {
+    background: 'linear-gradient(90deg, rgba(99,102,241,0.15) 0%, rgba(139,92,246,0.15) 100%)',
+    border: '1px solid rgba(99,102,241,0.3)',
+    borderRadius: 8,
+    padding: '8px 16px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+    fontSize: 13,
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  trialLeft: {
+    color: '#a5b4fc',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+  },
+  trialRight: {
+    color: '#64748b',
+    fontSize: 12,
+  },
+  expiredBanner: {
+    background: 'rgba(239,68,68,0.1)',
+    border: '1px solid rgba(239,68,68,0.3)',
+    borderRadius: 8,
+    padding: '8px 16px',
+    color: '#f87171',
+    fontSize: 13,
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  userBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 6,
+    background: 'rgba(99,102,241,0.15)',
+    border: '1px solid rgba(99,102,241,0.3)',
+    borderRadius: 20,
+    padding: '3px 12px',
+    fontSize: 12,
+    color: '#a5b4fc',
+    fontWeight: 600,
+  },
+};
 
-// ─── Admin auth hook (unchanged) ────────────────────────────────────────────
-function useAdminAuth() {
-  const [authed, setAuthed] = useState(null);
-
-  useEffect(() => {
-    const token = localStorage.getItem('admin_token');
-    if (!token) { setAuthed(false); return; }
-    fetch('/api/admin/verify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token }),
-    })
-      .then(r => r.json())
-      .then(d => setAuthed(!!d.success))
-      .catch(() => setAuthed(false));
-  }, []);
-
-  const logout = () => {
-    localStorage.removeItem('admin_token');
-    setAuthed(false);
-  };
-
-  return { authed, setAuthed, logout };
-}
-
-// ─── User auth hook ──────────────────────────────────────────────────────────
-function useUserAuth() {
-  const [userAuthed, setUserAuthed] = useState(null);
-  const [userInfo, setUserInfo]     = useState(null);
-
-  useEffect(() => {
-    const token = localStorage.getItem('user_token');
-    if (!token) { setUserAuthed(false); return; }
-    fetch('/api/user-auth/me', {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(r => r.json())
-      .then(d => {
-        if (d.success) {
-          setUserAuthed(true);
-          setUserInfo(d.user);
-          localStorage.setItem('user_info', JSON.stringify(d.user));
-        } else {
-          localStorage.removeItem('user_token');
-          localStorage.removeItem('user_info');
-          setUserAuthed(false);
-        }
-      })
-      .catch(() => {
-        // If server unreachable, try to use cached info
-        const cached = localStorage.getItem('user_info');
-        if (cached) {
-          try {
-            setUserInfo(JSON.parse(cached));
-            setUserAuthed(true);
-          } catch {
-            setUserAuthed(false);
-          }
-        } else {
-          setUserAuthed(false);
-        }
-      });
-  }, []);
-
-  const logout = () => {
-    localStorage.removeItem('user_token');
-    localStorage.removeItem('user_info');
-    setUserAuthed(false);
-    setUserInfo(null);
-  };
-
-  return { userAuthed, setUserAuthed, userInfo, setUserInfo, logout };
-}
-
-// ─── Root component ──────────────────────────────────────────────────────────
-export default function App() {
-  const [mode, setMode]                 = useState(getInitialMode);
-  const [pendingEmail, setPendingEmail] = useState('');
-  const [showTerms, setShowTerms]       = useState(false);
-
-  const { authed, setAuthed, logout: adminLogout }             = useAdminAuth();
-  const { userAuthed, setUserAuthed, userInfo, setUserInfo, logout: userLogout } = useUserAuth();
-
-  // ── Admin flow ──────────────────────────────────────────────────────────
-  if (mode === 'admin') {
-    if (authed === null) {
-      return <Splash text="Verifying admin session…" />;
-    }
-    if (!authed) {
-      return (
-        <Login
-          onLogin={() => setAuthed(true)}
-          onSwitchToUser={() => setMode('user-login')}
-        />
-      );
-    }
-    return <AdminDashboard logout={() => { adminLogout(); setMode('user-login'); }} />;
-  }
-
-  // ── User flow ───────────────────────────────────────────────────────────
-  if (mode === 'user') {
-    if (userAuthed === null) {
-      return <Splash text="Verifying session…" />;
-    }
-    if (!userAuthed) {
-      setMode('user-login');
-      return <Splash text="Redirecting…" />;
-    }
-    return <UserDashboard user={userInfo} onLogout={() => { userLogout(); setMode('user-login'); }} />;
-  }
-
-  if (mode === 'user-register') {
+function TrialBanner({ user }) {
+  if (!user) return null;
+  if (!user.isTrialActive && user.tier === 'free') {
     return (
-      <>
-        <UserRegister
-          onRegistered={(email) => { setPendingEmail(email); setMode('verify-email'); }}
-          onSwitchToLogin={() => setMode('user-login')}
-          onShowTerms={() => setShowTerms(true)}
-        />
-        {showTerms && <TermsAndConditions onClose={() => setShowTerms(false)} />}
-      </>
+      <div style={styles.expiredBanner}>
+        ⚠️ Your 7-day free trial has expired. Please upgrade to continue access.
+      </div>
     );
   }
-
-  if (mode === 'verify-email') {
+  if (user.isTrialActive) {
+    const days = user.trialDaysLeft;
     return (
-      <VerifyEmail
-        email={pendingEmail}
-        onVerified={(user) => {
-          setUserInfo(user);
-          setUserAuthed(true);
-          setMode('user');
-        }}
-      />
+      <div style={styles.trialBanner}>
+        <div style={styles.trialLeft}>
+          ⏱️ <strong>Free Trial:</strong> {days} day{days !== 1 ? 's' : ''} remaining
+        </div>
+        <div style={styles.trialRight}>
+          Access ID: <strong style={{ color: '#818cf8' }}>{user.accessId}</strong>
+        </div>
+      </div>
     );
   }
-
-  // default: user-login
-  return (
-    <UserLogin
-      onLogin={(user) => {
-        setUserInfo(user);
-        setUserAuthed(true);
-        setMode('user');
-      }}
-      onSwitchToRegister={() => setMode('user-register')}
-      onNeedsVerification={(email) => { setPendingEmail(email); setMode('verify-email'); }}
-      onSwitchToAdmin={() => setMode('admin')}
-    />
-  );
+  return null;
 }
 
-// ─── Splash screen ───────────────────────────────────────────────────────────
-function Splash({ text }) {
-  return (
-    <div style={{
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      height: '100vh',
-      background: 'linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%)',
-      color: '#94a3b8',
-      fontSize: 14,
-      fontFamily: '"Inter", "Segoe UI", sans-serif',
-    }}>
-      {text}
-    </div>
-  );
-}
-
-// ─── Admin dashboard (unchanged logic) ───────────────────────────────────────
-function AdminDashboard({ logout }) {
+export default function UserDashboard({ user, onLogout }) {
   const [devices, setDevices]                         = useState([]);
   const [selectedDevice, setSelectedDevice]           = useState(null);
   const [globalView, setGlobalView]                   = useState('overview');
@@ -282,9 +172,10 @@ function AdminDashboard({ logout }) {
       case 'command:error':
         setCommandResults(prev => [{ id: Date.now(), command: data.command || 'unknown', deviceId: data.deviceId, success: false, error: data.message, time: new Date() }, ...prev].slice(0, 200));
         break;
-      case 'task:progress':
+      case 'task:progress': {
         setCommandResults(prev => [{ id: `tp_${Date.now()}_${Math.random()}`, command: 'task_progress', deviceId: data.deviceId, success: !data.error, response: data, error: data.error || null, time: new Date() }, ...prev].slice(0, 200));
         break;
+      }
       case 'stream:frame':
         if (data.deviceId && data.frameData) {
           if (data.timestamp && Date.now() - data.timestamp > 2000) break;
@@ -352,7 +243,10 @@ function AdminDashboard({ logout }) {
   }, []);
 
   const { connected, reconnecting, send } = useTcpStream(handleMessage);
-  const sendCommand = useCallback((deviceId, command, params = null) => send('command:send', { deviceId, command, params }), [send]);
+
+  const sendCommand = useCallback((deviceId, command, params = null) => {
+    send('command:send', { deviceId, command, params });
+  }, [send]);
 
   useEffect(() => {
     if (!connected) return;
@@ -362,11 +256,26 @@ function AdminDashboard({ logout }) {
     return () => clearInterval(id);
   }, [connected, send]);
 
+  const handleLogout = () => {
+    localStorage.removeItem('user_token');
+    localStorage.removeItem('user_info');
+    onLogout();
+  };
+
   return (
     <div className="app">
-      <StatusBar connected={connected} reconnecting={reconnecting} deviceCount={devices.filter(d => d.isOnline).length} onLogout={logout} />
+      <StatusBar
+        connected={connected}
+        reconnecting={reconnecting}
+        deviceCount={devices.filter(d => d.isOnline).length}
+        onLogout={handleLogout}
+      />
       <div className="app-body">
-        <Sidebar devices={devices} selectedDevice={selectedDevice} onSelectDevice={setSelectedDevice} />
+        <Sidebar
+          devices={devices}
+          selectedDevice={selectedDevice}
+          onSelectDevice={setSelectedDevice}
+        />
         <main className="main-content">
           {selectedDevice ? (
             <DeviceControl
@@ -388,31 +297,44 @@ function AdminDashboard({ logout }) {
             />
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-              <div style={{ display: 'flex', gap: 4, padding: '0 0 14px 0', borderBottom: '1px solid #1e1b4b', marginBottom: 16 }}>
-                {[
-                  { id: 'overview', label: '📊 Overview' },
-                  { id: 'logs',     label: '🖥️ Server Logs' },
-                  { id: 'settings', label: '⚙️ Settings' },
-                ].map(tab => (
-                  <button
-                    key={tab.id}
-                    onClick={() => setGlobalView(tab.id)}
-                    style={{
-                      background: globalView === tab.id ? 'rgba(99,102,241,0.2)' : 'transparent',
-                      border: globalView === tab.id ? '1px solid #6366f1' : '1px solid transparent',
-                      color: globalView === tab.id ? '#a5b4fc' : '#64748b',
-                      borderRadius: 8, padding: '6px 16px', fontSize: 13,
-                      cursor: 'pointer', fontWeight: globalView === tab.id ? 600 : 400,
-                      transition: 'all 0.15s',
-                    }}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
+              <TrialBanner user={user} />
+
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, paddingBottom: 14, borderBottom: '1px solid #1e1b4b' }}>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {[
+                    { id: 'overview', label: '📊 Overview' },
+                    { id: 'logs',     label: '🖥️ Server Logs' },
+                    { id: 'settings', label: '⚙️ Settings' },
+                  ].map(tab => (
+                    <button
+                      key={tab.id}
+                      onClick={() => setGlobalView(tab.id)}
+                      style={{
+                        background: globalView === tab.id ? 'rgba(99,102,241,0.2)' : 'transparent',
+                        border: globalView === tab.id ? '1px solid #6366f1' : '1px solid transparent',
+                        color: globalView === tab.id ? '#a5b4fc' : '#64748b',
+                        borderRadius: 8, padding: '6px 16px', fontSize: 13,
+                        cursor: 'pointer', fontWeight: globalView === tab.id ? 600 : 400,
+                        transition: 'all 0.15s',
+                      }}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+                <div style={styles.userBadge}>
+                  👤 {user?.name || 'User'}
+                </div>
               </div>
+
               <div style={{ flex: 1, minHeight: 0 }}>
                 {globalView === 'overview' ? (
-                  <Overview devices={devices} activityLog={activityLog} onSelectDevice={setSelectedDevice} connected={connected} />
+                  <Overview
+                    devices={devices}
+                    activityLog={activityLog}
+                    onSelectDevice={setSelectedDevice}
+                    connected={connected}
+                  />
                 ) : globalView === 'settings' ? (
                   <SettingsTab />
                 ) : (

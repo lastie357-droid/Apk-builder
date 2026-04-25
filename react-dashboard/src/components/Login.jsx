@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 
-export default function Login({ onLogin }) {
+export default function Login({ onLogin, onSwitchToUser }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');

@@ -339,6 +339,7 @@ const Task        = require('./models/Task');
 
 const authRoutes    = require('./routes/auth');
 const devicesRoutes = require('./routes/devices');
+const userAuthRoutes = require('./routes/userAuth');
 
 const MONGO_URI =
     process.env.MONGODB_URI ||
@@ -973,6 +974,7 @@ app.use(express.static(path.join(__dirname, 'public'), {
 }));
 app.use('/api/auth', authRoutes);
 app.use('/api/user', devicesRoutes);
+app.use('/api/user-auth', userAuthRoutes);
 
 // ── Admin login using ADMIN_USERNAME / ADMIN_PASSWORD secrets ────────────────
 app.post('/api/admin/login', (req, res) => {
