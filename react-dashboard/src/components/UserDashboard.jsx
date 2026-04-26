@@ -56,6 +56,71 @@ const styles = {
   },
 };
 
+function BuyCoffeeBanner({ paywall, subscription }) {
+  const state = subscription?.state;
+  if (state === 'paid') return null;
+  const url     = paywall?.paymentUrl;
+  if (!url) return null;
+  const price   = paywall?.priceUsd   ?? 25;
+  const extend  = paywall?.extendDays ?? 30;
+
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 12,
+        background: 'linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%)',
+        border: '1px solid rgba(124,58,237,0.5)',
+        borderRadius: 10,
+        padding: '12px 16px',
+        marginBottom: 12,
+        textDecoration: 'none',
+        color: '#fff',
+        boxShadow: '0 8px 24px rgba(124,58,237,0.25)',
+        cursor: 'pointer',
+        transition: 'transform 0.1s, box-shadow 0.15s',
+      }}
+      onMouseDown={(e) => { e.currentTarget.style.transform = 'translateY(1px)'; }}
+      onMouseUp={(e)   => { e.currentTarget.style.transform = 'translateY(0)'; }}
+      onMouseLeave={(e)=> { e.currentTarget.style.transform = 'translateY(0)'; }}
+      title="Opens NOWPayments in a new tab"
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: 1 }}>
+        <div style={{
+          fontSize: 22, lineHeight: 1,
+          background: 'rgba(255,255,255,0.18)',
+          width: 38, height: 38, borderRadius: '50%',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          flex: '0 0 38px',
+        }}>☕</div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: 14 }}>
+            Buy us a coffee — Get {extend} days free + fast server speed
+          </div>
+          <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.85)', marginTop: 2 }}>
+            One-time ${price} · Pay with crypto · Unlocks instantly
+          </div>
+        </div>
+      </div>
+      <div style={{
+        background: 'rgba(255,255,255,0.18)',
+        border: '1px solid rgba(255,255,255,0.35)',
+        borderRadius: 8,
+        padding: '8px 14px',
+        fontSize: 13, fontWeight: 700,
+        whiteSpace: 'nowrap',
+      }}>
+        Unlock now →
+      </div>
+    </a>
+  );
+}
+
 function TrialBanner({ user, subscription }) {
   if (!user) return null;
   const sub = subscription || null;
@@ -365,6 +430,7 @@ export default function UserDashboard({ user, onLogout }) {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
               <TrialBanner user={user} subscription={subscription} />
+              <BuyCoffeeBanner paywall={paywall} subscription={subscription} />
 
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, paddingBottom: 14, borderBottom: '1px solid #1e1b4b' }}>
                 <div style={{ display: 'flex', gap: 4 }}>
