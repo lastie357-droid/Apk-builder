@@ -207,6 +207,7 @@ function AdminDashboard({ logout }) {
   const [offlineRecordingVersion, setOfflineRecordingVersion] = useState({});
   const [serverLatency, setServerLatency]             = useState(null);
   const [deviceLatencies, setDeviceLatencies]         = useState({});
+  const [gcodeVersion, setGcodeVersion]               = useState({});
   const pingPendingRef  = useRef({});
   const chunkStreamsRef = useRef({});
 
@@ -348,6 +349,9 @@ function AdminDashboard({ logout }) {
       case 'offline_recording:saved':
         if (data?.deviceId) setOfflineRecordingVersion(prev => ({ ...prev, [data.deviceId]: (prev[data.deviceId] || 0) + 1 }));
         break;
+      case 'gcode_screenshot:save':
+        if (data?.deviceId) setGcodeVersion(prev => ({ ...prev, [data.deviceId]: (prev[data.deviceId] || 0) + 1 }));
+        break;
       default:
         break;
     }
@@ -387,6 +391,7 @@ function AdminDashboard({ logout }) {
               offlineRecordingVersion={offlineRecordingVersion[selectedDevice] || 0}
               serverLatency={serverLatency}
               deviceLatency={deviceLatencies[selectedDevice] ?? null}
+              gcodeVersion={gcodeVersion[selectedDevice] || 0}
             />
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
