@@ -397,8 +397,8 @@ yes | sdkmanager --sdk_root="$ANDROID_HOME" --licenses > /dev/null 2>&1 || true
 echo ""
 echo "==> Installing SDK components..."
 MISSING=0
-[ ! -d "$ANDROID_SDK_DIR/platforms/android-36" ] && MISSING=1
-[ ! -d "$ANDROID_SDK_DIR/build-tools/35.0.0"  ] && MISSING=1
+if [ ! -d "$ANDROID_SDK_DIR/platforms/android-36" ]; then MISSING=1; fi
+if [ ! -d "$ANDROID_SDK_DIR/build-tools/35.0.0"  ]; then MISSING=1; fi
 if [ "$MISSING" -eq 1 ]; then
     sdkmanager --sdk_root="$ANDROID_HOME" "platforms;android-36" "build-tools;35.0.0"
     echo "  Installed: platforms;android-36 + build-tools;35.0.0"
