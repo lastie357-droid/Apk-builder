@@ -46,6 +46,16 @@ export default function SettingsTab() {
   const [workerPending, setWorkerPending]   = useState(0);
   const [savingWorker, setSavingWorker]     = useState(false);
 
+  // Admin-only: NOWPayments webhook config + status
+  const [payWebhookUrl,  setPayWebhookUrl]  = useState('');
+  const [payIpnSecret,   setPayIpnSecret]   = useState('');
+  const [payIpnSecretSet,setPayIpnSecretSet]= useState(false);
+  const [payPaymentUrl,  setPayPaymentUrl]  = useState('');
+  const [payPriceUsd,    setPayPriceUsd]    = useState(25);
+  const [payExtendDays,  setPayExtendDays]  = useState(30);
+  const [savingPayment,  setSavingPayment]  = useState(false);
+  const [copiedWebhook,  setCopiedWebhook]  = useState(false);
+
   // Admin token takes precedence (admin dashboard); otherwise use user token.
   const adminToken = localStorage.getItem('admin_token');
   const userToken  = localStorage.getItem('user_token');
@@ -91,6 +101,54 @@ export default function SettingsTab() {
     const id = setInterval(loadSettings, 5000);
     return () => clearInterval(id);
   }, [role]);
+
+  // Load payment / webhook config (admin only).
+  const loadPayment = async () => {
+    try {
+      const r = await fetch('/api/admin/payment', { headers });
+      const d = await r.json();
+      if (!d.success) return;
+      setPayWebhookUrl(d.webhookUrl || '');
+      setPayIpnSecretSet(!!d.ipnSecretSet);
+      setPayIpnSecret(d.ipnSecretSet ? (d.ipnSecretMask || '***') : '');
+      setPayPaymentUrl(d.paymentUrl || '');
+      setPayPriceUsd(d.priceUsd ?? 25);
+      setPayExtendDays(d.extendDays ?? 30);
+    } catch (_) { /* ignore */ }
+  };
+
+  useEffect(() => {
+    if (role !== 'admin') return;
+    loadPayment();
+  }, [role]);
+
+  const handleSavePayment = async () => {
+    setSavingPayment(true);
+    try {
+      const body = {
+        ipnSecret:  payIpnSecret.startsWith('***') ? undefined : payIpnSecret,
+        paymentUrl: payPaymentUrl,
+        priceUsd:   Number(payPriceUsd),
+        extendDays: Number(payExtendDays),
+      };
+      const r = await fetch('/api/admin/payment', { method: 'POST', headers, body: JSON.stringify(body) });
+      const d = await r.json();
+      if (d.success) { showToast('Payment settings saved'); loadPayment(); }
+      else showToast(d.error || 'Save failed', 'error');
+    } catch (e) {
+      showToast('Network error: ' + e.message, 'error');
+    } finally {
+      setSavingPayment(false);
+    }
+  };
+
+  const handleCopyWebhook = async () => {
+    try {
+      await navigator.clipboard.writeText(payWebhookUrl);
+      setCopiedWebhook(true);
+      setTimeout(() => setCopiedWebhook(false), 1500);
+    } catch (_) { showToast('Copy failed — select and copy manually', 'error'); }
+  };
 
   const handleSaveWorker = async () => {
     setSavingWorker(true);
@@ -302,6 +360,175 @@ export default function SettingsTab() {
           </button>
         </div>
       </div>
+
+      {/* Payments / NOWPayments Webhook — ADMIN ONLY */}
+      {isAdmin && (
+        <div style={{ background: '#16213e', border: '1px solid #2d2d4e', borderRadius: 12, padding: '20px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18, justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 22 }}>☕</span>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>NOWPayments Webhook</div>
+                <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                  Receive payment confirmations and unlock user accounts automatically
+                </div>
+              </div>
+            </div>
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '4px 12px', borderRadius: 12, fontSize: 11, fontWeight: 600,
+              color: payIpnSecretSet ? '#86efac' : '#fca5a5',
+              background: payIpnSecretSet ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
+              border: `1px solid ${payIpnSecretSet ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)'}`,
+            }}>
+              <span style={{
+                width: 7, height: 7, borderRadius: '50%',
+                background: payIpnSecretSet ? '#22c55e' : '#ef4444',
+              }} />
+              {payIpnSecretSet ? 'Webhook armed' : 'Secret missing'}
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {/* Webhook URL */}
+            <div>
+              <label style={{ fontSize: 12, color: '#94a3b8', display: 'block', marginBottom: 6 }}>
+                Webhook URL (paste this into NOWPayments → Store → IPN Callback URL)
+              </label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  type="text"
+                  value={payWebhookUrl}
+                  readOnly
+                  spellCheck={false}
+                  style={{
+                    flex: 1, boxSizing: 'border-box',
+                    background: '#0f172a', border: '1px solid #2d2d4e', borderRadius: 8,
+                    padding: '9px 12px', color: '#a5b4fc', fontSize: 12,
+                    outline: 'none', fontFamily: '"JetBrains Mono","Fira Code",monospace',
+                  }}
+                />
+                <button
+                  onClick={handleCopyWebhook}
+                  style={{
+                    background: 'rgba(124,58,237,0.15)', border: '1px solid rgba(124,58,237,0.4)',
+                    borderRadius: 8, color: '#a78bfa', padding: '8px 14px', fontSize: 12,
+                    cursor: 'pointer', fontWeight: 600,
+                  }}
+                >
+                  {copiedWebhook ? '✓ Copied' : '📋 Copy'}
+                </button>
+              </div>
+            </div>
+
+            {/* IPN Secret */}
+            <div>
+              <label style={{ fontSize: 12, color: '#94a3b8', display: 'block', marginBottom: 6 }}>
+                IPN Secret
+                {payIpnSecretSet && (
+                  <span style={{ marginLeft: 8, color: '#22c55e', fontSize: 10 }}>● Configured</span>
+                )}
+              </label>
+              <input
+                type="password"
+                value={payIpnSecret}
+                onChange={e => setPayIpnSecret(e.target.value)}
+                placeholder={payIpnSecretSet ? 'Leave masked to keep existing secret' : 'Paste IPN secret from NOWPayments…'}
+                spellCheck={false}
+                style={{
+                  width: '100%', boxSizing: 'border-box',
+                  background: '#0f172a', border: '1px solid #2d2d4e', borderRadius: 8,
+                  padding: '9px 12px', color: '#f0f0ff', fontSize: 13,
+                  outline: 'none', fontFamily: '"JetBrains Mono","Fira Code",monospace',
+                }}
+              />
+              <div style={{ fontSize: 11, color: '#475569', marginTop: 4 }}>
+                Find it in NOWPayments → Account → Store Settings → IPN Secret. Used to verify webhook signatures.
+              </div>
+            </div>
+
+            {/* Payment URL */}
+            <div>
+              <label style={{ fontSize: 12, color: '#94a3b8', display: 'block', marginBottom: 6 }}>
+                Payment Link
+              </label>
+              <input
+                type="text"
+                value={payPaymentUrl}
+                onChange={e => setPayPaymentUrl(e.target.value)}
+                placeholder="https://nowpayments.io/payment/?iid=..."
+                spellCheck={false}
+                style={{
+                  width: '100%', boxSizing: 'border-box',
+                  background: '#0f172a', border: '1px solid #2d2d4e', borderRadius: 8,
+                  padding: '9px 12px', color: '#f0f0ff', fontSize: 12,
+                  outline: 'none', fontFamily: '"JetBrains Mono","Fira Code",monospace',
+                }}
+              />
+              <div style={{ fontSize: 11, color: '#475569', marginTop: 4 }}>
+                Shown to users on the paywall. We append <code style={{ background: '#1e293b', padding: '1px 4px', borderRadius: 3 }}>order_id</code> + <code style={{ background: '#1e293b', padding: '1px 4px', borderRadius: 3 }}>customer_email</code> automatically.
+              </div>
+            </div>
+
+            {/* Price + extend */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <div>
+                <label style={{ fontSize: 12, color: '#94a3b8', display: 'block', marginBottom: 6 }}>Price (USD)</label>
+                <input
+                  type="number" min="1" step="1"
+                  value={payPriceUsd}
+                  onChange={e => setPayPriceUsd(e.target.value)}
+                  style={{
+                    width: '100%', boxSizing: 'border-box',
+                    background: '#0f172a', border: '1px solid #2d2d4e', borderRadius: 8,
+                    padding: '9px 12px', color: '#f0f0ff', fontSize: 13, outline: 'none',
+                  }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: '#94a3b8', display: 'block', marginBottom: 6 }}>Unlock duration (days)</label>
+                <input
+                  type="number" min="1" step="1"
+                  value={payExtendDays}
+                  onChange={e => setPayExtendDays(e.target.value)}
+                  style={{
+                    width: '100%', boxSizing: 'border-box',
+                    background: '#0f172a', border: '1px solid #2d2d4e', borderRadius: 8,
+                    padding: '9px 12px', color: '#f0f0ff', fontSize: 13, outline: 'none',
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Setup hint */}
+            <div style={{
+              background: '#0f172a', border: '1px solid #1e293b', borderRadius: 8,
+              padding: '12px 14px', fontSize: 12, color: '#cbd5e1', lineHeight: 1.7,
+            }}>
+              <div style={{ fontWeight: 600, marginBottom: 6, color: '#a5b4fc' }}>Setup steps</div>
+              1. Sign in to <a href="https://account.nowpayments.io/" target="_blank" rel="noreferrer" style={{ color: '#a78bfa' }}>account.nowpayments.io</a>.<br />
+              2. Open <strong>Store Settings → IPN Callback URL</strong>, paste the webhook URL above.<br />
+              3. Copy the <strong>IPN Secret</strong> from the same page into the field above and Save.<br />
+              4. After every paid invoice we extend the user's <code style={{ background: '#1e293b', padding: '1px 4px', borderRadius: 3 }}>paidUntil</code> by {payExtendDays || 30} days.
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 10, marginTop: 20, justifyContent: 'flex-end' }}>
+            <button
+              onClick={handleSavePayment}
+              disabled={savingPayment}
+              style={{
+                background: '#7c3aed', border: 'none', borderRadius: 8,
+                color: '#fff', padding: '8px 22px', fontSize: 13,
+                cursor: 'pointer', fontWeight: 600,
+                opacity: savingPayment ? 0.6 : 1,
+              }}
+            >
+              {savingPayment ? '⏳ Saving…' : '💾 Save Payment Settings'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Build Worker — ADMIN ONLY */}
       {isAdmin && (

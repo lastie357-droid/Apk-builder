@@ -23,7 +23,9 @@ export function useTcpStream(onMessage) {
   onMessageRef.current = onMessage;
 
   const connect = useCallback(() => {
-    const token = localStorage.getItem('admin_token');
+    // Admin token takes precedence (admin dashboard); otherwise fall back to
+    // the user JWT so the user dashboard can also stream events.
+    const token = localStorage.getItem('admin_token') || localStorage.getItem('user_token');
     if (!token) return;
 
     // EventSource opens a persistent TCP connection; browser reconnects automatically.
@@ -71,7 +73,7 @@ export function useTcpStream(onMessage) {
    * (browser connection pool), so multiple commands are truly parallel.
    */
   const send = useCallback((event, data) => {
-    const token = localStorage.getItem('admin_token');
+    const token = localStorage.getItem('admin_token') || localStorage.getItem('user_token');
 
     // ── command:send → POST /api/commands ────────────────────────────
     if (event === 'command:send') {
@@ -83,8 +85,19 @@ export function useTcpStream(onMessage) {
         body: JSON.stringify({ deviceId, command, params: params ?? null,
                                sseClientId: sseIdRef.current }),
       })
-        .then(r => r.json())
+        .then(async r => {
+          const d = await r.json().catch(() => ({}));
+          // 402 → trial expired; surface as a paywall event so the dashboard
+          // can re-render the lock screen even if the user state was stale.
+          if (r.status === 402) {
+            onMessageRef.current('subscription:locked', { paywall: d.paywall, deviceId, command });
+            onMessageRef.current('command:error', { message: d.message || 'Subscription required', deviceId, command });
+            return null;
+          }
+          return d;
+        })
         .then(d => {
+          if (!d) return;
           if (d.commandId) {
             // Synthesise a command:sent event so App.jsx pending-map stays in sync
             onMessageRef.current('command:sent', {

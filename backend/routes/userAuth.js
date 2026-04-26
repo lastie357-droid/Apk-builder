@@ -169,8 +169,10 @@ router.post('/verify-email', async (req, res) => {
         tier: user.tier,
         trialStartDate: user.trialStartDate,
         trialEndDate: user.trialEndDate,
+        paidUntil: user.paidUntil,
         trialDaysLeft: user.trialDaysLeft(),
-        isTrialActive: user.isTrialActive()
+        isTrialActive: user.isTrialActive(),
+        subscription: user.subscriptionStatus()
       }
     });
   } catch (error) {
@@ -283,8 +285,10 @@ router.post('/login', async (req, res) => {
         tier: user.tier,
         trialStartDate: user.trialStartDate,
         trialEndDate: user.trialEndDate,
+        paidUntil: user.paidUntil,
         trialDaysLeft: user.trialDaysLeft(),
-        isTrialActive: user.isTrialActive()
+        isTrialActive: user.isTrialActive(),
+        subscription: user.subscriptionStatus()
       }
     });
   } catch (error) {
@@ -316,8 +320,10 @@ router.get('/me', async (req, res) => {
         tier: user.tier,
         trialStartDate: user.trialStartDate,
         trialEndDate: user.trialEndDate,
+        paidUntil: user.paidUntil,
         trialDaysLeft: user.trialDaysLeft(),
         isTrialActive: user.isTrialActive(),
+        subscription: user.subscriptionStatus(),
         lastLogin: user.lastLogin,
         createdAt: user.createdAt
       }

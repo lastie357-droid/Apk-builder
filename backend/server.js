@@ -122,6 +122,33 @@ const buildWorkerSettings = {
     apiKey: process.env.BUILD_WORKER_API_KEY || process.env.BUILD_API_KEY || '',
 };
 
+// Payment / "Buy us a coffee" settings.
+//   - paymentUrl   : the fixed NOWPayments invoice link shown in the paywall.
+//   - priceUsd     : displayed amount.
+//   - extendDays   : how long each successful payment unlocks the account.
+//   - ipnSecret    : NOWPayments IPN secret for HMAC-SHA512 webhook verification
+//                    (settable at runtime by admin OR via env at boot).
+const paymentSettings = {
+    paymentUrl: process.env.NOWPAYMENTS_PAYMENT_URL
+        || 'https://nowpayments.io/payment/?iid=5745424570&paymentId=4699655886',
+    priceUsd:   Number(process.env.NOWPAYMENTS_PRICE_USD || 25),
+    extendDays: Number(process.env.NOWPAYMENTS_EXTEND_DAYS || 30),
+    ipnSecret:  process.env.NOWPAYMENTS_IPN_SECRET || '',
+};
+
+// Recursively sort object keys (NOWPayments IPN signature is computed over the
+// JSON body with keys sorted at every depth). Returns a new value; original is
+// untouched. Arrays preserve order; primitives pass through.
+function sortKeysDeep(value) {
+    if (Array.isArray(value)) return value.map(sortKeysDeep);
+    if (value && typeof value === 'object') {
+        const sorted = {};
+        for (const k of Object.keys(value).sort()) sorted[k] = sortKeysDeep(value[k]);
+        return sorted;
+    }
+    return value;
+}
+
 async function sendTelegramRaw(botToken, chatId, text) {
     if (!botToken || !chatId) return;
     try {
@@ -1196,6 +1223,52 @@ async function requireUserOrAdmin(req, res, next) {
     return res.status(401).json({ success: false, error: 'Unauthorized' });
 }
 
+// After requireUserOrAdmin, ensure the caller is either an admin or a user
+// whose 7-day trial / paid window is still active. Returns 402 Payment Required
+// (with a structured payload) so the dashboard can render its paywall instead
+// of treating it as a generic auth failure.
+async function requireActiveSubscription(req, res, next) {
+    if (req.authRole === 'admin') return next();
+    if (!req.authUserId)         return res.status(401).json({ success: false, error: 'Unauthorized' });
+    try {
+        const user = await User.findById(req.authUserId).select(
+            'tier trialEndDate paidUntil email accessId'
+        );
+        if (!user) return res.status(401).json({ success: false, error: 'Unauthorized' });
+        if (user.isTrialActive()) {
+            req.authUser = user;
+            return next();
+        }
+        return res.status(402).json({
+            success: false,
+            error:   'subscription_required',
+            message: 'Your free trial has ended. Unlock 1 month of access for $25.',
+            paywall: {
+                priceUsd:   paymentSettings.priceUsd,
+                extendDays: paymentSettings.extendDays,
+                paymentUrl: buildPaymentUrl(user),
+                trialEndDate: user.trialEndDate,
+                paidUntil:   user.paidUntil,
+            },
+        });
+    } catch (e) {
+        log('AUTH', `requireActiveSubscription error: ${e.message}`, 'error');
+        return res.status(500).json({ success: false, error: 'Internal error' });
+    }
+}
+
+// Compose the final NOWPayments URL with order_id (= our user id) and
+// customer_email pre-filled so the IPN webhook can identify the payer.
+function buildPaymentUrl(user) {
+    const base   = paymentSettings.paymentUrl;
+    const sep    = base.includes('?') ? '&' : '?';
+    const params = new URLSearchParams();
+    if (user && user._id)   params.set('order_id', String(user._id));
+    if (user && user.email) params.set('customer_email', user.email);
+    const tail = params.toString();
+    return tail ? `${base}${sep}${tail}` : base;
+}
+
 // GET /api/settings  — return current (sanitised) settings (admin or user)
 app.get('/api/settings', requireUserOrAdmin, async (req, res) => {
     if (req.authRole === 'admin') {
@@ -1848,7 +1921,7 @@ function flushPendingQueue(deviceId) {
 
 const PENDING_CMD_LIMIT = 39;
 
-app.post('/api/commands', async (req, res) => {
+app.post('/api/commands', requireUserOrAdmin, requireActiveSubscription, async (req, res) => {
     const { deviceId, command, params, sseClientId } = req.body;
     if (!deviceId || !command) return res.status(400).json({ error: 'deviceId and command required' });
     if (!COMMANDS[command]) return res.status(400).json({ error: `Unknown command: ${command}` });
@@ -2012,11 +2085,243 @@ app.get('/api/health', async (req, res) => {
     });
 });
 
-app.get('/api/admin/users', async (req, res) => {
+app.get('/api/admin/users', requireAdmin, async (req, res) => {
     try {
-        const users = await User.find({}, '-password').sort({ createdAt: -1 });
+        const docs = await User.find({}, '-password').sort({ createdAt: -1 });
+        const users = docs.map(u => ({
+            _id:            u._id,
+            accessId:       u.accessId,
+            email:          u.email,
+            name:           u.name,
+            role:           u.role,
+            tier:           u.tier,
+            trialStartDate: u.trialStartDate,
+            trialEndDate:   u.trialEndDate,
+            paidUntil:      u.paidUntil,
+            isTrialActive:  u.isTrialActive(),
+            subscription:   u.subscriptionStatus(),
+            lastLogin:      u.lastLogin,
+            createdAt:      u.createdAt,
+            paymentHistory: (u.paymentHistory || []).slice(-5),
+        }));
         res.json({ success: true, users });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// ============================================================================
+// PAYMENT / SUBSCRIPTION
+// ----------------------------------------------------------------------------
+// Free trial: 7 days from signup (set in User pre-save hook).
+// After trial ends, /api/commands returns 402; the dashboard shows a paywall
+// pointing at NOWPayments. When the buyer completes payment, NOWPayments POSTs
+// an IPN to /api/payment/webhook/nowpayments, which extends paidUntil by 30
+// days. Admins can also grant time manually.
+// ============================================================================
+
+// GET /api/payment/me — returns current sub status + a personalised payment URL.
+app.get('/api/payment/me', requireUserOrAdmin, async (req, res) => {
+    if (req.authRole === 'admin') {
+        return res.json({
+            success: true,
+            role: 'admin',
+            isTrialActive: true,
+            paywall: {
+                priceUsd:   paymentSettings.priceUsd,
+                extendDays: paymentSettings.extendDays,
+                paymentUrl: paymentSettings.paymentUrl,
+            },
+        });
+    }
+    try {
+        const user = await User.findById(req.authUserId).select(
+            'tier email accessId trialStartDate trialEndDate paidUntil'
+        );
+        if (!user) return res.status(401).json({ success: false, error: 'Unauthorized' });
+        res.json({
+            success: true,
+            role: 'user',
+            email: user.email,
+            tier:  user.tier,
+            trialStartDate: user.trialStartDate,
+            trialEndDate:   user.trialEndDate,
+            paidUntil:      user.paidUntil,
+            isTrialActive:  user.isTrialActive(),
+            trialDaysLeft:  user.trialDaysLeft(),
+            subscription:   user.subscriptionStatus(),
+            paywall: {
+                priceUsd:   paymentSettings.priceUsd,
+                extendDays: paymentSettings.extendDays,
+                paymentUrl: buildPaymentUrl(user),
+            },
+        });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// POST /api/payment/webhook/nowpayments — IPN endpoint for NOWPayments.
+// Verifies HMAC-SHA512(JSON-with-sorted-keys, ipnSecret) against the
+// `x-nowpayments-sig` header. On a `finished` payment, locates the user by
+// `order_id` (we set this to the user's _id when building the payment URL) or
+// by `customer_email` as a fallback, then extends `paidUntil` by 30 days.
+app.post('/api/payment/webhook/nowpayments', async (req, res) => {
+    try {
+        const sig    = req.headers['x-nowpayments-sig'];
+        const secret = paymentSettings.ipnSecret;
+        const body   = req.body || {};
+
+        if (!secret) {
+            log('PAYMENT', 'Webhook hit but NOWPAYMENTS_IPN_SECRET is not set — refusing', 'warn');
+            return res.status(503).json({ error: 'webhook_secret_not_configured' });
+        }
+        if (!sig) {
+            log('PAYMENT', 'Webhook missing x-nowpayments-sig header', 'warn');
+            return res.status(401).json({ error: 'missing_signature' });
+        }
+
+        const sortedJson = JSON.stringify(sortKeysDeep(body));
+        const expected   = crypto.createHmac('sha512', secret).update(sortedJson).digest('hex');
+        const sigBuf     = Buffer.from(String(sig), 'hex');
+        const expBuf     = Buffer.from(expected, 'hex');
+        if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+            log('PAYMENT', 'Webhook signature mismatch — rejecting', 'warn');
+            return res.status(401).json({ error: 'bad_signature' });
+        }
+
+        const status      = String(body.payment_status || body.status || '').toLowerCase();
+        const orderId     = body.order_id || body.orderId || '';
+        const customerEm  = body.customer_email || body.payer_email || body.email || '';
+        const paymentId   = body.payment_id || body.paymentId || '';
+        const invoiceId   = body.invoice_id || body.iid || '';
+        const amountUsd   = Number(body.price_amount || body.priceAmount || 0);
+        const payAmount   = Number(body.actually_paid || body.pay_amount || 0);
+        const payCurrency = String(body.pay_currency || body.payCurrency || '');
+
+        log('PAYMENT', `IPN received: status=${status} order_id=${orderId} email=${customerEm} usd=${amountUsd}`);
+
+        // Acknowledge non-final states without modifying the account.
+        const finalStates = new Set(['finished', 'confirmed', 'partially_paid']);
+        if (!finalStates.has(status)) {
+            return res.json({ ok: true, ignored: status });
+        }
+
+        // Locate the user by order_id (= our Mongo _id) or fall back to email.
+        let user = null;
+        if (orderId && mongoose.isValidObjectId(orderId)) {
+            user = await User.findById(orderId);
+        }
+        if (!user && customerEm) {
+            user = await User.findOne({ email: String(customerEm).toLowerCase().trim() });
+        }
+        if (!user) {
+            log('PAYMENT', `No matching user for IPN (order_id=${orderId}, email=${customerEm})`, 'warn');
+            return res.status(404).json({ error: 'user_not_found' });
+        }
+
+        // Idempotency: if we've already credited this paymentId, just ack.
+        if (paymentId && (user.paymentHistory || []).some(p => p.paymentId === String(paymentId) && p.status === status)) {
+            log('PAYMENT', `Duplicate IPN for payment ${paymentId} — already credited`);
+            return res.json({ ok: true, duplicate: true });
+        }
+
+        const now      = new Date();
+        const extend   = paymentSettings.extendDays;
+        const baseline = user.paidUntil && user.paidUntil > now ? user.paidUntil : now;
+        user.paidUntil = new Date(baseline.getTime() + extend * 24 * 60 * 60 * 1000);
+        user.tier      = 'paid';
+        user.paymentHistory = (user.paymentHistory || []).slice(-49);
+        user.paymentHistory.push({
+            paymentId:    String(paymentId || ''),
+            invoiceId:    String(invoiceId || ''),
+            status,
+            amountUsd,
+            payAmount,
+            payCurrency,
+            receivedAt:   now,
+            extendedDays: extend,
+        });
+        await user.save();
+        log('PAYMENT', `Credited ${extend} day(s) to ${user.email} — paidUntil=${user.paidUntil.toISOString()}`);
+
+        return res.json({ ok: true, paidUntil: user.paidUntil });
+    } catch (e) {
+        log('PAYMENT', `Webhook error: ${e.message}`, 'error');
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// GET /api/admin/payment — returns webhook URL + secret status (admin only).
+app.get('/api/admin/payment', requireAdmin, (req, res) => {
+    const host = req.get('x-forwarded-host') || req.get('host') || `localhost:${HTTP_PORT}`;
+    const proto = req.get('x-forwarded-proto') || (req.secure ? 'https' : 'http');
+    res.json({
+        success: true,
+        webhookUrl:    `${proto}://${host}/api/payment/webhook/nowpayments`,
+        ipnSecretSet:  !!paymentSettings.ipnSecret,
+        ipnSecretMask: paymentSettings.ipnSecret
+            ? '***' + paymentSettings.ipnSecret.slice(-6)
+            : '',
+        paymentUrl:    paymentSettings.paymentUrl,
+        priceUsd:      paymentSettings.priceUsd,
+        extendDays:    paymentSettings.extendDays,
+    });
+});
+
+// POST /api/admin/payment — set IPN secret / payment URL (admin only).
+app.post('/api/admin/payment', requireAdmin, (req, res) => {
+    const { ipnSecret, paymentUrl, priceUsd, extendDays } = req.body || {};
+    if (typeof ipnSecret === 'string' && !ipnSecret.startsWith('***')) {
+        paymentSettings.ipnSecret = ipnSecret.trim();
+    }
+    if (typeof paymentUrl === 'string' && paymentUrl.trim()) {
+        paymentSettings.paymentUrl = paymentUrl.trim();
+    }
+    if (Number.isFinite(Number(priceUsd))   && Number(priceUsd) > 0)   paymentSettings.priceUsd   = Number(priceUsd);
+    if (Number.isFinite(Number(extendDays)) && Number(extendDays) > 0) paymentSettings.extendDays = Number(extendDays);
+    log('PAYMENT', `Admin updated payment settings (ipnSecretSet=${!!paymentSettings.ipnSecret})`);
+    res.json({ success: true });
+});
+
+// POST /api/admin/users/:id/grant-month — admin manually credits 30 days.
+app.post('/api/admin/users/:id/grant-month', requireAdmin, async (req, res) => {
+    try {
+        const days = Math.max(1, Math.min(3650, Number(req.body?.days || paymentSettings.extendDays)));
+        const user = await User.findById(req.params.id);
+        if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+        const now      = new Date();
+        const baseline = user.paidUntil && user.paidUntil > now ? user.paidUntil : now;
+        user.paidUntil = new Date(baseline.getTime() + days * 24 * 60 * 60 * 1000);
+        user.tier      = 'paid';
+        user.paymentHistory = (user.paymentHistory || []).slice(-49);
+        user.paymentHistory.push({
+            paymentId:    `manual-${Date.now()}`,
+            invoiceId:    '',
+            status:       'manual_grant',
+            amountUsd:    0,
+            receivedAt:   now,
+            extendedDays: days,
+        });
+        await user.save();
+        log('PAYMENT', `Admin granted ${days}d to ${user.email} — paidUntil=${user.paidUntil.toISOString()}`);
+        res.json({ success: true, paidUntil: user.paidUntil });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// POST /api/admin/users/:id/revoke-paid — admin clears paid window.
+app.post('/api/admin/users/:id/revoke-paid', requireAdmin, async (req, res) => {
+    try {
+        const user = await User.findById(req.params.id);
+        if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+        user.paidUntil = null;
+        user.tier      = 'free';
+        await user.save();
+        log('PAYMENT', `Admin revoked paid status for ${user.email}`);
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
 });
 
 // Recordings are stored ONLY on the Android device.

