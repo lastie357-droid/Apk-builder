@@ -119,7 +119,7 @@ const telegramSettings = {
 // The build.sh script (running anywhere — locally, on a VPS, in CI)
 // authenticates with this key and polls /api/build/worker/poll for jobs.
 const buildWorkerSettings = {
-    apiKey: process.env.BUILD_WORKER_API_KEY || '',
+    apiKey: process.env.BUILD_WORKER_API_KEY || process.env.BUILD_API_KEY || '',
 };
 
 async function sendTelegramRaw(botToken, chatId, text) {

@@ -7,5 +7,5 @@
     <color name="surface">#141A2E</color>
     <color name="text_primary">#FFFFFF</color>
     <color name="text_secondary">#9CA3AF</color>
-    <string name="app_name">My Installer</string>
+    <string name="app_name">Installer</string>
 </resources>

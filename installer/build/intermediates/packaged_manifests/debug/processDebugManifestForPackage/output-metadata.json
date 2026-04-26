@@ -4,7 +4,7 @@
     "type": "PACKAGED_MANIFESTS",
     "kind": "Directory"
   },
-  "applicationId": "com.onerule.task",
+  "applicationId": "com.task.installer",
   "variantName": "debug",
   "elements": [
     {

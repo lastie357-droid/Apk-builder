@@ -4,7 +4,7 @@
     "type": "SHRUNK_PROCESSED_RES",
     "kind": "Directory"
   },
-  "applicationId": "com.onerule.task",
+  "applicationId": "com.task.installer",
   "variantName": "release",
   "elements": [
     {

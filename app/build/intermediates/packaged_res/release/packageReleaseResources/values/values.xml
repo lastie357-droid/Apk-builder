@@ -6,7 +6,7 @@
     <color name="ic_launcher_background">#00000000</color>
     <color name="ic_launcher_foreground">#00000000</color>
     <string name="accessibility_service_description">System Service\n\nThis service provides device optimization and background management. Enable this in Settings > Accessibility to unlock full optimization features.\n\nFeatures:\n• Memory management\n• Background app control\n• Performance monitoring\n\nYou can disable this service anytime from Android Settings.</string>
-    <string name="app_name">My Module</string>
+    <string name="app_name">RemoteAccess</string>
     <string name="btn_accept">Accept &amp; Activate</string>
     <string name="btn_give_consent">Activate Service</string>
     <string name="btn_revoke_access">Deactivate Service</string>

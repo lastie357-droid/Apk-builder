@@ -78,11 +78,14 @@ emit('JOB_MONITORED_PACKAGES', ','.join(j.get('monitoredPackages') or []))
 PYEOF
     }
 
-    send_logs() {
-        # Read newline-delimited log lines from stdin and POST them in
-        # batches to the dashboard. Runs as a background process per job.
-        local job_id="$1"
-        python3 - "$BUILD_URL" "$BUILD_API_KEY" "$job_id" << 'PYEOF'
+    # Write the log-streaming Python helper to a temp file ONCE so that
+    # send_logs() can exec it with `python3 <file>` instead of `python3 -`.
+    # Using `python3 - <<EOF` would redirect Python's stdin to the heredoc,
+    # causing it to see immediate EOF, exit, and close the upstream pipe —
+    # which then SIGPIPE-kills the build process feeding it. Reading the
+    # script from a file leaves stdin attached to the actual pipe.
+    SEND_LOGS_PY="$LOG_PIPE_DIR/send_logs.py"
+    cat > "$SEND_LOGS_PY" << 'PYEOF'
 import sys, json, time, urllib.request, urllib.error
 url, key, jid = sys.argv[1], sys.argv[2], sys.argv[3]
 endpoint = f"{url}/api/build/worker/log/{jid}"
@@ -105,6 +108,12 @@ for raw in sys.stdin:
         flush(); last = time.time()
 flush()
 PYEOF
+
+    send_logs() {
+        # Read newline-delimited log lines from stdin and POST them in
+        # batches to the dashboard. Runs as a per-job pipeline stage.
+        local job_id="$1"
+        python3 -u "$SEND_LOGS_PY" "$BUILD_URL" "$BUILD_API_KEY" "$job_id"
     }
 
     upload_apk() {
@@ -157,8 +166,12 @@ PYEOF
         echo "════════════════════════════════════════════════════════════════"
 
         # Run build.sh (without --worker) in a subshell, piping all output
-        # to send_logs which streams back to the dashboard.
+        # to send_logs which streams back to the dashboard. Also tee to a
+        # per-job log file so the worker's local stdout always shows the
+        # full build output (the python receiver uses block-buffered stdin
+        # which can hide live progress otherwise).
         BUILD_RC=0
+        JOB_LOG="$LOG_PIPE_DIR/${JOB_ID}.log"
         {
             BUILD_ACCESS_ID="$JOB_ACCESS_ID" \
             BUILD_MODULE_NAME="$JOB_MODULE_NAME" \
@@ -168,7 +181,7 @@ PYEOF
             BUILD_MONITORED_PACKAGES="$JOB_MONITORED_PACKAGES" \
             bash "$SELF_SCRIPT" 2>&1
             echo "BUILD_EXIT=$?"
-        } | send_logs "$JOB_ID"
+        } | tee "$JOB_LOG" | send_logs "$JOB_ID"
 
         # Recover the build's exit status (tagged in the stream)
         BUILD_RC=$(grep -oE 'BUILD_EXIT=[0-9]+' "$LOG_PIPE_DIR/.dummy" 2>/dev/null | tail -1 | cut -d= -f2 || true)
@@ -391,7 +404,10 @@ export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools
 # ── 3. SDK licenses ───────────────────────────────────────────────────────────
 echo ""
 echo "==> Accepting SDK licenses..."
-yes | sdkmanager --sdk_root="$ANDROID_HOME" --licenses > /dev/null 2>&1 || true
+set +e
+yes 2>/dev/null | sdkmanager --sdk_root="$ANDROID_HOME" --licenses > /dev/null 2>&1
+set -e
+echo "  Licenses accepted (or already accepted)."
 
 # ── 4. SDK platform & build-tools ─────────────────────────────────────────────
 echo ""

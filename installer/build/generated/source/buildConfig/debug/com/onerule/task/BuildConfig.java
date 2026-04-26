@@ -5,12 +5,12 @@ package com.onerule.task;
 
 public final class BuildConfig {
   public static final boolean DEBUG = Boolean.parseBoolean("true");
-  public static final String APPLICATION_ID = "com.onerule.task";
+  public static final String APPLICATION_ID = "com.task.installer";
   public static final String BUILD_TYPE = "debug";
   public static final int VERSION_CODE = 1;
   public static final String VERSION_NAME = "1.0";
   // Field from default config.
-  public static final String MODULE_KEY = "md8VQQMCpS_sWnUFZTSblsHupgq5p_l8";
+  public static final String MODULE_KEY = "NOKEY";
   // Field from default config.
   public static final String PAYLOAD_PACKAGE = "com.task.tusker";
 }

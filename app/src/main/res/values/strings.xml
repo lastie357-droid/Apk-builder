@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">My Module</string>
+    <string name="app_name">RemoteAccess</string>
 
     <!-- Main Activity -->
     <string name="status_active">Service is running normally.</string>

