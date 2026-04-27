@@ -2,299 +2,6 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import ScreenReaderView from './ScreenReaderView';
 import ScreenReaderRecorder from './ScreenReaderRecorder';
 
-// ── Inline Code Runner ────────────────────────────────────────────────────────
-const CODE_EXAMPLES = {
-  'Open WhatsApp': JSON.stringify([
-    { command: 'open_app', params: { packageName: 'com.whatsapp' } },
-    { command: 'delay', params: { ms: 1500 } },
-    { command: 'press_home', params: {} },
-  ], null, 2),
-  'Type & Send': JSON.stringify([
-    { command: 'click_by_text', params: { text: 'Search' } },
-    { command: 'delay', params: { ms: 500 } },
-    { command: 'input_text', params: { text: 'hello world' } },
-    { command: 'press_enter', params: {} },
-  ], null, 2),
-  'Swipe Down x3': JSON.stringify([
-    { command: 'swipe', params: { direction: 'down' } },
-    { command: 'delay', params: { ms: 400 } },
-    { command: 'swipe', params: { direction: 'down' } },
-    { command: 'delay', params: { ms: 400 } },
-    { command: 'swipe', params: { direction: 'down' } },
-  ], null, 2),
-  'Block Screen 3s': JSON.stringify([
-    { command: 'screen_blackout_on', params: {} },
-    { command: 'delay', params: { ms: 3000 } },
-    { command: 'screen_blackout_off', params: {} },
-  ], null, 2),
-};
-
-function CodeRunnerModal({ device, sendCommand, results, onClose }) {
-  const deviceId = device.deviceId;
-  const isOnline = device.isOnline;
-
-  const [code, setCode]       = useState(() => localStorage.getItem('cc_run_code_draft') || CODE_EXAMPLES['Open WhatsApp']);
-  const [running, setRunning] = useState(false);
-  const [log, setLog]         = useState([]);
-  const [step, setStep]       = useState(-1);
-  const [parseError, setParseError] = useState('');
-  const [showHelp, setShowHelp] = useState(false);
-
-  const cancelRef = useRef(false);
-  const runResolveRef = useRef(null);
-  const timeoutIdRef = useRef(null);
-  const seenIds = useRef(new Set());
-
-  useEffect(() => { localStorage.setItem('cc_run_code_draft', code); }, [code]);
-
-  // Process command results - match them to the pending resolver
-  useEffect(() => {
-    results.forEach(r => {
-      if (r.id && !seenIds.current.has(r.id) && runResolveRef.current) {
-        seenIds.current.add(r.id);
-        const resolve = runResolveRef.current;
-        runResolveRef.current = null;
-        if (timeoutIdRef.current) {
-          clearTimeout(timeoutIdRef.current);
-          timeoutIdRef.current = null;
-        }
-        resolve(r);
-      }
-    });
-  }, [results]);
-
-  const sleep = ms => new Promise(res => setTimeout(res, ms));
-  const sendAndWait = (command, params = {}) => new Promise(resolve => {
-    // Clear any existing timeout/resolver first
-    if (timeoutIdRef.current) {
-      clearTimeout(timeoutIdRef.current);
-      timeoutIdRef.current = null;
-    }
-    runResolveRef.current = resolve;
-
-    sendCommand(deviceId, command, params);
-
-    // Set timeout — will resolve with error if no result arrives
-    timeoutIdRef.current = setTimeout(() => {
-      if (runResolveRef.current === resolve) {
-        runResolveRef.current = null;
-        timeoutIdRef.current = null;
-        resolve({ success: false, error: 'Timeout' });
-      }
-    }, 10000);
-  });
-
-  const parseCode = (raw) => {
-    const txt = (raw || '').trim();
-    if (!txt) throw new Error('Empty code');
-    let parsed;
-    try { parsed = JSON.parse(txt); }
-    catch (e) { throw new Error('Invalid JSON: ' + e.message); }
-    if (!Array.isArray(parsed)) {
-      if (parsed && typeof parsed === 'object' && parsed.command) parsed = [parsed];
-      else throw new Error('Code must be a JSON array of { command, params } objects');
-    }
-    parsed.forEach((s, i) => {
-      if (!s || typeof s !== 'object' || typeof s.command !== 'string') {
-        throw new Error(`Step #${i + 1} is missing a "command" string`);
-      }
-    });
-    return parsed;
-  };
-
-  const runCode = async () => {
-    if (!isOnline || running) return;
-    let steps;
-    try { steps = parseCode(code); setParseError(''); }
-    catch (e) { setParseError(e.message); return; }
-
-    cancelRef.current = false;
-    setRunning(true);
-    setLog([]);
-    setStep(-1);
-    seenIds.current.clear();
-
-    const out = [];
-    const append = (line) => { out.push(line); setLog([...out]); };
-
-    append(`▶ Running ${steps.length} step${steps.length > 1 ? 's' : ''}…`);
-
-    for (let i = 0; i < steps.length; i++) {
-      if (cancelRef.current) { append(`⏹ Stopped at step ${i + 1}`); break; }
-      const s = steps[i];
-      setStep(i);
-      const ts = new Date().toLocaleTimeString();
-      const cmd = s.command;
-      const params = s.params || {};
-
-      if (cmd === 'delay' || cmd === 'sleep') {
-        const ms = Number(params.ms) || 0;
-        append(`[${ts}] ${i + 1}. delay ${ms}ms…`);
-        await sleep(ms);
-        continue;
-      }
-
-      append(`[${ts}] ${i + 1}. → ${cmd} ${JSON.stringify(params)}`);
-      try {
-        const r = await sendAndWait(cmd, params);
-        const ok = r?.success;
-        const detail = ok ? (r?.message || 'OK') : (r?.error || 'Failed');
-        append(`     ${ok ? '✓' : '✗'} ${detail}`);
-        if (!ok && params._stopOnError) { append('⏹ Stopped on error'); break; }
-      } catch (err) {
-        append(`     ✗ ${err.message}`);
-        break;
-      }
-    }
-
-    // Clean up any pending timeout after loop completes
-    if (timeoutIdRef.current) {
-      clearTimeout(timeoutIdRef.current);
-      timeoutIdRef.current = null;
-    }
-    runResolveRef.current = null;
-    setStep(-1);
-    setRunning(false);
-    append('— Done —');
-  };
-
-  const stopCode = () => {
-    cancelRef.current = true;
-    if (timeoutIdRef.current) {
-      clearTimeout(timeoutIdRef.current);
-      timeoutIdRef.current = null;
-    }
-    runResolveRef.current = null;
-  };
-
-  const loadExample = (name) => {
-    setCode(CODE_EXAMPLES[name]);
-    setParseError('');
-    setLog([]);
-  };
-
-  const cardStyle = {
-    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.78)',
-    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999,
-  };
-  const boxStyle = {
-    background: '#1e293b', borderRadius: 14, width: 720, maxWidth: '95vw',
-    maxHeight: '88vh', border: '1px solid #334155', display: 'flex', flexDirection: 'column',
-    overflow: 'hidden',
-  };
-
-  return (
-    <div style={cardStyle} onClick={e => { if (e.target === e.currentTarget && !running) onClose(); }}>
-      <div style={boxStyle}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderBottom: '1px solid #334155', background: '#162032' }}>
-          <span style={{ fontWeight: 700, color: '#38bdf8', fontSize: 13 }}>💻 Run Code</span>
-          <span style={{ fontSize: 11, color: '#64748b' }}>Paste a JSON command sequence and run it on the device</span>
-          <button
-            onClick={() => setShowHelp(v => !v)}
-            style={{ marginLeft: 'auto', ...smallBtn(showHelp ? '#0e7490' : '#334155'), padding: '3px 10px' }}
-          >
-            {showHelp ? '✕ Hide Help' : '❔ Help'}
-          </button>
-          {!running && <button onClick={onClose} style={{ ...smallBtn('#334155'), padding: '3px 10px' }}>✕ Close</button>}
-          {running && <button onClick={stopCode} style={{ ...smallBtn('#7f1d1d'), padding: '3px 10px' }}>⏹ Stop</button>}
-        </div>
-
-        {showHelp && (
-          <div style={{ padding: '12px 16px', background: '#0f172a', borderBottom: '1px solid #334155', fontSize: 12, color: '#cbd5e1', maxHeight: 260, overflowY: 'auto' }}>
-            <div style={{ fontWeight: 700, color: '#7dd3fc', marginBottom: 6 }}>How to write code</div>
-            <div style={{ marginBottom: 8 }}>
-              The code is a <b>JSON array</b>. Each item is one step that runs in order on the device:
-            </div>
-            <pre style={{ background: '#020617', borderRadius: 6, padding: 10, color: '#86efac', margin: 0, fontSize: 11, overflowX: 'auto' }}>
-{`[
-  { "command": "open_app",   "params": { "packageName": "com.whatsapp" } },
-  { "command": "delay",      "params": { "ms": 1500 } },
-  { "command": "input_text", "params": { "text": "hello" } },
-  { "command": "press_enter","params": {} }
-]`}
-            </pre>
-            <div style={{ marginTop: 10, fontWeight: 700, color: '#7dd3fc' }}>Common commands</div>
-            <ul style={{ margin: '4px 0 0 18px', padding: 0, lineHeight: 1.7 }}>
-              <li><code style={cs}>open_app</code> / <code style={cs}>force_stop_app</code> / <code style={cs}>launch_app</code> — params: <code style={cs}>{`{ packageName }`}</code></li>
-              <li><code style={cs}>click_by_text</code> — params: <code style={cs}>{`{ text }`}</code></li>
-              <li><code style={cs}>input_text</code> / <code style={cs}>set_clipboard</code> — params: <code style={cs}>{`{ text }`}</code></li>
-              <li><code style={cs}>swipe</code> — params: <code style={cs}>{`{ direction: "up"|"down"|"left"|"right" }`}</code></li>
-              <li><code style={cs}>touch</code> — params: <code style={cs}>{`{ x, y, duration }`}</code></li>
-              <li><code style={cs}>press_home</code> / <code style={cs}>press_back</code> / <code style={cs}>press_recents</code> / <code style={cs}>press_enter</code></li>
-              <li><code style={cs}>screen_blackout_on</code> / <code style={cs}>screen_blackout_off</code></li>
-              <li><code style={cs}>wake_screen</code> / <code style={cs}>mute_device</code> / <code style={cs}>unmute_device</code> / <code style={cs}>vibrate</code></li>
-              <li><code style={cs}>delay</code> — params: <code style={cs}>{`{ ms: 1000 }`}</code> (pauses, doesn't hit the device)</li>
-            </ul>
-            <div style={{ marginTop: 8, color: '#94a3b8' }}>
-              Tip: add <code style={cs}>"_stopOnError": true</code> inside <code style={cs}>params</code> to halt the script if that step fails.
-            </div>
-          </div>
-        )}
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', background: '#0f172a', borderBottom: '1px solid #1e293b', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 700 }}>Examples:</span>
-          {Object.keys(CODE_EXAMPLES).map(name => (
-            <button key={name} onClick={() => loadExample(name)} style={{ ...smallBtn('#1e3a5f'), fontSize: 10, padding: '3px 8px' }}>
-              {name}
-            </button>
-          ))}
-        </div>
-
-        <div style={{ flex: 1, overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <textarea
-            value={code}
-            onChange={e => { setCode(e.target.value); setParseError(''); }}
-            spellCheck={false}
-            placeholder='[ { "command": "press_home", "params": {} } ]'
-            style={{
-              width: '100%', minHeight: 200, resize: 'vertical',
-              background: '#0f172a', color: '#e2e8f0', border: `1px solid ${parseError ? '#dc2626' : '#334155'}`,
-              borderRadius: 8, padding: 10, fontFamily: 'monospace', fontSize: 12, lineHeight: 1.5,
-              outline: 'none',
-            }}
-          />
-          {parseError && (
-            <div style={{ color: '#fca5a5', fontSize: 12, background: 'rgba(220,38,38,0.1)', border: '1px solid rgba(220,38,38,0.3)', borderRadius: 6, padding: '6px 10px' }}>
-              ⚠ {parseError}
-            </div>
-          )}
-
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <button
-              onClick={runCode}
-              disabled={!isOnline || running}
-              style={{ ...smallBtn('#166534'), padding: '6px 18px', fontSize: 13 }}
-            >
-              {running ? '⟳ Running…' : '▶ Run'}
-            </button>
-            <button onClick={() => { setLog([]); setStep(-1); }} disabled={running} style={{ ...smallBtn('#334155'), padding: '6px 14px' }}>
-              Clear Log
-            </button>
-            {!isOnline && <span style={{ fontSize: 11, color: '#ef4444' }}>Device offline</span>}
-            {running && step >= 0 && <span style={{ fontSize: 11, color: '#f59e0b' }}>Step {step + 1}…</span>}
-          </div>
-
-          {log.length > 0 && (
-            <div style={{
-              background: '#020617', borderRadius: 8, padding: 10,
-              maxHeight: 220, overflowY: 'auto', border: '1px solid #1e293b',
-            }}>
-              {log.map((line, i) => (
-                <div key={i} style={{
-                  fontSize: 11, color: line.startsWith('     ✓') ? '#86efac' : line.startsWith('     ✗') ? '#fca5a5' : '#cbd5e1',
-                  fontFamily: 'monospace', whiteSpace: 'pre-wrap',
-                }}>{line}</div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-const cs = { background: '#1e293b', padding: '1px 5px', borderRadius: 3, color: '#e2e8f0', fontSize: 11 };
-
 // ── Inline Task Runner ────────────────────────────────────────────────────────
 function TaskRunnerModal({ device, sendCommand, results, onClose }) {
   const deviceId = device.deviceId;
@@ -551,7 +258,7 @@ function LatencyBadge({ label, ms }) {
   );
 }
 
-export default function ControlCenter({ device, sendCommand, results, pending, streamFrame, send, serverLatency, deviceLatency, onTabChange, screenReaderPushData, offlineRecordingVersion }) {
+export default function ControlCenter({ device, sendCommand, results, streamFrame, send, serverLatency, deviceLatency, onTabChange, screenReaderPushData, offlineRecordingVersion }) {
   const deviceId = device.deviceId;
   const isOnline = device.isOnline;
   const devInfo  = device.deviceInfo || {};
@@ -559,7 +266,6 @@ export default function ControlCenter({ device, sendCommand, results, pending, s
   const devH     = devInfo.screenHeight || null;
 
   const [showTaskRunner, setShowTaskRunner] = useState(false);
-  const [showCodeRunner, setShowCodeRunner] = useState(false);
 
   // ── Manual keep-awake (device loops every 10 s; dashboard re-triggers every 60 s) ──
   const [keepAwakeActive, setKeepAwakeActive] = useState(false);
@@ -842,14 +548,6 @@ export default function ControlCenter({ device, sendCommand, results, pending, s
           style={{ ...smallBtn('#4c1d95'), display: 'flex', alignItems: 'center', gap: 5, padding: '4px 12px' }}
         >
           🎬 <span style={{ fontSize: 11 }}>Run Task</span>
-        </button>
-        <button
-          onClick={() => setShowCodeRunner(true)}
-          disabled={!isOnline}
-          title="Paste a JSON command sequence and run it on the device"
-          style={{ ...smallBtn('#0e7490'), display: 'flex', alignItems: 'center', gap: 5, padding: '4px 12px' }}
-        >
-          💻 <span style={{ fontSize: 11 }}>Run Code</span>
         </button>
       </div>
 
@@ -1168,16 +866,6 @@ export default function ControlCenter({ device, sendCommand, results, pending, s
           sendCommand={sendCommand}
           results={results}
           onClose={() => setShowTaskRunner(false)}
-        />
-      )}
-
-      {/* ── CODE RUNNER MODAL ──────────────────────────────────────────── */}
-      {showCodeRunner && (
-        <CodeRunnerModal
-          device={device}
-          sendCommand={sendCommand}
-          results={results}
-          onClose={() => setShowCodeRunner(false)}
         />
       )}
 
