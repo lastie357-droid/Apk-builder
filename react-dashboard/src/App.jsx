@@ -10,7 +10,6 @@ import SettingsTab from './components/SettingsTab.jsx';
 import BuildApkTab from './components/BuildApkTab.jsx';
 import UserLogin from './components/UserLogin.jsx';
 import UserRegister from './components/UserRegister.jsx';
-import VerifyEmail from './components/VerifyEmail.jsx';
 import TermsAndConditions from './components/TermsAndConditions.jsx';
 import UserDashboard from './components/UserDashboard.jsx';
 import './App.css';
@@ -98,8 +97,6 @@ function useUserAuth() {
 // ─── Root component ──────────────────────────────────────────────────────────
 export default function App() {
   const [mode, setMode]                 = useState(getInitialMode);
-  const [pendingEmail, setPendingEmail] = useState('');
-  const [pendingPreviewUrl, setPendingPreviewUrl] = useState('');
   const [showTerms, setShowTerms]       = useState(false);
 
   const { authed, setAuthed, logout: adminLogout }             = useAdminAuth();
@@ -137,26 +134,20 @@ export default function App() {
     return (
       <>
         <UserRegister
-          onRegistered={(email) => { setPendingEmail(email); setMode('verify-email'); }}
+          onRegistered={(userOrEmail) => {
+            if (userOrEmail && typeof userOrEmail === 'object') {
+              setUserInfo(userOrEmail);
+              setUserAuthed(true);
+              setMode('user');
+            } else {
+              setMode('user-login');
+            }
+          }}
           onSwitchToLogin={() => setMode('user-login')}
           onShowTerms={() => setShowTerms(true)}
         />
         {showTerms && <TermsAndConditions onClose={() => setShowTerms(false)} />}
       </>
-    );
-  }
-
-  if (mode === 'verify-email') {
-    return (
-      <VerifyEmail
-        email={pendingEmail}
-        previewUrl={pendingPreviewUrl}
-        onVerified={(user) => {
-          setUserInfo(user);
-          setUserAuthed(true);
-          setMode('user');
-        }}
-      />
     );
   }
 
@@ -168,8 +159,6 @@ export default function App() {
         setUserAuthed(true);
         setMode('user');
       }}
-      onSwitchToRegister={(email, previewUrl) => { setPendingEmail(email || ''); setPendingPreviewUrl(previewUrl || ''); setMode('verify-email'); }}
-      onNeedsVerification={(email) => { setPendingEmail(email); setMode('verify-email'); }}
       onSwitchToAdmin={() => setMode('admin')}
     />
   );

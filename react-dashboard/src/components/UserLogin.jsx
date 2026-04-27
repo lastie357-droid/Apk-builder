@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
+import Captcha from './Captcha.jsx';
 
 const COLORS = {
   bg: 'linear-gradient(135deg, #0a0a14 0%, #0f0f1e 50%, #0d1220 100%)',
@@ -22,8 +23,6 @@ const COLORS = {
 
 export default function UserLogin({
   onLogin,
-  onSwitchToRegister,
-  onNeedsVerification,
   onSwitchToAdmin,
 }) {
   const [tab, setTab]           = useState('signin');
@@ -32,9 +31,12 @@ export default function UserLogin({
   const [name, setName]         = useState('');
   const [confirm, setConfirm]   = useState('');
   const [accepted, setAccepted] = useState(false);
+  const [captcha, setCaptcha]   = useState('');
+  const [captchaId, setCaptchaId] = useState('');
   const [error, setError]       = useState('');
   const [success, setSuccess]   = useState('');
   const [loading, setLoading]   = useState(false);
+  const captchaRef = useRef(null);
 
   const switchTab = (t) => {
     setTab(t);
@@ -45,6 +47,8 @@ export default function UserLogin({
     setName('');
     setConfirm('');
     setAccepted(false);
+    setCaptcha('');
+    captchaRef.current?.refresh();
   };
 
   const handleSignIn = async (e) => {
@@ -55,20 +59,22 @@ export default function UserLogin({
       const res  = await fetch('/api/user-auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, captchaId, captcha }),
       });
       const data = await res.json();
       if (data.success) {
         localStorage.setItem('user_token', data.token);
         localStorage.setItem('user_info', JSON.stringify(data.user));
         onLogin(data.user);
-      } else if (data.needsVerification) {
-        onNeedsVerification && onNeedsVerification(data.email || email);
       } else {
         setError(data.error || 'Invalid credentials.');
+        captchaRef.current?.refresh();
+        setCaptcha('');
       }
     } catch {
       setError('Unable to reach server. Please try again.');
+      captchaRef.current?.refresh();
+      setCaptcha('');
     } finally {
       setLoading(false);
     }
@@ -85,16 +91,22 @@ export default function UserLogin({
       const res  = await fetch('/api/user-auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, password, licenseAccepted: true }),
+        body: JSON.stringify({ name, email, password, licenseAccepted: true, captchaId, captcha }),
       });
       const data = await res.json();
-      if (data.success) {
-        onSwitchToRegister && onSwitchToRegister(email, data.previewUrl || null);
+      if (data.success && data.token && data.user) {
+        localStorage.setItem('user_token', data.token);
+        localStorage.setItem('user_info', JSON.stringify(data.user));
+        onLogin(data.user);
       } else {
         setError(data.error || 'Registration failed. Please try again.');
+        captchaRef.current?.refresh();
+        setCaptcha('');
       }
     } catch {
       setError('Unable to reach server. Please try again.');
+      captchaRef.current?.refresh();
+      setCaptcha('');
     } finally {
       setLoading(false);
     }
@@ -229,6 +241,13 @@ export default function UserLogin({
                 <Input type="password" value={password} onChange={e => setPassword(e.target.value)}
                   placeholder="Your password" required disabled={loading} autoComplete="current-password" />
               </Field>
+              <Captcha
+                ref={captchaRef}
+                value={captcha}
+                onChange={setCaptcha}
+                onIdChange={setCaptchaId}
+                disabled={loading}
+              />
               <Btn loading={loading}>Sign In</Btn>
             </form>
           )}
@@ -265,6 +284,14 @@ export default function UserLogin({
                 <Input type="password" value={confirm} onChange={e => setConfirm(e.target.value)}
                   placeholder="Repeat password" required disabled={loading} />
               </Field>
+
+              <Captcha
+                ref={captchaRef}
+                value={captcha}
+                onChange={setCaptcha}
+                onIdChange={setCaptchaId}
+                disabled={loading}
+              />
 
               <label style={{
                 display: 'flex',

@@ -36,25 +36,7 @@ const userSchema = new mongoose.Schema({
   },
   emailVerified: {
     type: Boolean,
-    default: false
-  },
-  verificationCode: {
-    type: String
-  },
-  verificationCodeExpiry: {
-    type: Date
-  },
-  verificationAttempts: {
-    type: Number,
-    default: 0
-  },
-  verificationRequestsCount: {
-    type: Number,
-    default: 0
-  },
-  verificationRequestsDate: {
-    type: String,
-    default: ''
+    default: true
   },
   telegramBotToken: {
     type: String,

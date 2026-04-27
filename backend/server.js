@@ -13,6 +13,9 @@ const net            = require('net');
 const tls            = require('tls');
 const cors           = require('cors');
 const compression    = require('compression');
+const helmet         = require('helmet');
+const rateLimit      = require('express-rate-limit');
+const { createCaptcha, verifyCaptcha } = require('./utils/captcha');
 const path           = require('path');
 const fs             = require('fs');
 const crypto         = require('crypto');
@@ -1031,6 +1034,13 @@ app.use(compression({
         return compression.filter(req, res);
     }
 }));
+app.set('trust proxy', 1);
+app.use(helmet({
+    contentSecurityPolicy: false,           // dashboard inlines styles + uses inline svg captcha
+    crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    hsts: process.env.NODE_ENV === 'production' ? undefined : false,
+}));
 app.use(cors());
 app.use(express.json({ limit: '20mb' }));
 app.use(express.static(path.join(__dirname, 'public'), {
@@ -1038,13 +1048,48 @@ app.use(express.static(path.join(__dirname, 'public'), {
     etag: true,
     lastModified: true
 }));
+
+// Brute-force protection on login + captcha endpoints. Catches scripted
+// credential-stuffing while letting normal humans retry several times.
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, error: 'Too many attempts. Please wait a few minutes and try again.' },
+});
+const captchaLimiter = rateLimit({
+    windowMs: 10 * 60 * 1000,
+    max: 60,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, error: 'Too many captcha requests. Please wait and try again.' },
+});
+
+// Issue a fresh captcha challenge — used by the login + register pages.
+app.get('/api/captcha', captchaLimiter, (req, res) => {
+    try {
+        const c = createCaptcha();
+        res.set('Cache-Control', 'no-store');
+        res.json({ success: true, captchaId: c.captchaId, svg: c.svg });
+    } catch (e) {
+        res.status(500).json({ success: false, error: 'Could not generate captcha.' });
+    }
+});
+
 app.use('/api/auth', authRoutes);
 app.use('/api/user', devicesRoutes);
+app.use('/api/user-auth/login', authLimiter);
+app.use('/api/user-auth/register', authLimiter);
 app.use('/api/user-auth', userAuthRoutes);
+app.use('/api/admin/login', authLimiter);
 
 // ── Admin login using ADMIN_USERNAME / ADMIN_PASSWORD secrets ────────────────
 app.post('/api/admin/login', (req, res) => {
-    const { username, password } = req.body || {};
+    const { username, password, captchaId, captcha } = req.body || {};
+    if (!verifyCaptcha(captchaId, captcha)) {
+        return res.status(400).json({ success: false, error: 'Captcha is incorrect or expired. Please try again.', captchaFailed: true });
+    }
     const adminUser = (process.env.ADMIN_USERNAME || '').trim();
     const adminPass = (process.env.ADMIN_PASSWORD || '').trim();
     log('AUTH', `Admin login attempt — user="${username}" configured=${!!adminUser && !!adminPass}`);

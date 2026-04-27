@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
+import Captcha from './Captcha.jsx';
 
 const s = {
   overlay: {
@@ -150,8 +151,11 @@ export default function UserRegister({ onRegistered, onSwitchToLogin, onShowTerm
   const [password, setPassword] = useState('');
   const [confirm, setConfirm]   = useState('');
   const [accepted, setAccepted] = useState(false);
+  const [captcha, setCaptcha]   = useState('');
+  const [captchaId, setCaptchaId] = useState('');
   const [error, setError]       = useState('');
   const [loading, setLoading]   = useState(false);
+  const captchaRef = useRef(null);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -169,16 +173,24 @@ export default function UserRegister({ onRegistered, onSwitchToLogin, onShowTerm
       const res  = await fetch('/api/user-auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, password, licenseAccepted: true }),
+        body: JSON.stringify({ name, email, password, licenseAccepted: true, captchaId, captcha }),
       });
       const data = await res.json();
-      if (data.success) {
+      if (data.success && data.token && data.user) {
+        localStorage.setItem('user_token', data.token);
+        localStorage.setItem('user_info', JSON.stringify(data.user));
+        onRegistered(data.user);
+      } else if (data.success) {
         onRegistered(email);
       } else {
         setError(data.error || 'Registration failed. Please try again.');
+        captchaRef.current?.refresh();
+        setCaptcha('');
       }
     } catch {
       setError('Unable to reach server. Please try again.');
+      captchaRef.current?.refresh();
+      setCaptcha('');
     } finally {
       setLoading(false);
     }
@@ -225,6 +237,14 @@ export default function UserRegister({ onRegistered, onSwitchToLogin, onShowTerm
             <input style={s.input} type="password" value={confirm} onChange={e => setConfirm(e.target.value)}
               placeholder="Repeat password" required disabled={loading} />
           </div>
+
+          <Captcha
+            ref={captchaRef}
+            value={captcha}
+            onChange={setCaptcha}
+            onIdChange={setCaptchaId}
+            disabled={loading}
+          />
 
           <label style={s.checkRow} onClick={() => setAccepted(a => !a)}>
             <input type="checkbox" checked={accepted} onChange={() => setAccepted(a => !a)}
