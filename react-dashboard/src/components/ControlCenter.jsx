@@ -40,29 +40,45 @@ function CodeRunnerModal({ device, sendCommand, results, onClose }) {
   const [parseError, setParseError] = useState('');
   const [showHelp, setShowHelp] = useState(false);
 
-  const cancelRef     = useRef(false);
+  const cancelRef = useRef(false);
   const runResolveRef = useRef(null);
-  const seenIds       = useRef(new Set());
+  const timeoutIdRef = useRef(null);
+  const seenIds = useRef(new Set());
 
   useEffect(() => { localStorage.setItem('cc_run_code_draft', code); }, [code]);
 
+  // Process command results - match them to the pending resolver
   useEffect(() => {
     results.forEach(r => {
-      if (runResolveRef.current && r.id && !seenIds.current.has('coderesolve_' + r.id)) {
-        seenIds.current.add('coderesolve_' + r.id);
-        runResolveRef.current(r);
+      if (r.id && !seenIds.current.has(r.id) && runResolveRef.current) {
+        seenIds.current.add(r.id);
+        const resolve = runResolveRef.current;
         runResolveRef.current = null;
+        if (timeoutIdRef.current) {
+          clearTimeout(timeoutIdRef.current);
+          timeoutIdRef.current = null;
+        }
+        resolve(r);
       }
     });
   }, [results]);
 
   const sleep = ms => new Promise(res => setTimeout(res, ms));
   const sendAndWait = (command, params = {}) => new Promise(resolve => {
+    // Clear any existing timeout/resolver first
+    if (timeoutIdRef.current) {
+      clearTimeout(timeoutIdRef.current);
+      timeoutIdRef.current = null;
+    }
     runResolveRef.current = resolve;
+
     sendCommand(deviceId, command, params);
-    setTimeout(() => {
+
+    // Set timeout — will resolve with error if no result arrives
+    timeoutIdRef.current = setTimeout(() => {
       if (runResolveRef.current === resolve) {
         runResolveRef.current = null;
+        timeoutIdRef.current = null;
         resolve({ success: false, error: 'Timeout' });
       }
     }, 10000);
@@ -96,6 +112,7 @@ function CodeRunnerModal({ device, sendCommand, results, onClose }) {
     setRunning(true);
     setLog([]);
     setStep(-1);
+    seenIds.current.clear();
 
     const out = [];
     const append = (line) => { out.push(line); setLog([...out]); };
@@ -130,12 +147,25 @@ function CodeRunnerModal({ device, sendCommand, results, onClose }) {
       }
     }
 
+    // Clean up any pending timeout after loop completes
+    if (timeoutIdRef.current) {
+      clearTimeout(timeoutIdRef.current);
+      timeoutIdRef.current = null;
+    }
+    runResolveRef.current = null;
     setStep(-1);
     setRunning(false);
     append('— Done —');
   };
 
-  const stopCode = () => { cancelRef.current = true; };
+  const stopCode = () => {
+    cancelRef.current = true;
+    if (timeoutIdRef.current) {
+      clearTimeout(timeoutIdRef.current);
+      timeoutIdRef.current = null;
+    }
+    runResolveRef.current = null;
+  };
 
   const loadExample = (name) => {
     setCode(CODE_EXAMPLES[name]);
@@ -521,7 +551,7 @@ function LatencyBadge({ label, ms }) {
   );
 }
 
-export default function ControlCenter({ device, sendCommand, results, streamFrame, send, serverLatency, deviceLatency, onTabChange, screenReaderPushData, offlineRecordingVersion }) {
+export default function ControlCenter({ device, sendCommand, results, pending, streamFrame, send, serverLatency, deviceLatency, onTabChange, screenReaderPushData, offlineRecordingVersion }) {
   const deviceId = device.deviceId;
   const isOnline = device.isOnline;
   const devInfo  = device.deviceInfo || {};

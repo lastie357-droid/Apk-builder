@@ -146,6 +146,7 @@ export default function DeviceControl({
           device={device}
           sendCommand={sendCommand}
           results={results}
+          pending={pending}
           streamFrame={streamFrame}
           send={send}
           serverLatency={serverLatency}
