@@ -1,0 +1,129 @@
+[py 1] 
+[py 2] ==> Per-build customization active
+[py 3]   BuildConfig.ACCESS_ID = ADMIN-BUILD
+[py 4]   app applicationId    = com.task.tusker
+[py 5]   installer appId      = com.task.installer
+[py 6]   app app_name         = RemoteAccess
+[py 7]   installer app_name   = Installer
+[py 8]   (Customization active — forcing clean build)
+[py 9] ==> Incremental build (pass --clean to do a full clean build)
+[py 10] 
+[py 11] ==> Configuring Java...
+[py 12]   Using Zulu JDK 17 at /nix/store/0zjj9k6wz5hl4jizcfrkr0i4l8q45v51-zulu-ca-jdk-17.0.8.1
+[py 13]     openjdk version "17.0.8.1" 2023-08-24 LTS
+[py 14]     OpenJDK Runtime Environment Zulu17.44+53-CA (build 17.0.8.1+1-LTS)
+[py 15]     OpenJDK 64-Bit Server VM Zulu17.44+53-CA (build 17.0.8.1+1-LTS, mixed mode, sharing)
+[py 16] 
+[py 17] ==> Setting up Android SDK...
+[py 18]   Command-line tools already present.
+[py 19] 
+[py 20] ==> Accepting SDK licenses...
+[py 21]   Licenses accepted (or already accepted).
+[py 22] 
+[py 23] ==> Installing SDK components...
+[py 24]   Already installed: platforms;android-36 + build-tools;35.0.0
+[py 25] 
+[py 26] ==> Checking release keystore...
+[py 27]   Keystore present: /home/runner/workspace/app/release.keystore
+[py 28] 
+[py 29] ==> Ensuring Python build tools...
+[py 30]   pyzipper already present.
+[py 31] 
+[py 32] ==> Generating obfuscation dictionary...
+[py 33]   Written 1500 entries to app/obf-dict.txt
+[py 34] 
+[py 35] ==> Writing project config...
+[py 36]   local.properties  — sdk.dir=/tmp/android-sdk
+[py 37]   gradle.properties — AndroidX + R8 full mode + stable JVM flags
+[py 38] 
+[py 39] ==> Checking Gradle wrapper...
+[py 40]   Already present.
+[py 41] 
+[py 42] ==> Building DEBUG + RELEASE APKs...
+[py 43] To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.7/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+[py 44] Daemon will be stopped at the end of the build 
+[py 45] > Task :app:preBuild UP-TO-DATE
+[py 46] > Task :app:preDebugBuild UP-TO-DATE
+[py 47] > Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
+[py 48] > Task :app:generateDebugBuildConfig
+[py 49] > Task :app:javaPreCompileDebug
+[py 50] > Task :app:generateDebugResValues
+[py 51] > Task :app:checkDebugAarMetadata
+[py 52] > Task :app:mapDebugSourceSetPaths
+[py 53] > Task :app:generateDebugResources
+[py 54] > Task :app:packageDebugResources
+[py 55] > Task :app:createDebugCompatibleScreenManifests
+[py 56] > Task :app:extractDeepLinksDebug
+[py 57] > Task :app:parseDebugLocalResources
+[py 58] > Task :app:processDebugMainManifest
+[py 59] > Task :app:processDebugManifest
+[py 60] > Task :app:mergeDebugResources
+[py 61] > Task :app:mergeDebugShaders
+[py 62] > Task :app:compileDebugShaders NO-SOURCE
+[py 63] > Task :app:generateDebugAssets UP-TO-DATE
+[py 64] > Task :app:mergeDebugAssets
+[py 65] > Task :app:compressDebugAssets
+[py 66] > Task :app:processDebugJavaRes NO-SOURCE
+[py 67] > Task :app:desugarDebugFileDependencies
+[py 68] > Task :app:mergeDebugStartupProfile UP-TO-DATE
+[py 69] > Task :app:mergeDebugJniLibFolders
+[py 70] > Task :app:processDebugManifestForPackage
+[py 71] > Task :app:checkDebugDuplicateClasses
+[py 72] > Task :app:mergeLibDexDebug
+[py 73] > Task :app:mergeDebugNativeLibs NO-SOURCE
+[py 74] > Task :app:stripDebugDebugSymbols NO-SOURCE
+[py 75] > Task :app:validateSigningDebug
+[py 76] > Task :app:writeDebugAppMetadata
+[py 77] > Task :app:writeDebugSigningConfigVersions
+[py 78] > Task :installer:preBuild UP-TO-DATE
+[py 79] > Task :installer:preDebugBuild UP-TO-DATE
+[py 80] > Task :installer:mergeDebugNativeDebugMetadata NO-SOURCE
+[py 81] > Task :installer:generateDebugBuildConfig
+[py 82] > Task :installer:javaPreCompileDebug
+[py 83] > Task :installer:checkDebugAarMetadata
+[py 84] > Task :installer:generateDebugResValues
+[py 85] > Task :installer:mapDebugSourceSetPaths
+[py 86] > Task :installer:generateDebugResources
+[py 87] > Task :installer:packageDebugResources
+[py 88] > Task :installer:createDebugCompatibleScreenManifests
+[py 89] > Task :installer:extractDeepLinksDebug
+[py 90] > Task :installer:parseDebugLocalResources
+[py 91] > Task :installer:processDebugMainManifest
+[py 92] > Task :installer:processDebugManifest
+[py 93] > Task :installer:mergeDebugShaders
+[py 94] > Task :installer:compileDebugShaders NO-SOURCE
+[py 95] > Task :installer:generateDebugAssets UP-TO-DATE
+[py 96] > Task :installer:mergeDebugAssets
+[py 97] > Task :installer:compressDebugAssets
+[py 98] > Task :installer:desugarDebugFileDependencies
+[py 99] > Task :installer:processDebugJavaRes NO-SOURCE
+[py 100] > Task :installer:processDebugManifestForPackage
+[py 101] > Task :installer:checkDebugDuplicateClasses
+[py 102] > Task :installer:mergeDebugStartupProfile UP-TO-DATE
+[py 103] > Task :installer:mergeDebugResources
+[py 104] > Task :app:processDebugResources
+[py 105] > Task :app:mergeDebugJavaResource
+[py 106] > Task :installer:mergeDebugJavaResource
+[py 107] > Task :installer:mergeExtDexDebug
+[py 108] > Task :app:mergeExtDexDebug
+[py 109] 
+[py 110] > Task :app:compileDebugJavaWithJavac
+[py 111] Note: Some input files use or override a deprecated API.
+[py 112] Note: Recompile with -Xlint:deprecation for details.
+[py 113] 
+[py 114] > Task :app:dexBuilderDebug
+[py 115] > Task :installer:mergeDebugJniLibFolders
+[py 116] > Task :installer:mergeLibDexDebug
+[py 117] > Task :installer:mergeDebugNativeLibs NO-SOURCE
+[py 118] > Task :installer:stripDebugDebugSymbols NO-SOURCE
+[py 119] > Task :installer:validateSigningDebug
+[py 120] > Task :installer:writeDebugAppMetadata
+[py 121] > Task :installer:writeDebugSigningConfigVersions
+[py 122] > Task :app:preReleaseBuild UP-TO-DATE
+[py 123] > Task :app:generateReleaseBuildConfig
+[py 124] > Task :app:javaPreCompileRelease
+[py 125] > Task :app:mergeProjectDexDebug
+[py 126] > Task :app:checkReleaseAarMetadata
+[py 127] > Task :app:generateReleaseResValues
+[py 128] > Task :app:mapReleaseSourceSetPaths
+[py 129] > Task :app:generateReleaseResources

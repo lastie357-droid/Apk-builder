@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Soft outer ring -->
+    <path
+        android:pathData="M54,18 m-26,0 a26,26 0 1,0 52,0 a26,26 0 1,0 -52,0"
+        android:strokeColor="#6366F1"
+        android:strokeWidth="2"
+        android:strokeAlpha="0.55"
+        android:fillColor="#00000000"/>
+
+    <!-- Filled disc behind the spark -->
+    <path
+        android:pathData="M54,28 m-22,0 a22,22 0 1,0 44,0 a22,22 0 1,0 -44,0"
+        android:fillColor="#8B5CF6"
+        android:fillAlpha="0.18"/>
+
+    <!-- 4-point spark / assist mark -->
+    <path
+        android:pathData="M54,12
+                          C56,28 64,36 80,38
+                          C64,40 56,48 54,64
+                          C52,48 44,40 28,38
+                          C44,36 52,28 54,12 Z"
+        android:fillColor="#A5B4FC"/>
+
+    <!-- Smaller secondary spark, lower-right -->
+    <path
+        android:pathData="M82,62
+                          C83,69 86,72 92,73
+                          C86,74 83,77 82,84
+                          C81,77 78,74 72,73
+                          C78,72 81,69 82,62 Z"
+        android:fillColor="#C4B5FD"/>
+
+    <!-- Tiny tertiary spark, lower-left -->
+    <path
+        android:pathData="M30,72
+                          C30.6,76 32.4,77.8 36,78.4
+                          C32.4,79 30.6,80.8 30,84.4
+                          C29.4,80.8 27.6,79 24,78.4
+                          C27.6,77.8 29.4,76 30,72 Z"
+        android:fillColor="#DDD6FE"/>
+</vector>
