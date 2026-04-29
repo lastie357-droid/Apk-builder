@@ -51,21 +51,13 @@ args = "APK Build"
 name = "Backend Server"
 author = "agent"
 
-[workflows.workflow.metadata]
-outputType = "webview"
-
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "cd backend && npm install --prefer-offline && npm run build && node server.js"
 waitForPort = 5000
 
-[[workflows.workflow]]
-name = "APK Build"
-author = "agent"
+[workflows.workflow.metadata]
+outputType = "webview"
 
 [workflows.workflow.metadata]
 outputType = "console"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "BUILD_URL=${BUILD_URL:-http://localhost:5000} bash build.sh --worker"
