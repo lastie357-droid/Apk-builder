@@ -1,4 +1,5 @@
 modules = ["java-graalvm22.3", "nodejs-20", "web", "bash", "python-3.11"]
+
 [agent]
 expertMode = true
 stack = "BEST_EFFORT_FALLBACK"
@@ -8,58 +9,14 @@ channel = "stable-25_05"
 packages = ["netcat-gnu"]
 
 [[ports]]
-localPort = 5000
-
-[[ports]]
-localPort = 6000
-externalPort = 6000
-
-[[ports]]
-localPort = 6009
-externalPort = 3001
-
-[[ports]]
 localPort = 7000
-externalPort = 3000
-
-[[ports]]
-localPort = 7500
 externalPort = 80
 
 [workflows]
-runButton = "Project"
+runButton = "Start application"
 
 [[workflows.workflow]]
-name = "Project"
-mode = "parallel"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Backend Server"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Device Simulator"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "APK Build"
-
-[[workflows.workflow]]
-name = "Backend Server"
-author = "agent"
-
-[workflows.workflow.metadata]
-outputType = "webview"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "cd backend && npm install --prefer-offline && npm run build && node server.js"
-waitForPort = 5000
-
-[[workflows.workflow]]
-name = "APK Build"
+name = "Start application"
 author = "agent"
 
 [workflows.workflow.metadata]
@@ -67,4 +24,4 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "BUILD_URL=${BUILD_URL:-http://localhost:5000} bash build.sh --worker"
+args = "node server.js"

@@ -50,33 +50,3 @@ Optional env vars (used at boot, overridable at runtime via the admin UI):
 
 ## Build pipeline note
 `build.sh` was previously SIGPIPE-killed by `python3 - <<PYEOF` in `send_logs`. Fixed by writing the helper to a file and exec'ing `python3 -u <file>`. Build is now stable end-to-end (~60s for both APKs).
-
-## Running the build worker on commercial PaaS hosts (Heroku/Zeabur/Render/Fly/Railway)
-The backend in `backend/server.js` and the worker repo `lastie357-droid/Apk-builder` (cloned to `Apk-builder/` here for reference) are both fully portable — there is no Replit-specific lock-in. To wire them together on any commercial host:
-
-1. Deploy the backend. Set env vars:
-   - `MONGODB_URL` (or whatever you used)
-   - **`BUILD_WORKER_API_KEY`** = a long random string (this is the persistent source of truth; the in-dashboard "Settings → Build worker key" field is in-memory only and is wiped on every restart).
-   - Anything else (NOWPayments, etc.) you actually use.
-2. Deploy the worker (`Apk-builder` repo) on its own host. Set env vars:
-   - `BUILD_URL` = `https://<your-backend-domain>`  (no trailing slash, no path)
-   - `BUILD_API_KEY` = the **same** random string you put in `BUILD_WORKER_API_KEY`.
-3. Verify by hitting the public health endpoint from anywhere:
-   ```
-   curl -s https://<your-backend-domain>/api/build/worker/health | jq
-   ```
-   Expected: `apiKeyConfigured: true`, `apiKeyLength: <N>`, and once the worker has polled at least once, `workerOnline: true`.
-
-### Diagnostics added for commercial deployments
-- **Startup banner** (every backend boot): `[BUILD] Worker API key: configured (length=N)` or `NOT configured` with instructions.
-- **Public no-auth endpoint** `GET /api/build/worker/health` returns `{ok, backendReachable, publicUrl, apiKeyConfigured, apiKeyLength, workerOnline, workerLastSeenAgoMs, pendingJobs, activeJob}`. Safe to expose — contains no secret material.
-- **Failure logging in `requireBuildWorker`**: every failed worker auth attempt logs the reason — `API key not configured`, `worker sent no Authorization header`, or `key mismatch — worker sent length=X, backend expects length=Y` — with caller IP/UA, rate-limited to one log line per 5 s. This is what you read on Heroku/Zeabur to diagnose why the worker shows offline.
-- **Whitespace-tolerant key load**: the env-var-loaded `BUILD_WORKER_API_KEY` is `.trim()`-ed at startup, and incoming worker tokens are trimmed too. Copy-paste artefacts (trailing newline in PaaS dashboard) no longer cause silent mismatches.
-
-### Triage matrix when "worker offline" on a commercial host
-| `health` says | Backend log says | Action |
-|---|---|---|
-| `apiKeyConfigured: false` | `API key NOT configured` at boot | Set `BUILD_WORKER_API_KEY` env var on the **backend** and redeploy. |
-| `apiKeyConfigured: true`, `workerOnline: false`, log shows `key mismatch` | `worker sent length=X, backend expects length=Y` | Lengths differ → re-paste. Lengths same → check whitespace, or that the worker has the right `BUILD_API_KEY`. |
-| `apiKeyConfigured: true`, `workerOnline: false`, log empty | No `Worker auth FAILED` lines | Worker isn't reaching the backend. Check the **worker's** logs and verify `BUILD_URL` resolves and is the right scheme/host. |
-| `curl` returns HTML or 404 | n/a | `BUILD_URL` on the worker is wrong. |
