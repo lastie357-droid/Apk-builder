@@ -55,3 +55,7 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "workflow.run"
 args = "Start application"
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 180000
