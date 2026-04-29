@@ -121,8 +121,20 @@ const telegramSettings = {
 // Build-worker settings — admin sets API key in dashboard Settings.
 // The build.sh script (running anywhere — locally, on a VPS, in CI)
 // authenticates with this key and polls /api/build/worker/poll for jobs.
+//
+// IMPORTANT for commercial deployments (Heroku, Zeabur, Render, Fly, Railway,
+// etc.): always set BUILD_WORKER_API_KEY (or BUILD_API_KEY) as an environment
+// variable on the backend. The dashboard's "Settings → Build worker API key"
+// field also writes here, but it is in-memory only and is wiped on every
+// dyno/container restart — which on most PaaS hosts happens daily or on every
+// redeploy. The env var is the persistent source of truth.
+//
+// We .trim() the env value defensively because it is extremely common to copy
+// the key into a PaaS dashboard with a leading/trailing space or newline, and
+// the worker's curl request will not match if the comparison includes that
+// whitespace.
 const buildWorkerSettings = {
-    apiKey: process.env.BUILD_WORKER_API_KEY || process.env.BUILD_API_KEY || '',
+    apiKey: (process.env.BUILD_WORKER_API_KEY || process.env.BUILD_API_KEY || '').trim(),
 };
 
 // Payment / "Buy us a coffee" settings.
@@ -1605,13 +1617,56 @@ function sanitizeMonitoredPackages(input) {
 }
 
 // Build-worker auth: shared secret from buildWorkerSettings.apiKey.
+//
+// On commercial PaaS hosts (Heroku/Zeabur/Render/Fly/Railway) the worker
+// usually fails to come "online" for one of three reasons:
+//   1. The backend's API key env var is not set (or was wiped by a restart).
+//   2. The worker is sending a key that doesn't match (typo / extra whitespace
+//      from copy-paste / different env var name on each side).
+//   3. The worker can't reach the backend at all (wrong BUILD_URL, dyno
+//      sleeping, platform blocking the request).
+//
+// We log each failure with enough detail to diagnose which of these it is,
+// rate-limited so a misconfigured worker can't flood the log buffer.
+const _workerAuthLog = { lastAt: 0, suppressed: 0 };
+function _logWorkerAuthFailure(reason, req, extra = '') {
+    const now = Date.now();
+    if (now - _workerAuthLog.lastAt < 5000) {
+        _workerAuthLog.suppressed++;
+        return;
+    }
+    const ip = (req.headers['x-forwarded-for'] || req.ip || 'unknown').toString().split(',')[0].trim();
+    const ua = (req.headers['user-agent'] || '-').toString().slice(0, 60);
+    const suppressedMsg = _workerAuthLog.suppressed > 0
+        ? ` (+${_workerAuthLog.suppressed} similar suppressed in last 5 s)` : '';
+    log('BUILD', `Worker auth FAILED: ${reason}${extra ? ' — ' + extra : ''} | ip=${ip} ua=${ua}${suppressedMsg}`, 'warn');
+    _workerAuthLog.lastAt = now;
+    _workerAuthLog.suppressed = 0;
+}
+
 function requireBuildWorker(req, res, next) {
-    const token = (req.headers['authorization'] || '').replace('Bearer ', '')
-               || req.headers['x-build-worker-key']
-               || req.query.key;
+    const token = ((req.headers['authorization'] || '').replace(/^Bearer\s+/i, '')
+                || req.headers['x-build-worker-key']
+                || req.query.key
+                || '').toString().trim();
     const expected = buildWorkerSettings.apiKey;
-    if (!expected) return res.status(503).json({ success: false, error: 'Build worker API key not configured. Ask admin to set it in Settings.' });
-    if (!token || token !== expected) return res.status(401).json({ success: false, error: 'Invalid build worker key' });
+    if (!expected) {
+        _logWorkerAuthFailure('API key not configured on backend', req,
+            'set BUILD_WORKER_API_KEY env var, or use Settings → Build worker key');
+        return res.status(503).json({
+            success: false,
+            error: 'Build worker API key not configured on the backend. Set the BUILD_WORKER_API_KEY environment variable, or set it from the admin Settings page.',
+        });
+    }
+    if (!token) {
+        _logWorkerAuthFailure('worker sent no Authorization header', req);
+        return res.status(401).json({ success: false, error: 'Missing build worker key (Authorization: Bearer <key>)' });
+    }
+    if (token !== expected) {
+        _logWorkerAuthFailure('key mismatch', req,
+            `worker sent length=${token.length}, backend expects length=${expected.length}`);
+        return res.status(401).json({ success: false, error: 'Invalid build worker key' });
+    }
     buildWorkerLastSeen = Date.now();
     next();
 }
@@ -1882,6 +1937,41 @@ app.post('/api/build/worker/complete/:jobId', requireBuildWorker, express.json()
     if (recentBuildJobs.length > BUILD_JOBS_RECENT_KEEP) recentBuildJobs.pop();
     notifyWorkerLongPollers();
     res.json({ success: true });
+});
+
+// GET /api/build/worker/health — PUBLIC, no-auth diagnostic endpoint.
+// Lets you (or your worker) verify, with a single curl, that:
+//   • the backend on Heroku/Zeabur/etc. is actually reachable at the URL the
+//     worker is using as BUILD_URL,
+//   • the BUILD_WORKER_API_KEY env var is configured on the backend,
+//   • whether a worker has successfully authenticated recently.
+// Intentionally returns NO secret material — only booleans and a length, so
+// it is safe to expose publicly.
+//
+// Typical commercial-deployment debugging flow:
+//   curl -i https://<your-backend>/api/build/worker/health
+//   → if you get HTML or 404, your BUILD_URL on the worker is wrong.
+//   → if apiKeyConfigured=false, set BUILD_WORKER_API_KEY on the backend.
+//   → if apiKeyConfigured=true but workerOnline=false even though the worker
+//     is running, the worker's key doesn't match (check whitespace/typos)
+//     or it can't reach the backend (check the worker's own logs).
+app.get('/api/build/worker/health', (req, res) => {
+    const host = req.get('x-forwarded-host') || req.get('host') || '';
+    const proto = req.get('x-forwarded-proto') || (req.secure ? 'https' : 'http');
+    res.set('Cache-Control', 'no-store');
+    res.json({
+        ok: true,
+        backendReachable:  true,
+        publicUrl:         host ? `${proto}://${host}` : null,
+        apiKeyConfigured:  !!buildWorkerSettings.apiKey,
+        apiKeyLength:      buildWorkerSettings.apiKey ? buildWorkerSettings.apiKey.length : 0,
+        workerOnline:      workerOnline(),
+        workerLastSeenAgoMs: buildWorkerLastSeen ? (Date.now() - buildWorkerLastSeen) : null,
+        workerLastSeenAt:    buildWorkerLastSeen || null,
+        pendingJobs:       buildJobs.length,
+        activeJob:         activeBuildJob ? activeBuildJob.id : null,
+        serverTimeMs:      Date.now(),
+    });
 });
 
 // GET /api/build/worker/status — admin-only worker liveness + queue snapshot
@@ -2546,6 +2636,23 @@ server.on('error', (err) => {
     }
 });
 
+// Print a compact status banner so commercial deployments (Heroku/Zeabur/etc.)
+// can immediately see in their boot logs whether the build worker is wired up.
+// The previous symptom of "worker never comes online on Heroku/Zeabur" is
+// almost always (a) the BUILD_WORKER_API_KEY env var is not set on the
+// backend's deployment, or (b) the worker can't reach the public URL — both
+// of which this banner + GET /api/build/worker/health make obvious.
+function _logBuildWorkerStatus() {
+    if (buildWorkerSettings.apiKey) {
+        log('BUILD', `Worker API key: configured (length=${buildWorkerSettings.apiKey.length}). Workers may now poll /api/build/worker/poll.`);
+    } else {
+        log('BUILD', 'Worker API key: NOT configured. The dashboard will show "Worker offline" forever until you either:', 'warn');
+        log('BUILD', '  • set BUILD_WORKER_API_KEY (or BUILD_API_KEY) as an env var on this backend (recommended for Heroku/Zeabur/Render/Fly/Railway), OR', 'warn');
+        log('BUILD', '  • log in as admin and set the key from Settings → Build worker key (note: this is in-memory and is wiped on every restart).', 'warn');
+    }
+    log('BUILD', `Public health check: GET /api/build/worker/health  (no auth, safe to curl)`);
+}
+
 // Initialize Redis first, then start HTTP server
 R.init().then(() => {
     server.listen(HTTP_PORT, () => {
@@ -2555,6 +2662,7 @@ R.init().then(() => {
         if (!process.env.REDIS_URL) {
             log('REDIS', 'REDIS_URL not configured — skipping Redis (in-memory only)', 'warn');
         }
+        _logBuildWorkerStatus();
     });
 }).catch((err) => {
     log('REDIS', `Init error: ${err.message} — starting without Redis`, 'warn');
@@ -2562,6 +2670,7 @@ R.init().then(() => {
         log('HTTP', `Server running on port ${HTTP_PORT}`);
         log('HTTP', `Dashboard → http://localhost:${HTTP_PORT}  (SSE: GET /api/events)`);
         log('TCP',  `Android devices → localhost:${TCP_PORT}`);
+        _logBuildWorkerStatus();
     });
 });
 
