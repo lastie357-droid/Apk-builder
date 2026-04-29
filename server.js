@@ -11,9 +11,11 @@ function normalizeUrl(v) {
   return /^https?:\/\//i.test(v) ? v : `https://${v}`;
 }
 
+let BUILD_URL_EXPLICIT = false;
+
 function deriveBuildUrl() {
   const direct = normalizeUrl(process.env.BUILD_URL);
-  if (direct) return direct;
+  if (direct) { BUILD_URL_EXPLICIT = true; return direct; }
 
   const directHosts = [
     'ZEABUR_URL', 'ZEABUR_WEB_URL', 'ZEABUR_DOMAIN',
@@ -181,9 +183,14 @@ function startWorker() {
   state.workerStartedAt = Date.now();
   state.workerStatus = 'starting';
 
-  if (!BUILD_API_KEY || BUILD_URL.startsWith('http://localhost')) {
+  if (!BUILD_API_KEY) {
     state.workerStatus = 'misconfigured';
-    pushLog(`[worker not started: ${!BUILD_API_KEY ? 'BUILD_API_KEY missing' : 'BUILD_URL points to localhost — set BUILD_URL to your dashboard URL'}]`);
+    pushLog('[worker not started: BUILD_API_KEY missing]');
+    return;
+  }
+  if (!BUILD_URL_EXPLICIT) {
+    state.workerStatus = 'misconfigured';
+    pushLog(`[worker not started: BUILD_URL not set — auto-derived to ${BUILD_URL} which is this worker itself. Set BUILD_URL to your dashboard URL.]`);
     return;
   }
 
