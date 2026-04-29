@@ -9,7 +9,6 @@ packages = ["netcat-gnu"]
 
 [[ports]]
 localPort = 5000
-externalPort = 5000
 
 [[ports]]
 localPort = 6000
