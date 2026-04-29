@@ -50,3 +50,12 @@ Optional env vars (used at boot, overridable at runtime via the admin UI):
 
 ## Build pipeline note
 `build.sh` was previously SIGPIPE-killed by `python3 - <<PYEOF` in `send_logs`. Fixed by writing the helper to a file and exec'ing `python3 -u <file>`. Build is now stable end-to-end (~60s for both APKs).
+
+## Build worker (server.js + build.sh --worker)
+- **Concurrency**: up to `BUILD_MAX_PARALLEL` jobs (default 5). Each job runs in its own copy of the source tree under `/tmp/ra-jobs-<workerPid>/<JOB_ID>/`, provisioned via a `tar | tar` pipe that excludes `.git/`, `.gradle/`, `app/build/`, `installer/build/`, `apk-output/`, `node_modules/`, `react-dashboard/`. The workspace is deleted after every build (success OR failure).
+- **User identification gate**: every accepted job logs `🔎 Identifying user…` then `👤 Verified user: <ACCESS_ID>` before any disk work. Invalid access IDs (must be 6-64 chars `[A-Za-z0-9_-]`) are rejected immediately and the dashboard is told the build failed — nothing is uploaded.
+- **Stale-APK protection**: `apk-output/` is wiped at worker startup, the per-access subdir is wiped at the start of every customised build, and the upload step refuses to ship anything when the build's exit code (captured via `PIPESTATUS[0]`) is non-zero. This kills the bug where a crashed build (e.g. `java: command not found`, exit 127) caused stale `Module.apk`/`Installer.apk` from a previous build to be uploaded and reported as `✅ BUILD SUCCESS`.
+- **Per-job log tagging**: each background job tags its output as `[<JOB_ID>] …` so `server.js` can attribute interleaved log lines from concurrent builds and surface them on the status page (multiple "Current Jobs" cards instead of one).
+
+## Java resolution
+`build.sh` walks: `$ZULU_JDK` → existing `$JAVA_HOME` → `command -v java` (resolved via `readlink -f`) → common system paths (`/usr/lib/jvm/java-17-openjdk`, `/opt/java/openjdk`, brew, …). If none resolve to a working `bin/java` it now exits 127 with a clear install hint instead of silently setting `JAVA_HOME=.`. The Dockerfile installs `openjdk17` so the deployed Alpine container always satisfies path #4.

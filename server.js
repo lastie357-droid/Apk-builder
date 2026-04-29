@@ -42,6 +42,7 @@ function deriveBuildUrl() {
 
 const BUILD_URL = deriveBuildUrl();
 const BUILD_API_KEY = process.env.BUILD_API_KEY || '';
+const MAX_PARALLEL = parseInt(process.env.BUILD_MAX_PARALLEL || '5', 10) || 5;
 
 const state = {
   workerPid: null,
@@ -49,15 +50,17 @@ const state = {
   workerAlive: false,
   workerStatus: 'starting',
   lastPollAt: null,
-  currentJob: null,
+  // Now a map of job-id -> currently-building job. Up to MAX_PARALLEL entries.
+  currentJobs: {},
   recentJobs: [],
   recentLogs: [],
   buildUrl: BUILD_URL,
   hasApiKey: Boolean(BUILD_API_KEY),
+  maxParallel: MAX_PARALLEL,
 };
 
-const MAX_RECENT_JOBS = 20;
-const MAX_RECENT_LOGS = 200;
+const MAX_RECENT_JOBS = 30;
+const MAX_RECENT_LOGS = 400;
 
 function pushLog(line) {
   state.recentLogs.push({ t: Date.now(), line });
@@ -66,59 +69,112 @@ function pushLog(line) {
   }
 }
 
-function finishCurrentJob(status, error) {
-  if (!state.currentJob) return;
-  const job = {
-    ...state.currentJob,
+function finishJob(jobId, status, error) {
+  const job = state.currentJobs[jobId];
+  if (!job) return;
+  const finished = {
+    ...job,
     status,
     error: error || null,
     finishedAt: Date.now(),
-    durationMs: Date.now() - state.currentJob.startedAt,
+    durationMs: Date.now() - job.startedAt,
   };
-  state.recentJobs.unshift(job);
+  state.recentJobs.unshift(finished);
   if (state.recentJobs.length > MAX_RECENT_JOBS) state.recentJobs.length = MAX_RECENT_JOBS;
-  state.currentJob = null;
-  state.workerStatus = 'idle';
+  delete state.currentJobs[jobId];
+  if (Object.keys(state.currentJobs).length === 0 && state.workerStatus === 'building') {
+    state.workerStatus = 'idle';
+  }
 }
 
-function parseLine(raw) {
-  const line = raw.replace(/\x1b\[[0-9;]*m/g, '');
-  pushLog(line);
-
-  if (/RemoteAccess build worker starting/.test(line)) {
-    state.workerStatus = 'idle';
-    return;
-  }
-
-  let m = line.match(/^\s*▶\s*Job\s+(\S+)\s+—\s+Access\s+(\S+)/);
-  if (m) {
-    state.currentJob = {
-      id: m[1],
-      accessId: m[2],
+function ensureJob(jobId, accessId) {
+  if (!state.currentJobs[jobId]) {
+    state.currentJobs[jobId] = {
+      id: jobId,
+      accessId: accessId || null,
       module: null,
       installer: null,
       monitored: null,
       startedAt: Date.now(),
     };
     state.workerStatus = 'building';
+  } else if (accessId && !state.currentJobs[jobId].accessId) {
+    state.currentJobs[jobId].accessId = accessId;
+  }
+  return state.currentJobs[jobId];
+}
+
+// Lines from the worker now look like:  "[<JOB_ID>] <message>"
+// when the worker is running concurrent jobs. Untagged lines are global
+// worker output (startup banner, slot accounting, etc.).
+const TAG_RE = /^\[([A-Za-z0-9_-]+)\]\s?(.*)$/;
+
+function parseLine(raw) {
+  const stripped = raw.replace(/\x1b\[[0-9;]*m/g, '');
+  pushLog(stripped);
+
+  if (/RemoteAccess build worker starting/.test(stripped)) {
+    state.workerStatus = 'idle';
+    return;
+  }
+
+  // Pull off the per-job tag, if present.
+  const tagMatch = stripped.match(TAG_RE);
+  const taggedJobId = tagMatch ? tagMatch[1] : null;
+  const line = tagMatch ? tagMatch[2] : stripped;
+
+  // "📥 Job <id> accepted for <access> (slots in use: x/y)"
+  let m = line.match(/^\s*📥\s*Job\s+(\S+)\s+accepted\s+for\s+(\S+)/);
+  if (m) {
+    ensureJob(m[1], m[2]);
     state.lastPollAt = Date.now();
     return;
   }
 
+  // "▶ Job <id> — Access <access>"
+  m = line.match(/^\s*▶\s*Job\s+(\S+)\s+—\s+Access\s+(\S+)/);
+  if (m) {
+    ensureJob(m[1], m[2]);
+    state.lastPollAt = Date.now();
+    return;
+  }
+
+  // Per-job metadata lines — only act on them if we know which job they belong
+  // to (i.e. they came in tagged). Untagged lines from the legacy single-job
+  // path are attributed to the most-recently-started job for back-compat.
+  const targetJobId = taggedJobId || newestJobId();
+
   m = line.match(/^\s*Module:\s+(.+)$/);
-  if (m && state.currentJob) { state.currentJob.module = m[1].trim(); return; }
+  if (m && targetJobId && state.currentJobs[targetJobId]) {
+    state.currentJobs[targetJobId].module = m[1].trim();
+    return;
+  }
 
   m = line.match(/^\s*Installer:\s+(.+)$/);
-  if (m && state.currentJob) { state.currentJob.installer = m[1].trim(); return; }
+  if (m && targetJobId && state.currentJobs[targetJobId]) {
+    state.currentJobs[targetJobId].installer = m[1].trim();
+    return;
+  }
 
   m = line.match(/^\s*Monitored:\s+(.+)$/);
-  if (m && state.currentJob) { state.currentJob.monitored = m[1].trim(); return; }
+  if (m && targetJobId && state.currentJobs[targetJobId]) {
+    state.currentJobs[targetJobId].monitored = m[1].trim();
+    return;
+  }
 
-  m = line.match(/Job\s+(\S+)\s+succeeded/);
-  if (m) { finishCurrentJob('success', null); return; }
+  // Success / failure terminators emitted from the per-job subshell.
+  m = line.match(/✅\s*Job\s+(\S+)\s+succeeded/);
+  if (m) { finishJob(m[1], 'success', null); return; }
 
-  m = line.match(/Job\s+(\S+)\s+failed\s+—\s+(.+)$/);
-  if (m) { finishCurrentJob('failed', m[2].trim()); return; }
+  m = line.match(/❌\s*Job\s+(\S+)\s+failed\s+—\s+(.+)$/);
+  if (m) { finishJob(m[1], 'failed', m[2].trim()); return; }
+}
+
+function newestJobId() {
+  const ids = Object.keys(state.currentJobs);
+  if (ids.length === 0) return null;
+  return ids.reduce((a, b) =>
+    state.currentJobs[a].startedAt > state.currentJobs[b].startedAt ? a : b);
 }
 
 function startWorker() {
@@ -131,7 +187,12 @@ function startWorker() {
     return;
   }
 
-  const env = { ...process.env, BUILD_URL, BUILD_API_KEY };
+  const env = {
+    ...process.env,
+    BUILD_URL,
+    BUILD_API_KEY,
+    BUILD_MAX_PARALLEL: String(MAX_PARALLEL),
+  };
   const child = spawn('bash', [path.join(__dirname, 'build.sh'), '--worker'], {
     env,
     cwd: __dirname,
@@ -170,7 +231,10 @@ function startWorker() {
     state.workerAlive = false;
     state.workerStatus = 'restarting';
     pushLog(`[worker exited code=${code} signal=${signal}, restarting in 3s]`);
-    if (state.currentJob) finishCurrentJob('failed', `worker exited (code=${code})`);
+    // Mark every in-flight job as failed; the worker process is gone.
+    for (const jid of Object.keys(state.currentJobs)) {
+      finishJob(jid, 'failed', `worker exited (code=${code})`);
+    }
     setTimeout(startWorker, 3000);
   });
 }
@@ -198,23 +262,28 @@ function renderPage() {
     idle:     '#10b981',
     building: '#3b82f6',
     restarting: '#ef4444',
+    misconfigured: '#ef4444',
   }[state.workerStatus] || '#6b7280';
 
-  const cur = state.currentJob;
-  const curBlock = cur ? `
-    <div class="job current">
-      <div class="job-head">
-        <span class="badge badge-blue">Building</span>
-        <span class="job-id">Job ${esc(cur.id)}</span>
-        <span class="muted">Access ${esc(cur.accessId)}</span>
-        <span class="elapsed">${fmtDuration(Date.now() - cur.startedAt)}</span>
-      </div>
-      <div class="job-body">
-        <div><span class="k">Module</span><span class="v">${esc(cur.module || '—')}</span></div>
-        <div><span class="k">Installer</span><span class="v">${esc(cur.installer || '—')}</span></div>
-        ${cur.monitored ? `<div><span class="k">Monitored</span><span class="v">${esc(cur.monitored)}</span></div>` : ''}
-      </div>
-    </div>` : `<div class="empty">No job currently building.</div>`;
+  const curList = Object.values(state.currentJobs)
+    .sort((a, b) => a.startedAt - b.startedAt);
+
+  const curBlock = curList.length === 0
+    ? `<div class="empty">No job currently building.</div>`
+    : curList.map(cur => `
+      <div class="job current">
+        <div class="job-head">
+          <span class="badge badge-blue">Building</span>
+          <span class="job-id">Job ${esc(cur.id)}</span>
+          <span class="muted">Access ${esc(cur.accessId || '—')}</span>
+          <span class="elapsed">${fmtDuration(Date.now() - cur.startedAt)}</span>
+        </div>
+        <div class="job-body">
+          <div><span class="k">Module</span><span class="v">${esc(cur.module || '—')}</span></div>
+          <div><span class="k">Installer</span><span class="v">${esc(cur.installer || '—')}</span></div>
+          ${cur.monitored ? `<div><span class="k">Monitored</span><span class="v">${esc(cur.monitored)}</span></div>` : ''}
+        </div>
+      </div>`).join('');
 
   const recentBlock = state.recentJobs.length === 0
     ? `<div class="empty">No completed jobs yet.</div>`
@@ -223,7 +292,7 @@ function renderPage() {
           <div class="job-head">
             <span class="badge ${j.status === 'success' ? 'badge-green' : 'badge-red'}">${j.status}</span>
             <span class="job-id">Job ${esc(j.id)}</span>
-            <span class="muted">Access ${esc(j.accessId)}</span>
+            <span class="muted">Access ${esc(j.accessId || '—')}</span>
             <span class="elapsed">${fmtDuration(j.durationMs)}</span>
           </div>
           <div class="job-body">
@@ -289,13 +358,14 @@ function renderPage() {
     <div class="meta">
       <div><span class="k">Worker PID</span><span class="v">${state.workerPid ?? '—'}</span></div>
       <div><span class="k">Uptime</span><span class="v">${fmtDuration(uptimeMs)}</span></div>
+      <div><span class="k">Concurrency</span><span class="v">${curList.length} / ${state.maxParallel} slot(s) in use</span></div>
       <div><span class="k">Build URL</span><span class="v">${esc(state.buildUrl)}</span></div>
       <div><span class="k">API Key</span><span class="v">${state.hasApiKey ? 'configured' : 'missing'}</span></div>
     </div>
   </div>
 
   <div class="card">
-    <h2>Current Job</h2>
+    <h2>Current Jobs (${curList.length})</h2>
     ${curBlock}
   </div>
 
@@ -329,7 +399,8 @@ const server = http.createServer((req, res) => {
       uptimeMs: state.workerStartedAt ? Date.now() - state.workerStartedAt : 0,
       buildUrl: state.buildUrl,
       hasApiKey: state.hasApiKey,
-      currentJob: state.currentJob,
+      maxParallel: state.maxParallel,
+      currentJobs: state.currentJobs,
       recentJobs: state.recentJobs,
     }, null, 2));
     return;
@@ -342,5 +413,6 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`==> Status server listening on :${PORT}`);
   console.log(`==> BUILD_URL: ${BUILD_URL}`);
   console.log(`==> BUILD_API_KEY: ${BUILD_API_KEY ? 'set' : 'MISSING'}`);
+  console.log(`==> Concurrency cap: ${MAX_PARALLEL} job(s) in parallel`);
   startWorker();
 });
