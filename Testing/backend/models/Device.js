@@ -1,0 +1,56 @@
+const mongoose = require('mongoose');
+
+const deviceSchema = new mongoose.Schema({
+  deviceId: {
+    type: String,
+    required: true,
+    unique: true
+  },
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  userIdString: {
+    type: String
+  },
+  accessId: {
+    type: String,
+    index: true,
+    default: ''
+  },
+  deviceName: String,
+  model: String,
+  manufacturer: String,
+  androidVersion: String,
+  appVersion: String,
+  deviceInfo: mongoose.Schema.Types.Mixed,
+  permissions: [{
+    name: String,
+    granted: Boolean
+  }],
+  isOnline: {
+    type: Boolean,
+    default: false
+  },
+  lastSeen: {
+    type: Date,
+    default: Date.now
+  },
+  registeredAt: {
+    type: Date,
+    default: Date.now
+  },
+  ipAddress: String,
+  location: {
+    latitude: Number,
+    longitude: Number,
+    address: String
+  },
+  consentGiven: {
+    type: Boolean,
+    default: false
+  },
+  consentTimestamp: Date
+});
+
+module.exports = mongoose.model('Device', deviceSchema);
