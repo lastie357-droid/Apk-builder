@@ -2,7 +2,7 @@ const http = require('http');
 const { spawn } = require('child_process');
 const path = require('path');
 
-const PORT = 7000;
+const PORT = parseInt(process.env.PORT, 10) || 5000;
 
 function normalizeUrl(v) {
   if (!v) return null;
