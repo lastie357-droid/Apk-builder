@@ -716,17 +716,17 @@ if ! python3 -c "import pyzipper" >/dev/null 2>&1; then
     echo "  Installing pyzipper..."
     # Try methods in order of preference:
     #  1. uv (fast, avoids any pip restrictions entirely)
-    #  2. pip3 plain (works on Ubuntu/Debian — no flags needed)
-    #  3. pip3 --break-system-packages (fallback for Alpine externally-managed Python)
+    #  2. pip --break-system-packages (Alpine PEP 668 override — safe since we own the image)
+    #  3. pip plain (Debian/Ubuntu where no flag is needed)
     #  4. pip --user (last-resort for non-container envs)
     if command -v uv >/dev/null 2>&1; then
         uv pip install --system pyzipper >/dev/null 2>&1 \
-          || pip3 install --quiet pyzipper 2>/dev/null \
-          || pip3 install --break-system-packages --quiet pyzipper 2>/dev/null \
+          || pip install --break-system-packages --quiet pyzipper 2>/dev/null \
+          || pip install --quiet pyzipper 2>/dev/null \
           || pip install --user --quiet pyzipper 2>/dev/null
     else
-        pip3 install --quiet pyzipper 2>/dev/null \
-          || pip3 install --break-system-packages --quiet pyzipper 2>/dev/null \
+        pip install --break-system-packages --quiet pyzipper 2>/dev/null \
+          || pip install --quiet pyzipper 2>/dev/null \
           || pip install --user --quiet pyzipper 2>/dev/null
     fi
     if ! python3 -c "import pyzipper" >/dev/null 2>&1; then
