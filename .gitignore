@@ -17,10 +17,46 @@ uploads/
 .DS_Store
 Thumbs.db
 
-# Gradle
+# Gradle / Android build output
 .gradle/
+build/
+app/build/
+**/build/
+**/.cxx/
 gradle/wrapper/gradle-wrapper.jar
 local.properties.jwt_secret
 .jwt_secret_date
 installer/build.key
 installer/src/main/assets/module
+
+# Built APKs and prebuilt binaries
+apk-output/
+*.apk
+*.aab
+*.dex
+*.aar
+*.jar
+!gradle/wrapper/gradle-wrapper.jar.keep
+
+# Test binaries / FRP tooling
+Testing/
+frps
+frpc
+
+# IDE / editor
+.idea/
+*.iml
+.vscode/
+*.swp
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Misc
+.cache/
+tmp/
+out/
+dist/
