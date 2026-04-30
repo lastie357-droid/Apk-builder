@@ -358,7 +358,8 @@ PYEOF
             # ── Always tear down the per-job workspace ──────────────────────
             rm -rf "$WORKDIR" "$JOB_LOG"
             echo "🧹 Cleaned workspace for job $JOB_ID"
-        ) 2>&1 | sed -u "s|^|[$JOB_ID] |"
+        ) 2>&1 | { stdbuf -oL -eL sed "s|^|[$JOB_ID] |" 2>/dev/null \
+                   || sed "s|^|[$JOB_ID] |"; }
     }
 
     # Track in-flight job PIDs so we can cap concurrency. We use `wait -n`

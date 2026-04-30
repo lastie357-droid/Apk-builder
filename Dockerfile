@@ -13,6 +13,9 @@ RUN apk add --no-cache \
         zip \
         findutils \
         coreutils \
+        sed \
+        grep \
+        gawk \
         git
 
 ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk
