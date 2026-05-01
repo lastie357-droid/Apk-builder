@@ -1,20 +1,14 @@
-FROM alpine:latest
+FROM ubuntu:24.04
 
-# Install all build.sh and server.js dependencies via apk.
-# nodejs + npm  — to run server.js and pm2
-# python3 + py3-pip — pyzipper for AES-256 module encryption
-# openjdk17     — Gradle / Android build chain
-# curl + unzip + zip — Android SDK cmdline-tools download and APK rebuild
-# findutils + coreutils + sed + grep + gawk + bash — GNU semantics build.sh relies on
-# git           — optional, used by some SDK tooling
-RUN apk add --no-cache \
+# Install build dependencies and runtime tools.
+RUN apt-get update && apt-get install -y --no-install-recommends \
         nodejs \
         npm \
         bash \
         python3 \
-        py3-pip \
+        python3-pip \
         curl \
-        openjdk17 \
+        openjdk-17-jdk-headless \
         unzip \
         zip \
         findutils \
@@ -22,17 +16,17 @@ RUN apk add --no-cache \
         sed \
         grep \
         gawk \
-        git
+        git \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 # Pre-install pyzipper at image build time.
-# Alpine marks Python as externally managed (PEP 668), so --break-system-packages
-# is required. This is safe because we own the image.
-RUN pip install --break-system-packages --quiet pyzipper
+RUN pip3 install --break-system-packages --quiet pyzipper
 
 # Install PM2 globally so server.js stays alive on crash / OOM kill.
 RUN npm install -g pm2
 
-ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 ENV PATH="${JAVA_HOME}/bin:${PATH}"
 
 WORKDIR /app

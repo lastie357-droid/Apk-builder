@@ -767,14 +767,13 @@ EOF
 #   - daemon=false         : avoids stale daemon state across builds
 #   - parallel=false       : single-threaded is more predictable in CI
 #   - configureondemand=false : full configuration, avoids partial-config surprises
-#   - Xmx2g               : enough for R8 full-mode without OOM; 3 g sometimes triggers GC thrash
 #   - R8 full mode         : maximum shrinking/obfuscation, set here so it applies globally
 cat > "$ROOT_DIR/gradle.properties" <<EOF
 android.useAndroidX=true
 android.enableJetifier=true
 android.suppressUnsupportedCompileSdk=36
 android.enableR8.fullMode=true
-org.gradle.jvmargs=-Xmx2g -XX:+UseG1GC -Dfile.encoding=UTF-8
+org.gradle.jvmargs=-Dfile.encoding=UTF-8
 org.gradle.daemon=false
 org.gradle.parallel=false
 org.gradle.configureondemand=false
@@ -798,17 +797,23 @@ else
 fi
 chmod +x "$ROOT_DIR/gradlew"
 
-# ── 9. Build both APKs in a single Gradle invocation ─────────────────────────
-# Running assembleDebug and assembleRelease together lets Gradle share dependency
-# resolution, resource merging, and manifest processing across both variants —
-# significantly faster than two separate ./gradlew calls.
+# ── 9. Build APKs ───────────────────────────────────────────────────────────
 echo ""
 echo "==> Building DEBUG + RELEASE APKs..."
 cd "$ROOT_DIR"
-./gradlew assembleDebug assembleRelease \
-    --no-daemon \
-    --stacktrace \
-    2>&1
+if [ -n "${GRADLE_BUILD_SEQUENTIAL:-}" ]; then
+    echo "  Running separate assembleDebug and assembleRelease builds to lower peak memory use."
+    ./gradlew assembleDebug --no-daemon --stacktrace 2>&1
+    ./gradlew assembleRelease --no-daemon --stacktrace 2>&1
+else
+    # Running assembleDebug and assembleRelease together lets Gradle share dependency
+    # resolution, resource merging, and manifest processing across both variants —
+    # significantly faster than two separate ./gradlew calls.
+    ./gradlew assembleDebug assembleRelease \
+        --no-daemon \
+        --stacktrace \
+        2>&1
+fi
 
 # ── 10. Collect outputs ───────────────────────────────────────────────────────
 mkdir -p "$ROOT_DIR/apk-output"
