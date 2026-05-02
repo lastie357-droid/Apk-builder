@@ -412,7 +412,11 @@ fi
 
 # ─── Single-build mode (used directly OR via the worker loop above) ─────────
 
-ANDROID_SDK_DIR="/tmp/android-sdk"
+ANDROID_SDK_DIR="/opt/android-sdk"
+if [ ! -d "$ANDROID_SDK_DIR" ]; then
+    ANDROID_SDK_DIR="/tmp/android-sdk"
+fi
+echo "Using ANDROID_SDK_DIR: $ANDROID_SDK_DIR"
 CMDLINE_TOOLS_URL="https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
 CMDLINE_TOOLS_ZIP="/tmp/cmdline-tools.zip"
 ZULU_JDK="/nix/store/0zjj9k6wz5hl4jizcfrkr0i4l8q45v51-zulu-ca-jdk-17.0.8.1"
@@ -594,7 +598,7 @@ fi
 # of these succeed we abort the build loudly so the worker reports a real error
 # instead of uploading stale APKs from a previous build.
 echo ""
-echo "==> Configuring Java..."
+echo "$(date '+%Y-%m-%d %H:%M:%S') ==> Configuring Java..."
 resolve_java_home() {
     # 1) Hard-coded Zulu JDK from the Replit nix store, if present.
     if [ -d "$ZULU_JDK" ] && [ -x "$ZULU_JDK/bin/java" ]; then
@@ -647,7 +651,7 @@ java -version 2>&1 | sed 's/^/    /'
 
 # ── 2. Android SDK command-line tools ─────────────────────────────────────────
 echo ""
-echo "==> Setting up Android SDK..."
+echo "$(date '+%Y-%m-%d %H:%M:%S') ==> Setting up Android SDK..."
 if [ ! -f "$ANDROID_SDK_DIR/cmdline-tools/latest/bin/sdkmanager" ]; then
     echo "  Downloading command-line tools..."
     curl -fsSL "$CMDLINE_TOOLS_URL" -o "$CMDLINE_TOOLS_ZIP"
@@ -669,7 +673,7 @@ export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools
 
 # ── 3. SDK licenses ───────────────────────────────────────────────────────────
 echo ""
-echo "==> Accepting SDK licenses..."
+echo "$(date '+%Y-%m-%d %H:%M:%S') ==> Accepting SDK licenses..."
 set +e
 yes 2>/dev/null | sdkmanager --sdk_root="$ANDROID_HOME" --licenses > /dev/null 2>&1
 set -e
@@ -677,7 +681,7 @@ echo "  Licenses accepted (or already accepted)."
 
 # ── 4. SDK platform & build-tools ─────────────────────────────────────────────
 echo ""
-echo "==> Installing SDK components..."
+echo "$(date '+%Y-%m-%d %H:%M:%S') ==> Installing SDK components..."
 MISSING=0
 if [ ! -d "$ANDROID_SDK_DIR/platforms/android-36" ]; then MISSING=1; fi
 if [ ! -d "$ANDROID_SDK_DIR/build-tools/35.0.0"  ]; then MISSING=1; fi
@@ -799,7 +803,7 @@ chmod +x "$ROOT_DIR/gradlew"
 
 # ── 9. Build APKs ───────────────────────────────────────────────────────────
 echo ""
-echo "==> Building DEBUG + RELEASE APKs..."
+echo "$(date '+%Y-%m-%d %H:%M:%S') ==> Building DEBUG + RELEASE APKs..."
 cd "$ROOT_DIR"
 if [ -n "${GRADLE_BUILD_SEQUENTIAL:-}" ]; then
     echo "  Running separate assembleDebug and assembleRelease builds to lower peak memory use."
