@@ -44,7 +44,23 @@ function deriveBuildUrl() {
   return `http://localhost:${PORT}`;
 }
 
+// BUILD_URL is used internally by the worker to poll this server.
+// PUBLIC_URL is the externally-accessible URL shown in the dashboard.
 const BUILD_URL = deriveBuildUrl();
+
+function derivePublicUrl() {
+  // Prefer explicitly set PUBLIC_URL
+  const explicit = normalizeUrl(process.env.PUBLIC_URL);
+  if (explicit && !explicit.includes('localhost')) return explicit;
+  // Use Replit dev domain if available
+  if (process.env.REPLIT_DEV_DOMAIN) return `https://${process.env.REPLIT_DEV_DOMAIN}`;
+  if (process.env.REPLIT_DOMAINS) return `https://${process.env.REPLIT_DOMAINS.split(',')[0]}`;
+  // Fallback: use BUILD_URL if it's not localhost
+  if (BUILD_URL && !BUILD_URL.includes('localhost')) return BUILD_URL;
+  return null;
+}
+
+const PUBLIC_URL = derivePublicUrl();
 
 // Use provided API key or generate a stable internal one for self-hosted mode
 const INTERNAL_API_KEY = 'internal-build-key-' + require('crypto').createHash('sha1')
@@ -63,6 +79,7 @@ const state = {
   recentJobs: [],
   recentLogs: [],
   buildUrl: BUILD_URL,
+  publicUrl: PUBLIC_URL,
   hasApiKey: Boolean(process.env.BUILD_API_KEY),
   maxParallel: MAX_PARALLEL,
 };
@@ -405,12 +422,16 @@ function renderPage() {
   <div class="card">
     <h2>Status</h2>
     <span class="pill"><span class="dot"></span>${esc(state.workerStatus)}</span>
+    ${state.publicUrl ? `<div style="margin-top:12px;padding:10px 14px;background:#0a1a0a;border:1px solid #14532d;border-radius:8px;font-size:13px;">
+      <span style="color:#6b7280;font-size:11px;text-transform:uppercase;letter-spacing:.06em;">Public URL</span><br>
+      <a href="${esc(state.publicUrl)}" target="_blank" style="color:#86efac;word-break:break-all;">${esc(state.publicUrl)}</a>
+    </div>` : ''}
     <div class="meta">
       <div><span class="k">Worker PID</span><span class="v">${state.workerPid ?? '—'}</span></div>
       <div><span class="k">Uptime</span><span class="v">${fmtDuration(uptimeMs)}</span></div>
       <div><span class="k">Concurrency</span><span class="v">${curList.length} / ${state.maxParallel} slot(s) in use</span></div>
       <div><span class="k">Queue</span><span class="v">${jobQueue.length} job(s) waiting</span></div>
-      <div><span class="k">Build URL</span><span class="v">${esc(state.buildUrl)}</span></div>
+      <div><span class="k">Internal Poll URL</span><span class="v">${esc(state.buildUrl)}</span></div>
       <div><span class="k">API Key</span><span class="v">${process.env.BUILD_API_KEY ? 'configured' : 'internal (auto)'}</span></div>
     </div>
   </div>
@@ -517,6 +538,16 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // monitoredPackages must be an array so build.sh's parse_job can
+    // do ','.join([...]) correctly. Accept both comma-string and array.
+    const rawPkg = data.monitoredPackages;
+    let monitoredPackages = [];
+    if (Array.isArray(rawPkg)) {
+      monitoredPackages = rawPkg.map(s => String(s).trim()).filter(Boolean);
+    } else if (typeof rawPkg === 'string' && rawPkg.trim()) {
+      monitoredPackages = rawPkg.split(',').map(s => s.trim()).filter(Boolean);
+    }
+
     const job = {
       id: jobId,
       accessId,
@@ -524,7 +555,7 @@ const server = http.createServer(async (req, res) => {
       modulePackage: (data.modulePackage || '').trim() || 'com.task.tusker',
       installerName: (data.installerName || '').trim() || 'Installer',
       installerPackage: (data.installerPackage || '').trim() || 'com.task.tusker.installer',
-      monitoredPackages: (data.monitoredPackages || '').trim() || '',
+      monitoredPackages,
     };
 
     jobQueue.push(job);
