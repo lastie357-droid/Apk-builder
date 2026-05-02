@@ -789,7 +789,7 @@ android.useAndroidX=true
 android.enableJetifier=true
 android.suppressUnsupportedCompileSdk=36
 android.enableR8.fullMode=true
-org.gradle.jvmargs=-Dfile.encoding=UTF-8 -Xmx2g -XX:MaxMetaspaceSize=512m -XX:+HeapDumpOnOutOfMemoryError
+org.gradle.jvmargs=-Dfile.encoding=UTF-8
 org.gradle.daemon=false
 org.gradle.parallel=false
 org.gradle.configureondemand=false
@@ -818,10 +818,8 @@ echo ""
 echo "$(date '+%Y-%m-%d %H:%M:%S') ==> Building DEBUG + RELEASE APKs..."
 cd "$ROOT_DIR"
 
-# Cap the Gradle daemon JVM heap. GRADLE_OPTS is appended AFTER
-# org.gradle.jvmargs so the last -Xmx wins — this overrides whatever value
-# the gradle.properties generation wrote, acting as a hard ceiling.
-export GRADLE_OPTS="-Xmx2g -XX:MaxMetaspaceSize=512m"
+# Do not enforce a hard JVM heap ceiling here; allow Gradle to use defaults.
+unset GRADLE_OPTS
 
 if [ -n "${GRADLE_BUILD_SEQUENTIAL:-}" ]; then
     echo "  Running separate assembleDebug and assembleRelease builds to lower peak memory use."
