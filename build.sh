@@ -1277,7 +1277,6 @@ PYEOF
     echo "  Encrypted asset: installer/src/main/assets/module ($MODULE_SIZE)"
 
     cd "$ROOT_DIR"
-    GRADLE_OPTS="-Xmx2g -XX:MaxMetaspaceSize=512m" \
     ./gradlew :installer:assembleRelease --no-daemon --stacktrace 2>&1
 
     INSTALLER_SRC="$ROOT_DIR/installer/build/outputs/apk/release/installer-release.apk"
