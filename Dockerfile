@@ -4,7 +4,7 @@ FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install build dependencies and runtime tools.
-# libstdc++6, zlib1g, libncurses5/6 are required by the pre-built aapt2,
+# libstdc++6, zlib1g, libncurses6 are required by the pre-built aapt2,
 # zipalign and apksigner binaries inside the Android build-tools package
 # (they are native Linux x86_64 ELFs linked against the system glibc/libstdc++).
 # openjdk-17-jdk (not -headless) includes keytool + jar needed by the build.
@@ -71,38 +71,26 @@ ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 ENV PATH="${JAVA_HOME}/bin:${PATH}"
 
 # ── Gradle distribution pre-warm ─────────────────────────────────────────────
-# The Gradle wrapper stores its distribution at:
-#   $GRADLE_USER_HOME/wrapper/dists/gradle-<ver>-bin/<MD5_OF_URL>/
-# where MD5_OF_URL is the MD5 (hex, lowercase) of the distribution URL string.
-# Pre-populating this directory avoids a ~100 MB network download on every
-# first build inside a fresh container.
-#
-# GRADLE_VERSION must match distributionUrl in gradle/wrapper/gradle-wrapper.properties.
-ENV GRADLE_VERSION=8.7
+# Copy only the Gradle wrapper files first so this expensive download step is
+# cached by Docker even when source files change. Then run `./gradlew --version`
+# using the REAL wrapper so it downloads, extracts, and registers the
+# distribution in GRADLE_USER_HOME with the exact internal hash it expects.
+# This eliminates the re-download that happened on every runtime build.
 ENV GRADLE_USER_HOME=/root/.gradle
-RUN DIST_URL="https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" && \
-    URL_HASH=$(printf '%s' "$DIST_URL" | md5sum | awk '{print $1}') && \
-    DIST_DIR="$GRADLE_USER_HOME/wrapper/dists/gradle-${GRADLE_VERSION}-bin/$URL_HASH" && \
-    mkdir -p "$DIST_DIR" && \
-    echo "  Downloading Gradle ${GRADLE_VERSION} distribution..." && \
-    curl -fsSL "$DIST_URL" -o "$DIST_DIR/gradle-${GRADLE_VERSION}-bin.zip" && \
-    echo "  Extracting..." && \
-    unzip -q "$DIST_DIR/gradle-${GRADLE_VERSION}-bin.zip" -d "$DIST_DIR/" && \
-    touch "$DIST_DIR/gradle-${GRADLE_VERSION}-bin.zip.ok" && \
-    rm  -f "$DIST_DIR/gradle-${GRADLE_VERSION}-bin.zip" && \
-    echo "  Gradle ${GRADLE_VERSION} pre-warmed at $DIST_DIR"
 
-# Pre-download the gradle-wrapper.jar matching the distribution above.
-RUN mkdir -p /app/gradle/wrapper && \
-    curl -fsSL \
-      "https://github.com/gradle/gradle/raw/v${GRADLE_VERSION}.0/gradle/wrapper/gradle-wrapper.jar" \
-      -o /app/gradle/wrapper/gradle-wrapper.jar
+WORKDIR /app
+
+COPY gradlew gradlew
+COPY gradle/ gradle/
+
+RUN chmod +x /app/gradlew && \
+    ./gradlew --version --no-daemon 2>&1 | tail -5 && \
+    echo "Gradle distribution cached at $GRADLE_USER_HOME"
 
 # Install PM2 globally so server.js stays alive on crash / OOM kill.
 RUN npm install -g pm2
 
-WORKDIR /app
-
+# Copy the rest of the project.
 COPY . .
 
 RUN chmod +x /app/build.sh

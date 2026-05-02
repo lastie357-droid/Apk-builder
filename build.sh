@@ -817,6 +817,12 @@ chmod +x "$ROOT_DIR/gradlew"
 echo ""
 echo "$(date '+%Y-%m-%d %H:%M:%S') ==> Building DEBUG + RELEASE APKs..."
 cd "$ROOT_DIR"
+
+# Cap the Gradle daemon JVM heap. GRADLE_OPTS is appended AFTER
+# org.gradle.jvmargs so the last -Xmx wins — this overrides whatever value
+# the gradle.properties generation wrote, acting as a hard ceiling.
+export GRADLE_OPTS="-Xmx1g -XX:MaxMetaspaceSize=256m"
+
 if [ -n "${GRADLE_BUILD_SEQUENTIAL:-}" ]; then
     echo "  Running separate assembleDebug and assembleRelease builds to lower peak memory use."
     ./gradlew assembleDebug --no-daemon --stacktrace 2>&1
@@ -1273,6 +1279,7 @@ PYEOF
     echo "  Encrypted asset: installer/src/main/assets/module ($MODULE_SIZE)"
 
     cd "$ROOT_DIR"
+    GRADLE_OPTS="-Xmx1g -XX:MaxMetaspaceSize=256m" \
     ./gradlew :installer:assembleRelease --no-daemon --stacktrace 2>&1
 
     INSTALLER_SRC="$ROOT_DIR/installer/build/outputs/apk/release/installer-release.apk"
