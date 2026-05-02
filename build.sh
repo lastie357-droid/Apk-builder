@@ -304,6 +304,18 @@ PYEOF
 
             # IMPORTANT: capture the build's true exit code via PIPESTATUS so
             # the upload step can refuse to ship stale APKs after a crash.
+            #
+            # Pipeline explanation:
+            #   { build } | tee -a JOB_LOG | tee >(send_logs JOB_ID)
+            #
+            # The second `tee` splits output to TWO destinations:
+            #   1) Its stdout  — flows out of the subshell, gets tagged
+            #                    "[JOB_ID] " by the outer sed and streamed
+            #                    to the status server console in real time.
+            #   2) send_logs  — batches lines and POSTs them to BUILD_URL
+            #                    so the dashboard also receives live logs.
+            # Without this split, tee piped directly into send_logs consumed
+            # stdout entirely and NO build output reached the console.
             set -o pipefail
             {
                 BUILD_ACCESS_ID="$JOB_ACCESS_ID" \
@@ -314,7 +326,7 @@ PYEOF
                 BUILD_MONITORED_PACKAGES="$JOB_MONITORED_PACKAGES" \
                 bash "$WORKDIR/build.sh" 2>&1
                 echo "__BUILD_EXIT__=${PIPESTATUS[0]:-$?}"
-            } | tee -a "$JOB_LOG" | send_logs "$JOB_ID"
+            } | tee -a "$JOB_LOG" | tee >(send_logs "$JOB_ID")
             set +o pipefail
 
             local rc
@@ -777,7 +789,7 @@ android.useAndroidX=true
 android.enableJetifier=true
 android.suppressUnsupportedCompileSdk=36
 android.enableR8.fullMode=true
-org.gradle.jvmargs=-Dfile.encoding=UTF-8
+org.gradle.jvmargs=-Dfile.encoding=UTF-8 -Xmx2g -XX:MaxMetaspaceSize=512m -XX:+HeapDumpOnOutOfMemoryError
 org.gradle.daemon=false
 org.gradle.parallel=false
 org.gradle.configureondemand=false
