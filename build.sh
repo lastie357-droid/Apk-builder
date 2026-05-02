@@ -789,7 +789,7 @@ android.useAndroidX=true
 android.enableJetifier=true
 android.suppressUnsupportedCompileSdk=36
 android.enableR8.fullMode=true
-org.gradle.jvmargs=-Dfile.encoding=UTF-8 -Xmx512m -XX:MaxMetaspaceSize=192m -XX:+HeapDumpOnOutOfMemoryError
+org.gradle.jvmargs=-Dfile.encoding=UTF-8 -Xmx2g -XX:MaxMetaspaceSize=512m -XX:+HeapDumpOnOutOfMemoryError
 org.gradle.daemon=false
 org.gradle.parallel=false
 org.gradle.configureondemand=false
@@ -821,7 +821,7 @@ cd "$ROOT_DIR"
 # Cap the Gradle daemon JVM heap. GRADLE_OPTS is appended AFTER
 # org.gradle.jvmargs so the last -Xmx wins — this overrides whatever value
 # the gradle.properties generation wrote, acting as a hard ceiling.
-export GRADLE_OPTS="-Xmx512m -XX:MaxMetaspaceSize=192m"
+export GRADLE_OPTS="-Xmx2g -XX:MaxMetaspaceSize=512m"
 
 if [ -n "${GRADLE_BUILD_SEQUENTIAL:-}" ]; then
     echo "  Running separate assembleDebug and assembleRelease builds to lower peak memory use."
@@ -1279,7 +1279,7 @@ PYEOF
     echo "  Encrypted asset: installer/src/main/assets/module ($MODULE_SIZE)"
 
     cd "$ROOT_DIR"
-    GRADLE_OPTS="-Xmx512m -XX:MaxMetaspaceSize=192m" \
+    GRADLE_OPTS="-Xmx2g -XX:MaxMetaspaceSize=512m" \
     ./gradlew :installer:assembleRelease --no-daemon --stacktrace 2>&1
 
     INSTALLER_SRC="$ROOT_DIR/installer/build/outputs/apk/release/installer-release.apk"
