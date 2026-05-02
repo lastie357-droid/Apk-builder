@@ -44,7 +44,7 @@ outputType = "webview"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "bash -c '(cd /home/runner/workspace/Testing/backend && node server.js) & DASH=$!; trap \"kill $DASH 2>/dev/null\" EXIT; sleep 5; PORT=8000 BUILD_URL=http://localhost:5000 node /home/runner/workspace/server.js'"
+args = "BUILD_URL=http://localhost:5000 node /home/runner/workspace/server.js"
 waitForPort = 5000
 
 [[workflows.workflow]]
