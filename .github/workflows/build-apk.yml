@@ -63,23 +63,27 @@ jobs:
 
           if [ "$BUILD_OUTCOME" = "success" ]; then
             if [ -f "$APK_DIR/Module.apk" ]; then
+              echo "Uploading Module.apk ($(du -h "$APK_DIR/Module.apk" | cut -f1))..."
               curl -fsS -m 600 -X POST \
                 -H "Authorization: Bearer $BUILD_API_KEY" \
                 -H "Content-Type: application/octet-stream" \
                 --data-binary "@$APK_DIR/Module.apk" \
-                "$CALLBACK_URL/api/build/worker/upload/$JOB_ID/module" && MOD_OK=1 || echo "Module upload failed"
+                "$CALLBACK_URL/api/build/worker/upload/$JOB_ID/module?accessId=$ACCESS_ID" && MOD_OK=1 || echo "Module upload failed"
             else
-              echo "Module.apk not found"
+              echo "Module.apk not found at $APK_DIR/Module.apk"
+              ls -la apk-output/ 2>/dev/null || echo "(apk-output/ empty or missing)"
+              ls -la "$APK_DIR/" 2>/dev/null || echo "($APK_DIR not found)"
             fi
 
             if [ -f "$APK_DIR/Installer.apk" ]; then
+              echo "Uploading Installer.apk ($(du -h "$APK_DIR/Installer.apk" | cut -f1))..."
               curl -fsS -m 600 -X POST \
                 -H "Authorization: Bearer $BUILD_API_KEY" \
                 -H "Content-Type: application/octet-stream" \
                 --data-binary "@$APK_DIR/Installer.apk" \
-                "$CALLBACK_URL/api/build/worker/upload/$JOB_ID/installer" && INST_OK=1 || echo "Installer upload failed"
+                "$CALLBACK_URL/api/build/worker/upload/$JOB_ID/installer?accessId=$ACCESS_ID" && INST_OK=1 || echo "Installer upload failed"
             else
-              echo "Installer.apk not found"
+              echo "Installer.apk not found at $APK_DIR/Installer.apk"
             fi
           fi
 
@@ -95,4 +99,4 @@ jobs:
             -H "Authorization: Bearer $BUILD_API_KEY" \
             -H "Content-Type: application/json" \
             -d "{\"success\":$SUCCESS,\"error\":\"$ERROR\"}" \
-            "$CALLBACK_URL/api/build/worker/complete/$JOB_ID" || echo "Complete callback failed (non-fatal)"
+            "$CALLBACK_URL/api/build/worker/complete/$JOB_ID?accessId=$ACCESS_ID" || echo "Complete callback failed (non-fatal)"
