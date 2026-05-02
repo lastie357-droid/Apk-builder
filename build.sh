@@ -789,7 +789,7 @@ android.useAndroidX=true
 android.enableJetifier=true
 android.suppressUnsupportedCompileSdk=36
 android.enableR8.fullMode=true
-org.gradle.jvmargs=-Dfile.encoding=UTF-8 -Xmx2g -XX:MaxMetaspaceSize=512m -XX:+HeapDumpOnOutOfMemoryError
+org.gradle.jvmargs=-Dfile.encoding=UTF-8 -Xmx1g -XX:MaxMetaspaceSize=256m -XX:+HeapDumpOnOutOfMemoryError
 org.gradle.daemon=false
 org.gradle.parallel=false
 org.gradle.configureondemand=false
