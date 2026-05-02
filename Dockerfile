@@ -46,6 +46,11 @@ RUN yes | sdkmanager --sdk_root="$ANDROID_HOME" --licenses
 # Install SDK components
 RUN sdkmanager --sdk_root="$ANDROID_HOME" "platforms;android-36" "build-tools;35.0.0"
 
+# Pre-download Gradle wrapper JAR at image build time
+RUN mkdir -p /app/gradle/wrapper && \
+    curl -fsSL "https://github.com/gradle/gradle/raw/v8.7.0/gradle/wrapper/gradle-wrapper.jar" \
+    -o /app/gradle/wrapper/gradle-wrapper.jar
+
 # Install PM2 globally so server.js stays alive on crash / OOM kill.
 RUN npm install -g pm2
 
