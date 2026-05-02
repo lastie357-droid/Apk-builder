@@ -412,6 +412,25 @@ const server = http.createServer((req, res) => {
     }, null, 2));
     return;
   }
+  if (req.url === '/api/build/worker/poll' && req.method === 'GET') {
+    // For testing, return a dummy job
+    const job = {
+      id: 'test-job-' + Date.now(),
+      accessId: 'TEST-123',
+      moduleName: 'Test Module',
+      modulePackage: 'com.test.module',
+      installerName: 'Test Installer',
+      installerPackage: 'com.test.installer',
+      monitoredPackages: 'com.example.app'
+    };
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      hasJob: true,
+      job: job
+    }));
+    return;
+  }
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
   res.end(renderPage());
 });
