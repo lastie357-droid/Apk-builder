@@ -1,9 +1,7 @@
 FROM node:20-slim
 
-# Prevent interactive prompts during apt installs.
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install runtime packages and Android build dependencies.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         bash \
         python3 \
@@ -20,10 +18,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libncurses6 \
     && rm -rf /var/lib/apt/lists/*
 
-# Pre-install pyzipper at image build time.
 RUN pip3 install --break-system-packages --quiet pyzipper
 
-# ── Android SDK ───────────────────────────────────────────────────────────────
 ENV ANDROID_SDK_DIR="/opt/android-sdk"
 ENV CMDLINE_TOOLS_URL="https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
 ENV CMDLINE_TOOLS_ZIP="/tmp/cmdline-tools.zip"
@@ -40,37 +36,22 @@ ENV ANDROID_HOME="$ANDROID_SDK_DIR"
 ENV ANDROID_SDK_ROOT="$ANDROID_SDK_DIR"
 ENV PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/build-tools/35.0.0:$PATH"
 
-# Accept SDK licenses
 RUN yes | sdkmanager --sdk_root="$ANDROID_HOME" --licenses
 
-# Install SDK components: platform API 36 + build-tools 35.0.0
 RUN sdkmanager --sdk_root="$ANDROID_HOME" "platforms;android-36" "build-tools;35.0.0"
 
-# Verify the native build-tool binaries actually run on this host architecture.
-# aapt2 / zipalign are x86_64 ELFs — this will FAIL visibly at image build
-# time rather than silently at runtime if you're on an ARM host.
 RUN echo "==> Checking native build-tool binaries..." && \
     "$ANDROID_HOME/build-tools/35.0.0/aapt2" version && \
     echo "    aapt2 OK" && \
     "$ANDROID_HOME/build-tools/35.0.0/zipalign" 2>/dev/null; \
     echo "    zipalign OK"
 
-# ── Java ──────────────────────────────────────────────────────────────────────
 ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 ENV PATH="${JAVA_HOME}/bin:${PATH}"
 
-# ── Gradle distribution pre-warm ─────────────────────────────────────────────
-# Copy only the Gradle wrapper files first so this expensive download step is
-# cached by Docker even when source files change. Then run `./gradlew --version`
-# using the REAL wrapper so it downloads, extracts, and registers the
-# distribution in GRADLE_USER_HOME with the exact internal hash it expects.
-# This eliminates the re-download that happened on every runtime build.
 ENV GRADLE_USER_HOME=/root/.gradle
 
 WORKDIR /app
-
-COPY package.json package-lock.json ./
-RUN npm ci --production
 
 COPY gradlew gradlew
 COPY gradle/ gradle/
@@ -79,12 +60,6 @@ RUN chmod +x /app/gradlew && \
     ./gradlew --version --no-daemon 2>&1 | tail -5 && \
     echo "Gradle distribution cached at $GRADLE_USER_HOME"
 
-# Copy the rest of the project.
 COPY . .
 
 RUN chmod +x /app/build.sh
-
-EXPOSE 5000
-EXPOSE 7000
-
-CMD ["npm", "start"]
