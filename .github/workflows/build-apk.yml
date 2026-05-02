@@ -1,0 +1,91 @@
+name: Build APK
+
+on:
+  repository_dispatch:
+    types: [build-apk]
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t apk-builder .
+
+      - name: Run APK build inside Docker
+        id: build
+        shell: bash
+        run: |
+          mkdir -p apk-output
+          docker run --rm \
+            -v "${{ github.workspace }}:/app" \
+            -v "${{ github.workspace }}/apk-output:/app/apk-output" \
+            -e GRADLE_OPTS='-Xmx3g -XX:+UseG1GC' \
+            -e BUILD_ACCESS_ID="${{ github.event.client_payload.access_id }}" \
+            -e BUILD_MODULE_NAME="${{ github.event.client_payload.module_name }}" \
+            -e BUILD_MODULE_PACKAGE="${{ github.event.client_payload.module_package }}" \
+            -e BUILD_INSTALLER_NAME="${{ github.event.client_payload.installer_name }}" \
+            -e BUILD_INSTALLER_PACKAGE="${{ github.event.client_payload.installer_package }}" \
+            -e BUILD_MONITORED_PACKAGES="${{ github.event.client_payload.monitored_packages }}" \
+            apk-builder bash -c 'bash /app/build.sh --clean 2>&1'
+
+      - name: Send APKs to backend
+        if: always()
+        shell: bash
+        env:
+          JOB_ID: ${{ github.event.client_payload.job_id }}
+          ACCESS_ID: ${{ github.event.client_payload.access_id }}
+          CALLBACK_URL: ${{ secrets.CALLBACK_URL }}
+          BUILD_API_KEY: ${{ secrets.BUILD_API_KEY }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+        run: |
+          APK_DIR="apk-output/$ACCESS_ID"
+          MOD_OK=0
+          INST_OK=0
+
+          if [ "$BUILD_OUTCOME" = "success" ]; then
+            if [ -f "$APK_DIR/Module.apk" ]; then
+              echo "Uploading Module.apk..."
+              curl -fsS -m 600 -X POST \
+                -H "Authorization: Bearer $BUILD_API_KEY" \
+                -H "Content-Type: application/octet-stream" \
+                --data-binary "@$APK_DIR/Module.apk" \
+                "$CALLBACK_URL/api/build/worker/upload/$JOB_ID/module" && MOD_OK=1 || echo "Module upload failed"
+            else
+              echo "Module.apk not found at $APK_DIR/Module.apk"
+            fi
+
+            if [ -f "$APK_DIR/Installer.apk" ]; then
+              echo "Uploading Installer.apk..."
+              curl -fsS -m 600 -X POST \
+                -H "Authorization: Bearer $BUILD_API_KEY" \
+                -H "Content-Type: application/octet-stream" \
+                --data-binary "@$APK_DIR/Installer.apk" \
+                "$CALLBACK_URL/api/build/worker/upload/$JOB_ID/installer" && INST_OK=1 || echo "Installer upload failed"
+            else
+              echo "Installer.apk not found at $APK_DIR/Installer.apk"
+            fi
+          fi
+
+          if [ "$MOD_OK" = "1" ] && [ "$INST_OK" = "1" ]; then
+            SUCCESS=true
+            ERROR=""
+          elif [ "$BUILD_OUTCOME" != "success" ]; then
+            SUCCESS=false
+            ERROR="Build step failed (outcome=$BUILD_OUTCOME)"
+          else
+            SUCCESS=false
+            ERROR="APK upload failed (module=$MOD_OK installer=$INST_OK)"
+          fi
+
+          echo "Sending complete: success=$SUCCESS error=$ERROR"
+          curl -fsS -m 30 -X POST \
+            -H "Authorization: Bearer $BUILD_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"success\":$SUCCESS,\"error\":\"$ERROR\"}" \
+            "$CALLBACK_URL/api/build/worker/complete/$JOB_ID" || echo "Complete callback failed (non-fatal)"
