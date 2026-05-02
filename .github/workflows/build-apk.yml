@@ -10,18 +10,83 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
+    env:
+      JOB_ID:       ${{ github.event.client_payload.job_id }}
+      ACCESS_ID:    ${{ github.event.client_payload.access_id }}
+      CALLBACK_URL: ${{ secrets.CALLBACK_URL }}
+      BUILD_API_KEY: ${{ secrets.BUILD_API_KEY }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Start heartbeat daemon
+        run: |
+          cat > /tmp/heartbeat.sh << 'HBEOF'
+          #!/usr/bin/env bash
+          JOB_ID="$1"; CALLBACK_URL="$2"; BUILD_API_KEY="$3"
+          while true; do
+            sleep 45
+            curl -fsS -m 10 -X POST \
+              -H "Authorization: Bearer $BUILD_API_KEY" \
+              "$CALLBACK_URL/api/build/worker/heartbeat/$JOB_ID" >/dev/null 2>&1 || true
+          done
+          HBEOF
+          chmod +x /tmp/heartbeat.sh
+          bash /tmp/heartbeat.sh "$JOB_ID" "$CALLBACK_URL" "$BUILD_API_KEY" &
+          echo $! > /tmp/heartbeat.pid
+          echo "Heartbeat started (PID=$(cat /tmp/heartbeat.pid))"
+
+          cat > /tmp/log-tail.sh << 'LTEOF'
+          #!/usr/bin/env bash
+          LOGFILE="$1"; JOB_ID="$2"; CALLBACK_URL="$3"; BUILD_API_KEY="$4"
+          LAST=0
+          while true; do
+            sleep 4
+            [ -f "$LOGFILE" ] || continue
+            TOTAL=$(wc -l < "$LOGFILE" 2>/dev/null || echo 0)
+            [ "$TOTAL" -le "$LAST" ] && continue
+            NEWLINES=$(tail -n +"$((LAST+1))" "$LOGFILE" | head -n 300)
+            [ -z "$NEWLINES" ] && continue
+            JSON=$(printf '%s' "$NEWLINES" | python3 -c "
+          import sys,json
+          lines=[l.rstrip() for l in sys.stdin.read().splitlines() if l.strip()]
+          print(json.dumps({'lines':lines}))" 2>/dev/null) || continue
+            curl -fsS -m 20 -X POST \
+              -H "Authorization: Bearer $BUILD_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "$JSON" \
+              "$CALLBACK_URL/api/build/worker/log/$JOB_ID" >/dev/null 2>&1 || true
+            LAST=$TOTAL
+          done
+          LTEOF
+          chmod +x /tmp/log-tail.sh
+
       - name: Build Docker image
-        run: docker build -t apk-builder .
+        run: |
+          LOG=/tmp/docker.log
+          touch "$LOG"
+          bash /tmp/log-tail.sh "$LOG" "$JOB_ID" "$CALLBACK_URL" "$BUILD_API_KEY" &
+          echo $! > /tmp/docker-tail.pid
+
+          echo "=== Building Docker image ===" | tee "$LOG"
+          docker build -t apk-builder . 2>&1 | tee -a "$LOG"
+          echo "=== Docker image ready ===" | tee -a "$LOG"
+
+          sleep 5
+          kill "$(cat /tmp/docker-tail.pid)" 2>/dev/null || true
 
       - name: Run APK build inside Docker
         id: build
         shell: bash
         run: |
           mkdir -p apk-output
+          LOG=/tmp/apk.log
+          touch "$LOG"
+          bash /tmp/log-tail.sh "$LOG" "$JOB_ID" "$CALLBACK_URL" "$BUILD_API_KEY" &
+          echo $! > /tmp/apk-tail.pid
+
+          echo "=== APK build starting ===" | tee "$LOG"
           docker run --rm \
             -v "${{ github.workspace }}:/app" \
             -v "${{ github.workspace }}/apk-output:/app/apk-output" \
@@ -32,21 +97,25 @@ jobs:
             -e BUILD_INSTALLER_NAME="${{ github.event.client_payload.installer_name }}" \
             -e BUILD_INSTALLER_PACKAGE="${{ github.event.client_payload.installer_package }}" \
             -e BUILD_MONITORED_PACKAGES="${{ github.event.client_payload.monitored_packages }}" \
-            apk-builder bash -c 'bash /app/build.sh --clean 2>&1'
+            apk-builder bash -c 'bash /app/build.sh --clean 2>&1' 2>&1 | tee -a "$LOG"
+          BUILD_EXIT=${PIPESTATUS[0]}
+
+          echo "=== APK build finished (exit=$BUILD_EXIT) ===" | tee -a "$LOG"
+
+          sleep 5
+          kill "$(cat /tmp/apk-tail.pid)" 2>/dev/null || true
+          exit $BUILD_EXIT
 
       - name: Send APKs to backend
         if: always()
         shell: bash
-        env:
-          JOB_ID: ${{ github.event.client_payload.job_id }}
-          ACCESS_ID: ${{ github.event.client_payload.access_id }}
-          CALLBACK_URL: ${{ secrets.CALLBACK_URL }}
-          BUILD_API_KEY: ${{ secrets.BUILD_API_KEY }}
-          BUILD_OUTCOME: ${{ steps.build.outcome }}
         run: |
+          [ -f /tmp/heartbeat.pid ] && kill "$(cat /tmp/heartbeat.pid)" 2>/dev/null || true
+
           APK_DIR="apk-output/$ACCESS_ID"
           MOD_OK=0
           INST_OK=0
+          BUILD_OUTCOME="${{ steps.build.outcome }}"
 
           if [ "$BUILD_OUTCOME" = "success" ]; then
             if [ -f "$APK_DIR/Module.apk" ]; then
