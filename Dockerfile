@@ -29,7 +29,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libc6 \
         zlib1g \
         libncurses6 \
-        libncurses5 \
     && rm -rf /var/lib/apt/lists/*
 
 # Pre-install pyzipper at image build time.
