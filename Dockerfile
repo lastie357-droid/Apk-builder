@@ -1,28 +1,17 @@
-FROM ubuntu:24.04
+FROM node:20-slim
 
 # Prevent interactive prompts during apt installs.
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install build dependencies and runtime tools.
-# libstdc++6, zlib1g, libncurses6 are required by the pre-built aapt2,
-# zipalign and apksigner binaries inside the Android build-tools package
-# (they are native Linux x86_64 ELFs linked against the system glibc/libstdc++).
-# openjdk-17-jdk (not -headless) includes keytool + jar needed by the build.
+# Install runtime packages and Android build dependencies.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        nodejs \
-        npm \
         bash \
         python3 \
         python3-pip \
         curl \
-        openjdk-17-jdk \
+        openjdk-17-jdk-headless \
         unzip \
         zip \
-        findutils \
-        coreutils \
-        sed \
-        grep \
-        gawk \
         git \
         ca-certificates \
         libstdc++6 \
@@ -80,6 +69,9 @@ ENV GRADLE_USER_HOME=/root/.gradle
 
 WORKDIR /app
 
+COPY package.json package-lock.json ./
+RUN npm ci --production
+
 COPY gradlew gradlew
 COPY gradle/ gradle/
 
@@ -87,17 +79,12 @@ RUN chmod +x /app/gradlew && \
     ./gradlew --version --no-daemon 2>&1 | tail -5 && \
     echo "Gradle distribution cached at $GRADLE_USER_HOME"
 
-# Install PM2 globally so server.js stays alive on crash / OOM kill.
-RUN npm install -g pm2
-
 # Copy the rest of the project.
 COPY . .
 
 RUN chmod +x /app/build.sh
 
-ENV PORT=7000
-
+EXPOSE 5000
 EXPOSE 7000
 
-# pm2-runtime keeps server.js alive in the foreground (required for containers).
-CMD ["pm2-runtime", "/app/server.js"]
+CMD ["npm", "start"]
