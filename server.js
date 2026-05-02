@@ -367,7 +367,7 @@ function renderPage() {
 <head>
 <meta charset="utf-8" />
 <title>RemoteAccess Build Worker</title>
-<meta http-equiv="refresh" content="5" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -417,7 +417,7 @@ function renderPage() {
 <body>
 <div class="wrap">
   <h1>RemoteAccess Build Worker</h1>
-  <div class="sub">Auto-refreshing every 5 seconds</div>
+  <div class="sub">Logs auto-refresh every 5s. Form inputs are preserved during updates.</div>
 
   <div class="card">
     <h2>Status</h2>
@@ -472,7 +472,35 @@ function renderPage() {
 </div>
 <script>
   // Auto-scroll log panes to bottom on load
-  document.querySelectorAll('pre.logs').forEach(el => { el.scrollTop = el.scrollHeight; });
+  function scrollLogsToBottom() {
+    document.querySelectorAll('pre.logs').forEach(el => { el.scrollTop = el.scrollHeight; });
+  }
+  scrollLogsToBottom();
+
+  // AJAX-based log-only auto-refresh - doesn't interrupt form inputs
+  (function() {
+    function updateLogs() {
+      fetch('/api/logs').then(r => r.json()).then(data => {
+        if (data.recentLogs && Array.isArray(data.recentLogs)) {
+          const logsContainer = document.querySelector('h2:nth-of-type(5)').parentElement;
+          if (logsContainer) {
+            const newLogsHtml = data.recentLogs.slice(-200).map(e =>
+              '<div class="log">' + (e.line || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])) + '</div>'
+            ).join('');
+            const preEl = logsContainer.querySelector('pre.logs');
+            if (preEl) {
+              preEl.innerHTML = newLogsHtml;
+            }
+          }
+        }
+        scrollLogsToBottom();
+      }).catch(console.error);
+    }
+    setInterval(updateLogs, 5000);
+  })();
+  
+  // Manual refresh function
+  function refreshPage() { location.reload(); }
 </script>
 </body>
 </html>`;
@@ -504,6 +532,15 @@ const server = http.createServer(async (req, res) => {
       queueLength: jobQueue.length,
       currentJobs: state.currentJobs,
       recentJobs: state.recentJobs,
+    }, null, 2));
+    return;
+  }
+
+  // ── Logs API (for AJAX log updates) ───────────────────────────────────────
+  if (url === '/api/logs') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      recentLogs: state.recentLogs,
     }, null, 2));
     return;
   }
