@@ -10,27 +10,8 @@ packages = ["netcat-gnu"]
 
 [[ports]]
 localPort = 5000
-externalPort = 80
+externalPort = 5000
 
-[[ports]]
-localPort = 6000
-externalPort = 6000
-
-[[ports]]
-localPort = 6009
-externalPort = 3001
-
-[[ports]]
-localPort = 7000
-externalPort = 80
-
-[[ports]]
-localPort = 7500
-externalPort = 3000
-
-[[ports]]
-localPort = 8000
-externalPort = 8000
 
 [workflows]
 runButton = "Project"
