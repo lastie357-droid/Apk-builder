@@ -13,8 +13,8 @@ jobs:
     env:
       JOB_ID:        ${{ github.event.client_payload.job_id }}
       ACCESS_ID:     ${{ github.event.client_payload.access_id }}
-      CALLBACK_URL:  ${{ secrets.CALLBACK_URL }}
-      BUILD_API_KEY: ${{ secrets.BUILD_API_KEY }}
+      CALLBACK_URL:  ${{ github.event.client_payload.callback_url }}
+      BUILD_API_KEY: ${{ github.event.client_payload.build_api_key }}
 
     steps:
       - name: Checkout repository
@@ -100,3 +100,4 @@ jobs:
             -H "Content-Type: application/json" \
             -d "{\"success\":$SUCCESS,\"error\":\"$ERROR\"}" \
             "$CALLBACK_URL/api/build/worker/complete/$JOB_ID?accessId=$ACCESS_ID" || echo "Complete callback failed (non-fatal)"
+
