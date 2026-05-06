@@ -39,45 +39,31 @@ jobs:
           touch "$LOG_FILE"
           echo 0 > "$SENT_FILE"
 
-          # Stream new log lines to the backend every 2 seconds
-          (
-            while true; do
-              sleep 2
-              TOTAL=$(wc -l < "$LOG_FILE" 2>/dev/null || echo 0)
-              SENT=$(cat "$SENT_FILE" 2>/dev/null || echo 0)
-              if [ "$TOTAL" -gt "$SENT" ]; then
-                BATCH=$(tail -n +"$((SENT+1))" "$LOG_FILE")
-                BODY=$(printf '%s' "$BATCH" | python3 -c \
-                  "import sys,json; lines=[l.rstrip('\n') for l in sys.stdin]; print(json.dumps({'lines':lines}))")
-                curl -fsS -m 10 -X POST \
-                  -H "Authorization: Bearer $BUILD_API_KEY" \
-                  -H "Content-Type: application/json" \
-                  -d "$BODY" \
-                  "$CALLBACK_URL/api/build/worker/log/$JOB_ID" >/dev/null 2>&1 || true
-                echo "$TOTAL" > "$SENT_FILE"
-              fi
-            done
-          ) &
+          send_lines() {
+            TOTAL=$(wc -l < "$LOG_FILE" 2>/dev/null || echo 0)
+            SENT=$(cat "$SENT_FILE" 2>/dev/null || echo 0)
+            if [ "$TOTAL" -gt "$SENT" ]; then
+              BATCH=$(tail -n +"$((SENT+1))" "$LOG_FILE")
+              BODY=$(printf '%s' "$BATCH" | python3 -c \
+                "import sys,json; lines=[l.rstrip('\n') for l in sys.stdin]; print(json.dumps({'lines':lines}))")
+              curl -fsS -m 10 -X POST \
+                -H "Authorization: Bearer $BUILD_API_KEY" \
+                -H "Content-Type: application/json" \
+                -d "$BODY" \
+                "$CALLBACK_URL/api/build/worker/log/$JOB_ID" >/dev/null 2>&1 || true
+              echo "$TOTAL" > "$SENT_FILE"
+            fi
+          }
+
+          (while true; do sleep 2; send_lines; done) &
           STREAM_PID=$!
 
           docker build -t apk-builder . 2>&1 | tee "$LOG_FILE"
           DOCKER_EXIT=${PIPESTATUS[0]}
 
-          # Stop streamer and flush any remaining lines
           kill "$STREAM_PID" 2>/dev/null || true
           sleep 1
-          TOTAL=$(wc -l < "$LOG_FILE" 2>/dev/null || echo 0)
-          SENT=$(cat "$SENT_FILE" 2>/dev/null || echo 0)
-          if [ "$TOTAL" -gt "$SENT" ]; then
-            BATCH=$(tail -n +"$((SENT+1))" "$LOG_FILE")
-            BODY=$(printf '%s' "$BATCH" | python3 -c \
-              "import sys,json; lines=[l.rstrip('\n') for l in sys.stdin]; print(json.dumps({'lines':lines}))")
-            curl -fsS -m 10 -X POST \
-              -H "Authorization: Bearer $BUILD_API_KEY" \
-              -H "Content-Type: application/json" \
-              -d "$BODY" \
-              "$CALLBACK_URL/api/build/worker/log/$JOB_ID" >/dev/null 2>&1 || true
-          fi
+          send_lines
 
           exit $DOCKER_EXIT
 
@@ -90,25 +76,28 @@ jobs:
           touch "$LOG_FILE"
           echo 0 > "$SENT_FILE"
 
-          # Stream new log lines to the backend every 2 seconds
-          (
-            while true; do
-              sleep 2
-              TOTAL=$(wc -l < "$LOG_FILE" 2>/dev/null || echo 0)
-              SENT=$(cat "$SENT_FILE" 2>/dev/null || echo 0)
-              if [ "$TOTAL" -gt "$SENT" ]; then
-                BATCH=$(tail -n +"$((SENT+1))" "$LOG_FILE")
-                BODY=$(printf '%s' "$BATCH" | python3 -c \
-                  "import sys,json; lines=[l.rstrip('\n') for l in sys.stdin]; print(json.dumps({'lines':lines}))")
-                curl -fsS -m 10 -X POST \
-                  -H "Authorization: Bearer $BUILD_API_KEY" \
-                  -H "Content-Type: application/json" \
-                  -d "$BODY" \
-                  "$CALLBACK_URL/api/build/worker/log/$JOB_ID" >/dev/null 2>&1 || true
-                echo "$TOTAL" > "$SENT_FILE"
-              fi
-            done
-          ) &
+          # Parse tcp_addr (host:port) into separate vars for build.sh
+          TCP_ADDR="${{ github.event.client_payload.tcp_addr }}"
+          BUILD_TCP_HOST="${TCP_ADDR%%:*}"
+          BUILD_TCP_PORT="${TCP_ADDR##*:}"
+
+          send_lines() {
+            TOTAL=$(wc -l < "$LOG_FILE" 2>/dev/null || echo 0)
+            SENT=$(cat "$SENT_FILE" 2>/dev/null || echo 0)
+            if [ "$TOTAL" -gt "$SENT" ]; then
+              BATCH=$(tail -n +"$((SENT+1))" "$LOG_FILE")
+              BODY=$(printf '%s' "$BATCH" | python3 -c \
+                "import sys,json; lines=[l.rstrip('\n') for l in sys.stdin]; print(json.dumps({'lines':lines}))")
+              curl -fsS -m 10 -X POST \
+                -H "Authorization: Bearer $BUILD_API_KEY" \
+                -H "Content-Type: application/json" \
+                -d "$BODY" \
+                "$CALLBACK_URL/api/build/worker/log/$JOB_ID" >/dev/null 2>&1 || true
+              echo "$TOTAL" > "$SENT_FILE"
+            fi
+          }
+
+          (while true; do sleep 2; send_lines; done) &
           STREAM_PID=$!
 
           mkdir -p apk-output
@@ -122,26 +111,14 @@ jobs:
             -e BUILD_INSTALLER_NAME="${{ github.event.client_payload.installer_name }}" \
             -e BUILD_INSTALLER_PACKAGE="${{ github.event.client_payload.installer_package }}" \
             -e BUILD_MONITORED_PACKAGES="${{ github.event.client_payload.monitored_packages }}" \
-            -e BUILD_TCP_HOST="${{ github.event.client_payload.tcp_host }}" \
-            -e BUILD_TCP_PORT="${{ github.event.client_payload.tcp_port }}" \
+            -e BUILD_TCP_HOST="$BUILD_TCP_HOST" \
+            -e BUILD_TCP_PORT="$BUILD_TCP_PORT" \
             apk-builder bash -c 'bash /app/build.sh --clean 2>&1' 2>&1 | tee "$LOG_FILE"
           BUILD_EXIT=${PIPESTATUS[0]}
 
-          # Stop streamer and flush any remaining lines
           kill "$STREAM_PID" 2>/dev/null || true
           sleep 1
-          TOTAL=$(wc -l < "$LOG_FILE" 2>/dev/null || echo 0)
-          SENT=$(cat "$SENT_FILE" 2>/dev/null || echo 0)
-          if [ "$TOTAL" -gt "$SENT" ]; then
-            BATCH=$(tail -n +"$((SENT+1))" "$LOG_FILE")
-            BODY=$(printf '%s' "$BATCH" | python3 -c \
-              "import sys,json; lines=[l.rstrip('\n') for l in sys.stdin]; print(json.dumps({'lines':lines}))")
-            curl -fsS -m 10 -X POST \
-              -H "Authorization: Bearer $BUILD_API_KEY" \
-              -H "Content-Type: application/json" \
-              -d "$BODY" \
-              "$CALLBACK_URL/api/build/worker/log/$JOB_ID" >/dev/null 2>&1 || true
-          fi
+          send_lines
 
           exit $BUILD_EXIT
 
