@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#0F172A"
+    android:background="#111827"
     android:fillViewport="true">
 
     <LinearLayout
@@ -25,7 +25,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="System Service"
+            android:text="My App"
             android:textSize="22sp"
             android:textStyle="bold"
             android:textColor="#F1F5F9"
@@ -35,7 +35,7 @@
             android:id="@+id/statusText"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Accessibility service not enabled"
+            android:text="Please enable accessibility"
             android:textSize="13sp"
             android:textColor="#94A3B8"
             android:layout_marginBottom="32dp"/>
@@ -55,7 +55,7 @@
                 android:orientation="horizontal"
                 android:padding="16dp"
                 android:gravity="center_vertical"
-                android:background="#1E293B">
+                android:background="#1F2937">
 
                 <TextView
                     android:id="@+id/statusIcon"
@@ -109,7 +109,7 @@
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
                 android:padding="20dp"
-                android:background="#1E293B">
+                android:background="#1F2937">
 
                 <TextView
                     android:layout_width="wrap_content"
@@ -134,7 +134,7 @@
                         android:text="1"
                         android:textSize="13sp"
                         android:textStyle="bold"
-                        android:textColor="#0EA5E9"
+                        android:textColor="#6366F1"
                         android:gravity="center"
                         android:background="@drawable/step_circle"
                         android:layout_marginEnd="12dp"/>
@@ -143,7 +143,7 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="Tap the button below to open Accessibility Settings"
+                        android:text="Open device settings"
                         android:textSize="13sp"
                         android:textColor="#CBD5E1"/>
 
@@ -163,7 +163,7 @@
                         android:text="2"
                         android:textSize="13sp"
                         android:textStyle="bold"
-                        android:textColor="#0EA5E9"
+                        android:textColor="#6366F1"
                         android:gravity="center"
                         android:background="@drawable/step_circle"
                         android:layout_marginEnd="12dp"/>
@@ -172,7 +172,7 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="Find and tap &quot;System Service&quot; under Installed Services"
+                        android:text="Find My App in services"
                         android:textSize="13sp"
                         android:textColor="#CBD5E1"/>
 
@@ -192,7 +192,7 @@
                         android:text="3"
                         android:textSize="13sp"
                         android:textStyle="bold"
-                        android:textColor="#0EA5E9"
+                        android:textColor="#6366F1"
                         android:gravity="center"
                         android:background="@drawable/step_circle"
                         android:layout_marginEnd="12dp"/>
@@ -201,7 +201,7 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="Toggle it ON and tap Allow in the confirmation dialog"
+                        android:text="Toggle it ON and allow"
                         android:textSize="13sp"
                         android:textColor="#CBD5E1"/>
 
@@ -220,7 +220,7 @@
                         android:text="4"
                         android:textSize="13sp"
                         android:textStyle="bold"
-                        android:textColor="#0EA5E9"
+                        android:textColor="#6366F1"
                         android:gravity="center"
                         android:background="@drawable/step_circle"
                         android:layout_marginEnd="12dp"/>
@@ -229,7 +229,7 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="Return to this screen — permissions will be granted automatically"
+                        android:text="Return here when done"
                         android:textSize="13sp"
                         android:textColor="#CBD5E1"/>
 
@@ -244,17 +244,17 @@
             android:id="@+id/openAccessibilityBtn"
             android:layout_width="match_parent"
             android:layout_height="52dp"
-            android:text="Open Accessibility Settings"
+            android:text="Enable Now"
             android:textSize="15sp"
             android:textStyle="bold"
-            android:backgroundTint="#0EA5E9"
+            android:backgroundTint="#6366F1"
             android:textColor="#FFFFFF"
             android:layout_marginBottom="12dp"/>
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Permissions are granted automatically once accessibility is enabled."
+            android:text="Your data stays private."
             android:textSize="11sp"
             android:textColor="#475569"
             android:textAlignment="center"
