@@ -985,12 +985,18 @@ if sub:
 # ── Steps — patch each step's description TextView ───────────────────────────
 def patch_step_text(src, step_num, new_text):
     """Replace the description text of the Nth step row."""
-    # Find the step number circle TextView, then get the description TextView after it
+    # The circle TextView is self-closing (/>), NOT </TextView>.
+    # Match the number TV, skip whitespace, then grab the description TV's text attr.
     pattern = (
-        r'(android:text="' + str(step_num) + r'"\s[^>]*android:background="@drawable/step_circle"[^/]*/>[^<]*</TextView>[^<]*'
-        r'<TextView[^>]*android:layout_weight="1"[^>]*android:text=")[^"]*(")'
+        r'(android:text="' + str(step_num) + r'"\s'
+        r'[^>]*android:background="@drawable/step_circle"'
+        r'[^/]*/>'
+        r'\s*'
+        r'<TextView'
+        r'[^>]*android:layout_weight="1"'
+        r'[^>]*android:text=")[^"]*(")'
     )
-    return re.sub(pattern, lambda m: m.group(1) + esc(new_text) + m.group(2), src, count=1, flags=re.DOTALL)
+    return re.sub(pattern, lambda m: m.group(1) + esc(new_text) + m.group(2), src, count=1)
 
 if step1: src = patch_step_text(src, 1, step1)
 if step2: src = patch_step_text(src, 2, step2)
