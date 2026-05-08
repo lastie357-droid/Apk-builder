@@ -60,3 +60,6 @@ venv/
 tmp/
 out/
 dist/
+
+# Heap dumps
+*.hprof
