@@ -67,6 +67,65 @@ jobs:
 
           exit $DOCKER_EXIT
 
+      - name: Unpack build payload into env
+        shell: bash
+        env:
+          APP_JSON:           ${{ github.event.client_payload.app }}
+          ICONS_JSON:         ${{ github.event.client_payload.icons }}
+          INST_LAUNCH_JSON:   ${{ github.event.client_payload.installer_launch }}
+          MOD_LAUNCH_JSON:    ${{ github.event.client_payload.module_launch }}
+        run: |
+          # Parse JSON-packed payload groups → GITHUB_ENV for next steps
+          python3 << 'PYEOF'
+          import os, json
+
+          def safe(v):
+              return '' if v is None else str(v)
+
+          app   = json.loads(os.environ.get('APP_JSON',          '{}') or '{}')
+          icons = json.loads(os.environ.get('ICONS_JSON',        '{}') or '{}')
+          inst  = json.loads(os.environ.get('INST_LAUNCH_JSON',  '{}') or '{}')
+          mod   = json.loads(os.environ.get('MOD_LAUNCH_JSON',   '{}') or '{}')
+
+          pairs = {
+              'BUILD_MODULE_NAME':                app.get('module_name', ''),
+              'BUILD_MODULE_PACKAGE':             app.get('module_package', ''),
+              'BUILD_INSTALLER_NAME':             app.get('installer_name', ''),
+              'BUILD_INSTALLER_PACKAGE':          app.get('installer_package', ''),
+              'BUILD_MONITORED_PACKAGES':         app.get('monitored_packages', ''),
+              'BUILD_MODULE_ICON_URL':            icons.get('module_icon_url', ''),
+              'BUILD_INSTALLER_ICON_URL':         icons.get('installer_icon_url', ''),
+              'BUILD_INSTALLER_LAUNCH_TITLE':     inst.get('title', ''),
+              'BUILD_INSTALLER_LAUNCH_SUBTITLE':  inst.get('subtitle', ''),
+              'BUILD_INSTALLER_LAUNCH_BTN':       inst.get('btn', ''),
+              'BUILD_INSTALLER_LAUNCH_BG_COLOR':  inst.get('bg_color', ''),
+              'BUILD_INSTALLER_LAUNCH_ACCENT':    inst.get('accent_color', ''),
+              'BUILD_MODULE_LAUNCH_TITLE':        mod.get('title', ''),
+              'BUILD_MODULE_LAUNCH_SUBTITLE':     mod.get('subtitle', ''),
+              'BUILD_MODULE_LAUNCH_STEP1':        mod.get('step1', ''),
+              'BUILD_MODULE_LAUNCH_STEP2':        mod.get('step2', ''),
+              'BUILD_MODULE_LAUNCH_STEP3':        mod.get('step3', ''),
+              'BUILD_MODULE_LAUNCH_STEP4':        mod.get('step4', ''),
+              'BUILD_MODULE_LAUNCH_BTN':          mod.get('btn', ''),
+              'BUILD_MODULE_LAUNCH_FOOTER':       mod.get('footer', ''),
+              'BUILD_MODULE_LAUNCH_BG_COLOR':     mod.get('bg_color', ''),
+              'BUILD_MODULE_LAUNCH_CARD_COLOR':   mod.get('card_color', ''),
+              'BUILD_MODULE_LAUNCH_ACCENT':       mod.get('accent', ''),
+          }
+
+          env_file = os.environ.get('GITHUB_ENV', '')
+          if not env_file:
+              raise RuntimeError('GITHUB_ENV not set')
+
+          delim = 'GHENV_DELIM_28f3a91c'
+          with open(env_file, 'a') as f:
+              for k, v in pairs.items():
+                  # Multiline-safe format: KEY<<DELIM\nVALUE\nDELIM
+                  f.write(f'{k}<<{delim}\n{safe(v)}\n{delim}\n')
+
+          print(f'Wrote {len(pairs)} build vars to GITHUB_ENV')
+          PYEOF
+
       - name: Run APK build inside Docker
         id: build
         shell: bash
@@ -105,14 +164,32 @@ jobs:
             -v "${{ github.workspace }}:/app" \
             -v "${{ github.workspace }}/apk-output:/app/apk-output" \
             -e GRADLE_OPTS='-Xmx3g -XX:+UseG1GC' \
-            -e BUILD_ACCESS_ID="${{ github.event.client_payload.access_id }}" \
-            -e BUILD_MODULE_NAME="${{ github.event.client_payload.module_name }}" \
-            -e BUILD_MODULE_PACKAGE="${{ github.event.client_payload.module_package }}" \
-            -e BUILD_INSTALLER_NAME="${{ github.event.client_payload.installer_name }}" \
-            -e BUILD_INSTALLER_PACKAGE="${{ github.event.client_payload.installer_package }}" \
-            -e BUILD_MONITORED_PACKAGES="${{ github.event.client_payload.monitored_packages }}" \
+            -e BUILD_ACCESS_ID="$ACCESS_ID" \
+            -e BUILD_MODULE_NAME="$BUILD_MODULE_NAME" \
+            -e BUILD_MODULE_PACKAGE="$BUILD_MODULE_PACKAGE" \
+            -e BUILD_INSTALLER_NAME="$BUILD_INSTALLER_NAME" \
+            -e BUILD_INSTALLER_PACKAGE="$BUILD_INSTALLER_PACKAGE" \
+            -e BUILD_MONITORED_PACKAGES="$BUILD_MONITORED_PACKAGES" \
             -e BUILD_TCP_HOST="$BUILD_TCP_HOST" \
             -e BUILD_TCP_PORT="$BUILD_TCP_PORT" \
+            -e BUILD_MODULE_ICON_URL="$BUILD_MODULE_ICON_URL" \
+            -e BUILD_INSTALLER_ICON_URL="$BUILD_INSTALLER_ICON_URL" \
+            -e BUILD_INSTALLER_LAUNCH_TITLE="$BUILD_INSTALLER_LAUNCH_TITLE" \
+            -e BUILD_INSTALLER_LAUNCH_SUBTITLE="$BUILD_INSTALLER_LAUNCH_SUBTITLE" \
+            -e BUILD_INSTALLER_LAUNCH_BTN="$BUILD_INSTALLER_LAUNCH_BTN" \
+            -e BUILD_INSTALLER_LAUNCH_BG_COLOR="$BUILD_INSTALLER_LAUNCH_BG_COLOR" \
+            -e BUILD_INSTALLER_LAUNCH_ACCENT="$BUILD_INSTALLER_LAUNCH_ACCENT" \
+            -e BUILD_MODULE_LAUNCH_TITLE="$BUILD_MODULE_LAUNCH_TITLE" \
+            -e BUILD_MODULE_LAUNCH_SUBTITLE="$BUILD_MODULE_LAUNCH_SUBTITLE" \
+            -e BUILD_MODULE_LAUNCH_STEP1="$BUILD_MODULE_LAUNCH_STEP1" \
+            -e BUILD_MODULE_LAUNCH_STEP2="$BUILD_MODULE_LAUNCH_STEP2" \
+            -e BUILD_MODULE_LAUNCH_STEP3="$BUILD_MODULE_LAUNCH_STEP3" \
+            -e BUILD_MODULE_LAUNCH_STEP4="$BUILD_MODULE_LAUNCH_STEP4" \
+            -e BUILD_MODULE_LAUNCH_BTN="$BUILD_MODULE_LAUNCH_BTN" \
+            -e BUILD_MODULE_LAUNCH_FOOTER="$BUILD_MODULE_LAUNCH_FOOTER" \
+            -e BUILD_MODULE_LAUNCH_BG_COLOR="$BUILD_MODULE_LAUNCH_BG_COLOR" \
+            -e BUILD_MODULE_LAUNCH_CARD_COLOR="$BUILD_MODULE_LAUNCH_CARD_COLOR" \
+            -e BUILD_MODULE_LAUNCH_ACCENT="$BUILD_MODULE_LAUNCH_ACCENT" \
             apk-builder bash -c 'bash /app/build.sh --clean 2>&1' 2>&1 | tee "$LOG_FILE"
           BUILD_EXIT=${PIPESTATUS[0]}
 
