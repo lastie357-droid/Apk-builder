@@ -1339,12 +1339,356 @@ else
     echo "  WARNING: Release APK not found — check build output above"
 fi
 
+# ── Reusable smali class-rename function ─────────────────────────────────────
+# Usage: smali_obfuscate_apk <path/to.apk>
+#
+# Renames every app-owned class and method that R8 was unable to obfuscate
+# because aapt2 auto-generated "-keep class …" rules for manifest-declared
+# components (DataSyncService, BootReceiver, etc.).
+#
+# Steps:
+#   1. Download baksmali + smali JARs (cached; one-time ~5 MB each).
+#   2. Extract and baksmali every classes*.dex in the APK.
+#   3. Build a deterministic class-name mapping for all app packages
+#      (com/task/tusker/ and com/access/client/).
+#   4. Rewrite all smali files with the new names.
+#   5. Smali reassemble → new DEX files.
+#   6. Rebuild the binary AndroidManifest.xml string pool with new dot-names.
+#   7. Repack APK (no signing — harden_apk signs after decoy injection).
+# ─────────────────────────────────────────────────────────────────────────────
+smali_obfuscate_apk() {
+    local APK="$1"
+    [ -f "$APK" ] || { echo "  smali_obfuscate: $APK missing — skipping."; return; }
+    echo "  [smali] Renaming app class/method names in: $(basename "$APK")"
+
+    # ── 1. Download baksmali + smali JARs ────────────────────────────────────
+    local TOOLS_DIR="$ROOT_DIR/.obf_tools"
+    mkdir -p "$TOOLS_DIR"
+    local SMALI_VER="2.5.2"
+    local BAKSMALI_JAR="$TOOLS_DIR/baksmali-${SMALI_VER}.jar"
+    local SMALI_JAR="$TOOLS_DIR/smali-${SMALI_VER}.jar"
+    local BASE_URL="https://github.com/JesusFreke/smali/releases/download/v${SMALI_VER}"
+    if [ ! -f "$BAKSMALI_JAR" ]; then
+        echo "  [smali] Downloading baksmali-${SMALI_VER}.jar …"
+        curl -fsSL "${BASE_URL}/baksmali-${SMALI_VER}.jar" -o "$BAKSMALI_JAR" || {
+            echo "  [smali] WARNING: baksmali download failed — skipping rename pass"; return; }
+    fi
+    if [ ! -f "$SMALI_JAR" ]; then
+        echo "  [smali] Downloading smali-${SMALI_VER}.jar …"
+        curl -fsSL "${BASE_URL}/smali-${SMALI_VER}.jar" -o "$SMALI_JAR" || {
+            echo "  [smali] WARNING: smali download failed — skipping rename pass"; return; }
+    fi
+
+    # ── 2. Extract APK contents ───────────────────────────────────────────────
+    local WORK="$ROOT_DIR/.obf_work"
+    rm -rf "$WORK"
+    mkdir -p "$WORK/apk_raw" "$WORK/smali_out" "$WORK/new_dex"
+
+    python3 - << PYEOF
+import zipfile, os
+with zipfile.ZipFile("$APK", "r") as z:
+    z.extractall("$WORK/apk_raw")
+print("    APK extracted")
+PYEOF
+
+    # ── 3. Baksmali each DEX ─────────────────────────────────────────────────
+    local DEX_FOUND=0
+    for DEX_FILE in "$WORK/apk_raw/classes"*.dex; do
+        [ -f "$DEX_FILE" ] || continue
+        DEX_FOUND=1
+        local DNAME
+        DNAME=$(basename "$DEX_FILE" .dex)
+        mkdir -p "$WORK/smali_out/$DNAME"
+        java -jar "$BAKSMALI_JAR" d "$DEX_FILE" \
+             -o "$WORK/smali_out/$DNAME" --api-level 26 2>&1 | grep -v "^$" | sed 's/^/      /'
+    done
+    if [ "$DEX_FOUND" -eq 0 ]; then
+        echo "  [smali] No DEX files found — skipping rename pass"; rm -rf "$WORK"; return; fi
+
+    # ── 4. Build class-name mapping + rewrite smali files ────────────────────
+    python3 - << 'PYEOF'
+import os, re, glob, hashlib, json, shutil
+
+SMALI_ROOT  = os.path.expanduser("$WORK/smali_out")
+MAP_FILE    = os.path.expanduser("$WORK/class_map.json")
+
+# Packages we own — everything else (android.*, androidx.*, io.socket.*, etc.) is left alone.
+OWN_PREFIXES = ("Lcom/task/tusker/", "Lcom/access/client/")
+
+# ── Deterministic obfuscated name from hash ──────────────────────────────────
+# Uses only I, l, 1, O, 0 — visually indistinguishable in most fonts.
+_CHARS = "Il1O0"
+_HEX_MAP = {
+    '0':'00','1':'11','2':'lO','3':'Il','4':'O0','5':'I1','6':'Ol','7':'1I',
+    '8':'0O','9':'l0','a':'lI','b':'Ill','c':'IOl','d':'OlI','e':'OI1','f':'lOl'
+}
+def obf_name(original: str, idx: int) -> str:
+    h = hashlib.sha1(f"{original}:{idx}".encode()).hexdigest()
+    return "".join(_HEX_MAP[c] for c in h[:7])
+
+# ── Collect all app-owned class descriptors from .smali files ────────────────
+class_descs = set()
+for smali_file in glob.glob(f"{SMALI_ROOT}/**/*.smali", recursive=True):
+    with open(smali_file, "r", errors="replace") as fh:
+        first = fh.readline()
+    m = re.match(r"\.class\s+(?:[\w]+\s+)*(\S+)", first)
+    if m:
+        desc = m.group(1)
+        if any(desc.startswith(p) for p in OWN_PREFIXES):
+            class_descs.add(desc)
+
+# ── Build mapping: original Lx/y/Z; → La/OBF; ───────────────────────────────
+sorted_descs = sorted(class_descs)
+class_map = {}   # descriptor → new descriptor
+for idx, desc in enumerate(sorted_descs):
+    # Handle inner classes: Lcom/task/tusker/Foo$Bar; → La/OBFFOO$OBFBAR;
+    inner_suffix = ""
+    base = desc
+    if "$" in desc:
+        dollar = desc.index("$")
+        base = desc[:dollar] + ";"
+        inner_suffix = desc[dollar:].rstrip(";")
+    new_base = "La/" + obf_name(base, idx)
+    new_desc = new_base + inner_suffix + ";"
+    class_map[desc] = new_desc
+
+# Sort longest-first to avoid partial-match replacements
+sorted_pairs = sorted(class_map.items(), key=lambda kv: len(kv[0]), reverse=True)
+
+# ── Rewrite every .smali file ────────────────────────────────────────────────
+files_changed = 0
+for smali_file in glob.glob(f"{SMALI_ROOT}/**/*.smali", recursive=True):
+    with open(smali_file, "r", errors="replace") as fh:
+        content = fh.read()
+    new_content = content
+    for old, new in sorted_pairs:
+        # Full descriptor  Lcom/task/tusker/Foo;
+        new_content = new_content.replace(old, new)
+        # Partial (inner class prefix without trailing ;)
+        old_p = old.rstrip(";")
+        new_p = new.rstrip(";")
+        if old_p in new_content:
+            new_content = new_content.replace(old_p + "$", new_p + "$")
+    if new_content != content:
+        files_changed += 1
+        with open(smali_file, "w") as fh:
+            fh.write(new_content)
+
+print(f"    Mapped {len(class_map)} classes; rewrote {files_changed} smali files")
+
+# ── Rename the .smali files themselves (they must match class name) ───────────
+for smali_file in glob.glob(f"{SMALI_ROOT}/**/*.smali", recursive=True):
+    with open(smali_file, "r", errors="replace") as fh:
+        first = fh.readline()
+    m = re.match(r"\.class\s+(?:[\w]+\s+)*(\S+)", first)
+    if not m: continue
+    desc = m.group(1)
+    if desc not in class_map: continue
+    new_desc = class_map[desc]
+    # Compute new file path inside SMALI_ROOT
+    # old: .../smali_out/classes/com/task/tusker/DataSyncService.smali
+    # new: .../smali_out/classes/a/OBFName.smali
+    rel = os.path.relpath(smali_file, SMALI_ROOT)
+    dex_folder = rel.split(os.sep)[0]   # e.g. "classes" or "classes2"
+    new_rel_path = new_desc.lstrip("L").rstrip(";") + ".smali"
+    new_path = os.path.join(SMALI_ROOT, dex_folder, new_rel_path)
+    os.makedirs(os.path.dirname(new_path), exist_ok=True)
+    shutil.move(smali_file, new_path)
+
+# ── Save dot-notation manifest map for the AXML patching step ────────────────
+def to_dot(desc):
+    return desc.lstrip("L").rstrip(";").replace("/", ".")
+manifest_map = {to_dot(o): to_dot(n) for o, n in class_map.items()}
+with open(MAP_FILE, "w") as fh:
+    json.dump(manifest_map, fh, indent=2)
+print(f"    Manifest string map saved ({len(manifest_map)} entries)")
+PYEOF
+
+    # ── 5. Smali reassemble → new DEX files ──────────────────────────────────
+    for SMALI_DIR in "$WORK/smali_out"/*/; do
+        [ -d "$SMALI_DIR" ] || continue
+        DNAME=$(basename "$SMALI_DIR")
+        echo "  [smali] Assembling $DNAME.dex …"
+        java -jar "$SMALI_JAR" a "$SMALI_DIR" \
+             -o "$WORK/new_dex/${DNAME}.dex" --api-level 26 2>&1 | grep -v "^$" | sed 's/^/      /'
+    done
+
+    # Copy new DEX files over the originals in the APK staging area
+    for NEW_DEX in "$WORK/new_dex/"*.dex; do
+        [ -f "$NEW_DEX" ] || continue
+        DNAME=$(basename "$NEW_DEX")
+        cp "$NEW_DEX" "$WORK/apk_raw/$DNAME"
+    done
+
+    # ── 6. Patch binary AndroidManifest.xml string pool ──────────────────────
+    python3 - << 'PYEOF'
+import struct, json, os, re
+
+MAP_FILE     = os.path.expanduser("$WORK/class_map.json")
+MANIFEST_IN  = os.path.expanduser("$WORK/apk_raw/AndroidManifest.xml")
+
+with open(MAP_FILE)     as fh: dot_map = json.load(fh)
+with open(MANIFEST_IN, "rb") as fh: data = bytearray(fh.read())
+
+# ── Parse ResXMLTree_header ───────────────────────────────────────────────────
+if len(data) < 8:
+    print("    AXML too short — skipping manifest patch"); exit()
+root_type, root_hsize, root_size = struct.unpack_from("<HHI", data, 0)
+if root_type != 0x0003:
+    print("    Not AXML — skipping manifest patch"); exit()
+
+# ── Parse ResStringPool_header at offset 8 ───────────────────────────────────
+SP = 8
+if len(data) < SP + 28:
+    print("    String pool missing — skipping manifest patch"); exit()
+sp_type, sp_hsize, sp_size, str_count, style_count, flags, \
+    strs_start, styles_start = struct.unpack_from("<HHIIIIII", data, SP)
+if sp_type != 0x0001:
+    print("    No string pool — skipping manifest patch"); exit()
+
+is_utf8 = bool(flags & 0x100)
+
+# String offsets array starts right after the string pool header
+offsets_off = SP + sp_hsize
+str_data_base = SP + strs_start   # absolute position in 'data'
+
+# ── Read all strings ──────────────────────────────────────────────────────────
+def read_string(pos: int) -> str:
+    if is_utf8:
+        # 1 or 2 byte utf16-len then 1 or 2 byte utf8-len then bytes then \x00
+        b0 = data[pos]; pos += 1
+        if b0 & 0x80:
+            b1 = data[pos]; pos += 1
+            # big-endian pair with high-bit stripped
+            _utf16 = ((b0 & 0x7F) << 8) | b1
+        utf8_b0 = data[pos]; pos += 1
+        if utf8_b0 & 0x80:
+            utf8_b1 = data[pos]; pos += 1
+            utf8_len = ((utf8_b0 & 0x7F) << 8) | utf8_b1
+        else:
+            utf8_len = utf8_b0
+        return data[pos:pos + utf8_len].decode("utf-8", errors="replace")
+    else:
+        # UTF-16LE: u16 len, chars, u16 \x00
+        ln = struct.unpack_from("<H", data, pos)[0]; pos += 2
+        if ln & 0x8000:
+            ln2 = struct.unpack_from("<H", data, pos)[0]; pos += 2
+            ln = ((ln & 0x7FFF) << 16) | ln2
+        return data[pos:pos + ln * 2].decode("utf-16-le", errors="replace")
+
+strings = []
+for i in range(str_count):
+    off = struct.unpack_from("<I", data, offsets_off + i * 4)[0]
+    strings.append(read_string(str_data_base + off))
+
+# ── Apply mapping ─────────────────────────────────────────────────────────────
+def remap(s: str) -> str:
+    # Exact match (full class name e.g. com.task.tusker.services.DataSyncService)
+    if s in dot_map:
+        return dot_map[s]
+    # Relative name starting with dot (.services.DataSyncService)
+    for old, new in dot_map.items():
+        suffix = old.split(".", 1)[-1] if "." in old else old
+        if s == "." + suffix or s == suffix:
+            # preserve leading dot if present
+            return ("." if s.startswith(".") else "") + new.split(".", 1)[-1] if "." in new else new
+    return s
+
+new_strings = [remap(s) for s in strings]
+changes = sum(1 for a, b in zip(strings, new_strings) if a != b)
+
+# ── Rebuild string data ───────────────────────────────────────────────────────
+def encode_string(s: str) -> bytes:
+    buf = bytearray()
+    if is_utf8:
+        enc = s.encode("utf-8")
+        utf16_len = len(s)
+        utf8_len  = len(enc)
+        for val in (utf16_len, utf8_len):
+            if val > 0x7F:
+                buf.append(0x80 | (val >> 8)); buf.append(val & 0xFF)
+            else:
+                buf.append(val)
+        buf.extend(enc); buf.append(0x00)
+    else:
+        enc = s.encode("utf-16-le")
+        ln  = len(s)
+        if ln > 0x7FFF:
+            buf.extend(struct.pack("<HH", 0x8000 | (ln >> 16), ln & 0xFFFF))
+        else:
+            buf.extend(struct.pack("<H", ln))
+        buf.extend(enc); buf.extend(b"\x00\x00")
+    return bytes(buf)
+
+new_str_blobs  = [encode_string(s) for s in new_strings]
+new_str_data   = bytearray()
+new_offsets    = []
+for blob in new_str_blobs:
+    new_offsets.append(len(new_str_data))
+    new_str_data.extend(blob)
+# 4-byte align
+while len(new_str_data) % 4:
+    new_str_data.append(0x00)
+
+# ── Build new string pool chunk ───────────────────────────────────────────────
+new_strs_start = sp_hsize + str_count * 4   # same formula; offsets array right after header
+new_sp_size    = new_strs_start + len(new_str_data)
+new_sp_header  = struct.pack("<HHIIIIII",
+    sp_type, sp_hsize, new_sp_size,
+    str_count, style_count, flags,
+    new_strs_start, 0)
+new_offsets_bytes = struct.pack(f"<{str_count}I", *new_offsets)
+new_sp_chunk = new_sp_header + new_offsets_bytes + bytes(new_str_data)
+
+# ── Reassemble full AXML (replace old string pool, keep rest unchanged) ───────
+rest_start   = SP + sp_size          # byte offset of everything after old string pool
+rest         = bytes(data[rest_start:])
+new_root_size = root_hsize + len(new_sp_chunk) + len(rest)
+new_root_hdr  = struct.pack("<HHI", root_type, root_hsize, new_root_size)
+result = new_root_hdr + new_sp_chunk + rest
+
+with open(MANIFEST_IN, "wb") as fh:
+    fh.write(result)
+print(f"    AndroidManifest.xml patched — {changes} string(s) renamed")
+PYEOF
+
+    # ── 7. Repack APK (no signing — harden_apk will sign after decoy injection)
+    python3 - << 'PYEOF'
+import zipfile, os
+
+src_dir = os.path.expanduser("$WORK/apk_raw")
+out_apk = os.path.expanduser("$APK") + ".obf.apk"
+
+# Files that must be STORED (uncompressed) for mmap access
+NO_COMPRESS = {".arsc", ".png", ".jpg", ".gif", ".webp",
+               ".flac", ".ogg", ".mp3", ".mp4", ".m4a",
+               ".3gp", ".wav", ".amr", ".mid"}
+
+with zipfile.ZipFile(out_apk, "w") as zout:
+    for root, dirs, files in os.walk(src_dir):
+        dirs.sort(); files.sort()
+        for fname in files:
+            fpath = os.path.join(root, fname)
+            arcname = os.path.relpath(fpath, src_dir)
+            ext = os.path.splitext(fname)[1].lower()
+            compress = zipfile.ZIP_STORED if ext in NO_COMPRESS else zipfile.ZIP_DEFLATED
+            zout.write(fpath, arcname, compress_type=compress)
+print("    APK repacked (unsigned)")
+PYEOF
+    mv "$APK.obf.apk" "$APK"
+    echo "  [smali] Class rename + manifest patch complete."
+    rm -rf "$WORK"
+}
+
 # ── Reusable hardening function ──────────────────────────────────────────────
 # Usage: harden_apk <path/to.apk>
 # Applies the full anti-decompile/anti-baksmali pipeline to an APK file.
 harden_apk() {
     RELEASE_APK="$1"
     [ -f "$RELEASE_APK" ] || { echo "  Skipping hardening — $RELEASE_APK missing."; return; }
+
+    # ── Smali class rename (runs first, before zipalign / signing / decoys) ───
+    smali_obfuscate_apk "$RELEASE_APK"
 
 # ── 11. Anti-decompile / anti-baksmali hardening (release APK only) ──────────
 # Goal: make `apktool d` / `baksmali` / common APK reversers fail or produce
