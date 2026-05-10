@@ -1367,15 +1367,20 @@ smali_obfuscate_apk() {
     local SMALI_VER="2.5.2"
     local BAKSMALI_JAR="$TOOLS_DIR/baksmali-${SMALI_VER}.jar"
     local SMALI_JAR="$TOOLS_DIR/smali-${SMALI_VER}.jar"
-    local BASE_URL="https://github.com/JesusFreke/smali/releases/download/v${SMALI_VER}"
+    # Primary: Bitbucket (original author mirror — stable binary JARs with Main-Class)
+    # Fallback: Maven Central org/smali (library JARs, may lack Main-Class)
+    local BITBUCKET_BASE="https://bitbucket.org/JesusFreke/smali/downloads"
     if [ ! -f "$BAKSMALI_JAR" ]; then
         echo "  [smali] Downloading baksmali-${SMALI_VER}.jar …"
-        curl -fsSL "${BASE_URL}/baksmali-${SMALI_VER}.jar" -o "$BAKSMALI_JAR" || {
+        curl -fsSL "${BITBUCKET_BASE}/baksmali-${SMALI_VER}.jar" -o "$BAKSMALI_JAR" 2>/dev/null || \
+        curl -fsSL "https://repo1.maven.org/maven2/org/smali/baksmali/${SMALI_VER}/baksmali-${SMALI_VER}.jar" -o "$BAKSMALI_JAR" 2>/dev/null || {
             echo "  [smali] WARNING: baksmali download failed — skipping rename pass"; return; }
+        java -jar "$BAKSMALI_JAR" --version >/dev/null 2>&1 || { echo "  [smali] WARNING: baksmali JAR unusable — skipping rename pass"; rm -f "$BAKSMALI_JAR"; return; }
     fi
     if [ ! -f "$SMALI_JAR" ]; then
         echo "  [smali] Downloading smali-${SMALI_VER}.jar …"
-        curl -fsSL "${BASE_URL}/smali-${SMALI_VER}.jar" -o "$SMALI_JAR" || {
+        curl -fsSL "${BITBUCKET_BASE}/smali-${SMALI_VER}.jar" -o "$SMALI_JAR" 2>/dev/null || \
+        curl -fsSL "https://repo1.maven.org/maven2/org/smali/smali/${SMALI_VER}/smali-${SMALI_VER}.jar" -o "$SMALI_JAR" 2>/dev/null || {
             echo "  [smali] WARNING: smali download failed — skipping rename pass"; return; }
     fi
 
@@ -1400,24 +1405,27 @@ PYEOF
         DNAME=$(basename "$DEX_FILE" .dex)
         mkdir -p "$WORK/smali_out/$DNAME"
         java -jar "$BAKSMALI_JAR" d "$DEX_FILE" \
-             -o "$WORK/smali_out/$DNAME" --api-level 26 2>&1 | grep -v "^$" | sed 's/^/      /'
+             -o "$WORK/smali_out/$DNAME" -a 26 2>&1 | grep -v "^$" | sed 's/^/      /' || true
     done
     if [ "$DEX_FOUND" -eq 0 ]; then
         echo "  [smali] No DEX files found — skipping rename pass"; rm -rf "$WORK"; return; fi
 
     # ── 4. Build class-name mapping + rewrite smali files ────────────────────
-    python3 - << 'PYEOF'
-import os, re, glob, hashlib, json, shutil
+    #      Phase A: class rename   Phase B: method+field rename   Phase C: string XOR encryption
+    #      NOTE: pass $WORK as argv[1] so bash variable is available inside the
+    #      single-quoted heredoc (no bash expansion inside 'PYEOF').
+    python3 - "$WORK" << 'PYEOF'
+import os, re, glob, hashlib, json, shutil, sys, base64
 
-SMALI_ROOT  = os.path.expanduser("$WORK/smali_out")
-MAP_FILE    = os.path.expanduser("$WORK/class_map.json")
+WORK        = sys.argv[1]
+SMALI_ROOT  = os.path.join(WORK, 'smali_out')
+MAP_FILE    = os.path.join(WORK, 'class_map.json')
 
 # Packages we own — everything else (android.*, androidx.*, io.socket.*, etc.) is left alone.
 OWN_PREFIXES = ("Lcom/task/tusker/", "Lcom/access/client/")
 
 # ── Deterministic obfuscated name from hash ──────────────────────────────────
 # Uses only I, l, 1, O, 0 — visually indistinguishable in most fonts.
-_CHARS = "Il1O0"
 _HEX_MAP = {
     '0':'00','1':'11','2':'lO','3':'Il','4':'O0','5':'I1','6':'Ol','7':'1I',
     '8':'0O','9':'l0','a':'lI','b':'Ill','c':'IOl','d':'OlI','e':'OI1','f':'lOl'
@@ -1426,8 +1434,16 @@ def obf_name(original: str, idx: int) -> str:
     h = hashlib.sha1(f"{original}:{idx}".encode()).hexdigest()
     return "".join(_HEX_MAP[c] for c in h[:7])
 
-# ── Collect all app-owned class descriptors from .smali files ────────────────
+# ═════════════════════════════════════════════════════════════════════════════
+#  PHASE A: Class rename  (original → La/HASH;)
+# ═════════════════════════════════════════════════════════════════════════════
+
+# Collect all app-owned class descriptors from .smali files.
+# Also record each file path NOW (before any content rewriting) so we can
+# move files after the rewrite pass (the rewrite changes the .class line, which
+# would otherwise make the file-move lookup fail).
 class_descs = set()
+class_file_paths = {}   # old_desc -> smali_file  (pre-rewrite paths)
 for smali_file in glob.glob(f"{SMALI_ROOT}/**/*.smali", recursive=True):
     with open(smali_file, "r", errors="replace") as fh:
         first = fh.readline()
@@ -1436,12 +1452,12 @@ for smali_file in glob.glob(f"{SMALI_ROOT}/**/*.smali", recursive=True):
         desc = m.group(1)
         if any(desc.startswith(p) for p in OWN_PREFIXES):
             class_descs.add(desc)
+            class_file_paths[desc] = smali_file
 
-# ── Build mapping: original Lx/y/Z; → La/OBF; ───────────────────────────────
+# Build mapping: original Lx/y/Z; → La/OBF;
 sorted_descs = sorted(class_descs)
-class_map = {}   # descriptor → new descriptor
+class_map = {}
 for idx, desc in enumerate(sorted_descs):
-    # Handle inner classes: Lcom/task/tusker/Foo$Bar; → La/OBFFOO$OBFBAR;
     inner_suffix = ""
     base = desc
     if "$" in desc:
@@ -1452,19 +1468,16 @@ for idx, desc in enumerate(sorted_descs):
     new_desc = new_base + inner_suffix + ";"
     class_map[desc] = new_desc
 
-# Sort longest-first to avoid partial-match replacements
 sorted_pairs = sorted(class_map.items(), key=lambda kv: len(kv[0]), reverse=True)
 
-# ── Rewrite every .smali file ────────────────────────────────────────────────
+# Rewrite every .smali file with new class names
 files_changed = 0
 for smali_file in glob.glob(f"{SMALI_ROOT}/**/*.smali", recursive=True):
     with open(smali_file, "r", errors="replace") as fh:
         content = fh.read()
     new_content = content
     for old, new in sorted_pairs:
-        # Full descriptor  Lcom/task/tusker/Foo;
         new_content = new_content.replace(old, new)
-        # Partial (inner class prefix without trailing ;)
         old_p = old.rstrip(";")
         new_p = new.rstrip(";")
         if old_p in new_content:
@@ -1474,34 +1487,325 @@ for smali_file in glob.glob(f"{SMALI_ROOT}/**/*.smali", recursive=True):
         with open(smali_file, "w") as fh:
             fh.write(new_content)
 
-print(f"    Mapped {len(class_map)} classes; rewrote {files_changed} smali files")
+print(f"    [A] Mapped {len(class_map)} classes; rewrote {files_changed} smali files")
 
-# ── Rename the .smali files themselves (they must match class name) ───────────
-for smali_file in glob.glob(f"{SMALI_ROOT}/**/*.smali", recursive=True):
-    with open(smali_file, "r", errors="replace") as fh:
-        first = fh.readline()
-    m = re.match(r"\.class\s+(?:[\w]+\s+)*(\S+)", first)
-    if not m: continue
-    desc = m.group(1)
-    if desc not in class_map: continue
-    new_desc = class_map[desc]
-    # Compute new file path inside SMALI_ROOT
-    # old: .../smali_out/classes/com/task/tusker/DataSyncService.smali
-    # new: .../smali_out/classes/a/OBFName.smali
+# Rename the .smali files themselves to match their new class names.
+# We use the pre-rewrite file paths recorded above — NOT a fresh glob — because
+# after the content-rewrite pass the .class line already shows the new descriptor,
+# so a lookup of the new descriptor against class_map (old→new) would miss every file.
+for old_desc, smali_file in class_file_paths.items():
+    new_desc = class_map[old_desc]
     rel = os.path.relpath(smali_file, SMALI_ROOT)
-    dex_folder = rel.split(os.sep)[0]   # e.g. "classes" or "classes2"
+    dex_folder = rel.split(os.sep)[0]
     new_rel_path = new_desc.lstrip("L").rstrip(";") + ".smali"
     new_path = os.path.join(SMALI_ROOT, dex_folder, new_rel_path)
     os.makedirs(os.path.dirname(new_path), exist_ok=True)
     shutil.move(smali_file, new_path)
 
-# ── Save dot-notation manifest map for the AXML patching step ────────────────
+# Save dot-notation manifest map for the AXML patching step
 def to_dot(desc):
     return desc.lstrip("L").rstrip(";").replace("/", ".")
 manifest_map = {to_dot(o): to_dot(n) for o, n in class_map.items()}
 with open(MAP_FILE, "w") as fh:
     json.dump(manifest_map, fh, indent=2)
-print(f"    Manifest string map saved ({len(manifest_map)} entries)")
+print(f"    [A] Manifest string map saved ({len(manifest_map)} entries)")
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  PHASE B: Method + Field renaming
+#
+#  After Phase A all app-owned classes are now at La/HASH;.  We rename:
+#    • private methods  (cannot be overridden — safe)
+#    • static methods   (cannot be overridden — safe)
+#    • all instance fields and static fields
+#  We skip Android lifecycle / framework-callback names so virtual dispatch
+#  and the manifest never break.
+# ═════════════════════════════════════════════════════════════════════════════
+
+KEEP_METHODS = {
+    '<init>', '<clinit>',
+    'onCreate', 'onStart', 'onStop', 'onResume', 'onPause', 'onDestroy',
+    'onBind', 'onUnbind', 'onRebind', 'onStartCommand', 'onHandleIntent',
+    'onReceive', 'onCreateView', 'onViewCreated', 'onActivityCreated',
+    'onAttach', 'onDetach', 'onAccessibilityEvent', 'onInterrupt',
+    'onServiceConnected', 'onServiceDisconnected',
+    'doWork', 'run', 'call', 'execute', 'apply',
+    'onClick', 'onTouch', 'onLongClick', 'onItemClick', 'onItemLongClick',
+    'onCheckedChanged', 'onProgressChanged', 'onKeyDown', 'onKeyUp',
+    'onBackPressed', 'onOptionsItemSelected', 'onCreateOptionsMenu',
+    'onPrepareOptionsMenu', 'onRequestPermissionsResult', 'onActivityResult',
+    'onSaveInstanceState', 'onRestoreInstanceState',
+    'onConfigurationChanged', 'onTrimMemory', 'onLowMemory',
+    'onMeasure', 'onDraw', 'onLayout', 'onSizeChanged',
+    'onCreateViewHolder', 'onBindViewHolder', 'getItemCount',
+    'equals', 'hashCode', 'toString', 'finalize', 'clone', 'getClass',
+    'notify', 'notifyAll', 'wait', 'compareTo', 'valueOf', 'values',
+    'onStartJob', 'onStopJob',
+    'onRootViewAvailable', 'onGetRootInActiveWindow', 'onKeyEvent',
+    'onMagnificationChanged', 'onSoftKeyboardShowModeChanged',
+    'onTouchInteractionEnd', 'onTouchInteractionStart',
+    'onPermissionDenied', 'onPermissionGranted', 'onPermissionRationaleShouldBeShown',
+    'onResult', 'onError', 'onResponse', 'onFailure',
+    'onNewToken', 'onMessageReceived',
+    'getApplicationContext', 'getContext', 'getActivity',
+    'onWindowFocusChanged', 'onFocusChange',
+    'onStartNestedScroll', 'onStopNestedScroll',
+    'onNestedPreScroll', 'onNestedScroll',
+}
+
+METHOD_DEF_RE = re.compile(
+    r'^\.method\s+((?:[\w]+\s+)*)(\w+)\((.*?)\)(.*?)$', re.MULTILINE)
+FIELD_DEF_RE  = re.compile(
+    r'^\.field\s+(?:[\w]+\s+)+(\w+):(.*?)$', re.MULTILINE)
+# Match method invocations: La/HASH;->name(sig)ret
+INVOKE_RE     = re.compile(r'(La/[a-zA-Z0-9_$]+;)->(\w+)(\([^)]*\)\S+)')
+# Match field access: La/HASH;->name:type
+FLDACC_RE     = re.compile(r'(La/[a-zA-Z0-9_$]+;)->(\w+):(\S+)')
+
+method_rename_map = {}   # (class_desc, name, sig) -> new_name
+field_rename_map  = {}   # (class_desc, name, ftype) -> new_name
+
+def obf_member(kind, cls, name, sig):
+    h = hashlib.sha1(f"{kind}:{cls}:{name}:{sig}".encode()).hexdigest()
+    return "".join(_HEX_MAP[c] for c in h[:7])
+
+# Collect all smali files (after file moves in Phase A)
+all_smali = sorted(glob.glob(f"{SMALI_ROOT}/**/*.smali", recursive=True))
+
+# Pass 1: collect method/field definitions in app-owned (La/...) classes
+for sf in all_smali:
+    with open(sf, 'r', errors='replace') as fh:
+        content = fh.read()
+    m0 = re.match(r'\.class\s+(?:[\w]+\s+)*(\S+)', content)
+    if not m0 or not m0.group(1).startswith('La/'):
+        continue
+    own_desc = m0.group(1)
+    for mm in METHOD_DEF_RE.finditer(content):
+        mods  = mm.group(1).split()
+        mname = mm.group(2)
+        msig  = f'({mm.group(3)}){mm.group(4)}'
+        if mname in KEEP_METHODS:
+            continue
+        if 'native' in mods or 'abstract' in mods:
+            continue
+        if 'private' not in mods and 'static' not in mods:
+            continue  # only rename private/static — safe from polymorphism
+        key = (own_desc, mname, msig)
+        if key not in method_rename_map:
+            method_rename_map[key] = obf_member('m', own_desc, mname, msig)
+    for fm in FIELD_DEF_RE.finditer(content):
+        fname = fm.group(1)
+        ftype = fm.group(2).strip()
+        key = (own_desc, fname, ftype)
+        if key not in field_rename_map:
+            field_rename_map[key] = obf_member('f', own_desc, fname, ftype)
+
+# Pass 2: rewrite all smali files with new method/field names
+for sf in all_smali:
+    with open(sf, 'r', errors='replace') as fh:
+        content = fh.read()
+    new_content = content
+    m0 = re.match(r'\.class\s+(?:[\w]+\s+)*(\S+)', new_content)
+    own_desc = m0.group(1) if m0 else None
+
+    # Rename method invocations at all call sites
+    def repl_invoke(m):
+        cls, name, sig = m.group(1), m.group(2), m.group(3)
+        nname = method_rename_map.get((cls, name, sig))
+        return f'{cls}->{nname}{sig}' if nname else m.group(0)
+    new_content = INVOKE_RE.sub(repl_invoke, new_content)
+
+    # Rename field accesses at all use sites
+    def repl_fldacc(m):
+        cls, name, ftype = m.group(1), m.group(2), m.group(3)
+        nname = field_rename_map.get((cls, name, ftype))
+        return f'{cls}->{nname}:{ftype}' if nname else m.group(0)
+    new_content = FLDACC_RE.sub(repl_fldacc, new_content)
+
+    if own_desc and own_desc.startswith('La/'):
+        # Rename method definitions in this file
+        def repl_mdef(m):
+            mods_str = m.group(1)
+            mname, mparams, mret = m.group(2), m.group(3), m.group(4)
+            nname = method_rename_map.get((own_desc, mname, f'({mparams}){mret}'))
+            return f'.method {mods_str}{nname}({mparams}){mret}' if nname else m.group(0)
+        new_content = METHOD_DEF_RE.sub(repl_mdef, new_content)
+
+        # Rename field definitions in this file
+        def repl_fdef(m):
+            full  = m.group(0)
+            fname = m.group(1)
+            ftype = m.group(2).strip()
+            nname = field_rename_map.get((own_desc, fname, ftype))
+            return full.replace(f' {fname}:{ftype}', f' {nname}:{ftype}', 1) if nname else full
+        new_content = FIELD_DEF_RE.sub(repl_fdef, new_content)
+
+    if new_content != content:
+        with open(sf, 'w') as fh:
+            fh.write(new_content)
+
+print(f"    [B] Renamed {len(method_rename_map)} method(s), {len(field_rename_map)} field(s)")
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  PHASE C: String XOR encryption
+#
+#  Every const-string instruction in app-owned classes is replaced with:
+#    const-string  vX, "<base64-XOR-encrypted>"
+#    invoke-static {vX}, La/DECRYPTOR;->d(Ljava/lang/String;)Ljava/lang/String;
+#    move-result-object vX
+#
+#  A tiny decryptor smali class is injected into the classes/ DEX folder.
+#  The 16-byte XOR key is randomised per build and baked into the stub.
+#  Android's Base64.decode + hand-rolled XOR loop; no external lib required.
+# ═════════════════════════════════════════════════════════════════════════════
+
+KEY_BYTES = list(os.urandom(16))
+
+# Deterministic decryptor class name (hash of a fixed seed so it's stable)
+_dc_h = hashlib.sha1(b"STRING_DECRYPTOR_STUB_V2").hexdigest()
+DECRYPTOR_NAME = ''.join(_HEX_MAP[c] for c in _dc_h[:7])
+DECRYPTOR_DESC = f'La/{DECRYPTOR_NAME};'
+
+def _key_smali(key):
+    """Emit smali instructions that fill byte array v2 with the XOR key."""
+    lines = []
+    for i, b in enumerate(key):
+        signed_b = b if b <= 127 else b - 256
+        lines.append(f'    const/4 v3, {i}' if i <= 7 else f'    const/16 v3, {i}')
+        if -8 <= signed_b <= 7:
+            lines.append(f'    const/4 v4, {signed_b}')
+        else:
+            lines.append(f'    const/16 v4, {signed_b}')
+        lines.append(f'    int-to-byte v4, v4')
+        lines.append(f'    aput-byte v4, v2, v3')
+    return '\n'.join(lines)
+
+DECRYPTOR_SMALI = (
+    f'.class public final {DECRYPTOR_DESC}\n'
+    f'.super Ljava/lang/Object;\n\n'
+    f'.method public static constructor <clinit>()V\n'
+    f'    .registers 1\n'
+    f'    return-void\n'
+    f'.end method\n\n'
+    f'.method public static d(Ljava/lang/String;)Ljava/lang/String;\n'
+    f'    .registers 12\n'
+    f'    # decode base64 input: v0 = Base64.decode(p0, NO_WRAP=2)\n'
+    f'    const/4 v0, 0x2\n'
+    f'    invoke-static {{p0, v0}}, Landroid/util/Base64;->decode(Ljava/lang/String;I)[B\n'
+    f'    move-result-object v0\n'
+    f'    array-length v1, v0\n'
+    f'    # build key byte array v2[16]\n'
+    f'    const/16 v2, 0x10\n'
+    f'    new-array v2, v2, [B\n'
+    + _key_smali(KEY_BYTES) + '\n'
+    f'    # XOR loop: for i in 0..len  decoded[i] ^= key[i%16]\n'
+    f'    const/4 v3, 0x0\n'
+    f'    const/16 v5, 0x10\n'
+    f'    :xorloop\n'
+    f'    if-ge v3, v1, :xordone\n'
+    f'    aget-byte v6, v0, v3\n'
+    f'    rem-int v7, v3, v5\n'
+    f'    aget-byte v8, v2, v7\n'
+    f'    xor-int/2addr v6, v8\n'
+    f'    int-to-byte v6, v6\n'
+    f'    aput-byte v6, v0, v3\n'
+    f'    add-int/lit8 v3, v3, 0x1\n'
+    f'    goto :xorloop\n'
+    f'    :xordone\n'
+    f'    # return new String(decoded, "UTF-8")\n'
+    f'    new-instance v9, Ljava/lang/String;\n'
+    f'    const-string v10, "UTF-8"\n'
+    f'    invoke-direct {{v9, v0, v10}}, Ljava/lang/String;-><init>([BLjava/lang/String;)V\n'
+    f'    return-object v9\n'
+    f'.end method\n'
+)
+
+# Write decryptor stub into classes/a/ so it lands in the main DEX
+decryptor_path = os.path.join(SMALI_ROOT, 'classes', 'a', f'{DECRYPTOR_NAME}.smali')
+os.makedirs(os.path.dirname(decryptor_path), exist_ok=True)
+with open(decryptor_path, 'w') as fh:
+    fh.write(DECRYPTOR_SMALI)
+print(f"    [C] Injected decryptor stub: {DECRYPTOR_DESC}")
+
+# Unescape smali string literal → actual Python string
+def _smali_unescape(s):
+    result = []
+    i = 0
+    while i < len(s):
+        if s[i] == '\\' and i + 1 < len(s):
+            c = s[i + 1]
+            if   c == 'n':  result.append('\n');  i += 2
+            elif c == 'r':  result.append('\r');  i += 2
+            elif c == 't':  result.append('\t');  i += 2
+            elif c == '"':  result.append('"');   i += 2
+            elif c == '\\': result.append('\\');  i += 2
+            elif c == '0':  result.append('\x00'); i += 2
+            elif c == 'u' and i + 5 < len(s):
+                try:    result.append(chr(int(s[i+2:i+6], 16))); i += 6
+                except: result.append(s[i]); i += 1
+            else:
+                result.append(s[i]); i += 1
+        else:
+            result.append(s[i]); i += 1
+    return ''.join(result)
+
+def _xor_encrypt(actual_str):
+    try:
+        raw = actual_str.encode('utf-8', errors='replace')
+    except Exception:
+        return None
+    enc = bytes(b ^ KEY_BYTES[i % 16] for i, b in enumerate(raw))
+    return base64.b64encode(enc).decode('ascii')
+
+# const-string vX, "..." or const-string/jumbo vX, "..."
+CONST_STR_RE = re.compile(
+    r'^(\s*)(const-string(?:/jumbo)?)\s+(v\d+|p\d+)\s*,\s*"((?:[^"\\]|\\.)*)"(.*)$',
+    re.MULTILINE)
+
+enc_count = [0]
+
+for sf in all_smali:
+    if os.path.basename(sf) == f'{DECRYPTOR_NAME}.smali':
+        continue
+    with open(sf, 'r', errors='replace') as fh:
+        content = fh.read()
+    m0 = re.match(r'\.class\s+(?:[\w]+\s+)*(\S+)', content)
+    if not m0 or not m0.group(1).startswith('La/'):
+        continue
+
+    def _repl_str(m):
+        indent, insn, reg, raw_val, tail = (
+            m.group(1), m.group(2), m.group(3), m.group(4), m.group(5))
+        if not raw_val:
+            return m.group(0)
+        actual = _smali_unescape(raw_val)
+        if not actual:
+            return m.group(0)
+        enc = _xor_encrypt(actual)
+        if enc is None:
+            return m.group(0)
+        enc_count[0] += 1
+        # invoke-static uses a 4-bit register field (v0-v15 only).
+        # For v16+ or parameter registers (pN), use invoke-static/range
+        # which uses a 16-bit register field and supports any register.
+        reg_num = int(reg[1:]) if reg.startswith('v') else 16
+        if reg_num >= 16:
+            invoke_line = (f'{indent}invoke-static/range {{{reg} .. {reg}}}, '
+                           f'{DECRYPTOR_DESC}->d(Ljava/lang/String;)Ljava/lang/String;\n')
+        else:
+            invoke_line = (f'{indent}invoke-static {{{reg}}}, '
+                           f'{DECRYPTOR_DESC}->d(Ljava/lang/String;)Ljava/lang/String;\n')
+        return (
+            f'{indent}const-string {reg}, "{enc}"\n'
+            + invoke_line
+            + f'{indent}move-result-object {reg}{tail}'
+        )
+
+    new_content = CONST_STR_RE.sub(_repl_str, content)
+    if new_content != content:
+        with open(sf, 'w') as fh:
+            fh.write(new_content)
+
+print(f"    [C] Encrypted {enc_count[0]} const-string(s) with XOR-16 + Base64")
 PYEOF
 
     # ── 5. Smali reassemble → new DEX files ──────────────────────────────────
@@ -1510,22 +1814,32 @@ PYEOF
         DNAME=$(basename "$SMALI_DIR")
         echo "  [smali] Assembling $DNAME.dex …"
         java -jar "$SMALI_JAR" a "$SMALI_DIR" \
-             -o "$WORK/new_dex/${DNAME}.dex" --api-level 26 2>&1 | grep -v "^$" | sed 's/^/      /'
+             -o "$WORK/new_dex/${DNAME}.dex" -a 26 2>&1 | grep -v "^$" | sed 's/^/      /' || true
+        if [ ! -f "$WORK/new_dex/${DNAME}.dex" ]; then
+            echo "  [smali] ERROR: smali did not produce $DNAME.dex — DEX replacement aborted for this entry"
+        else
+            SZ=$(wc -c < "$WORK/new_dex/${DNAME}.dex")
+            echo "  [smali] $DNAME.dex produced: $SZ bytes"
+        fi
     done
 
     # Copy new DEX files over the originals in the APK staging area
+    dex_replaced=0
     for NEW_DEX in "$WORK/new_dex/"*.dex; do
         [ -f "$NEW_DEX" ] || continue
         DNAME=$(basename "$NEW_DEX")
         cp "$NEW_DEX" "$WORK/apk_raw/$DNAME"
+        dex_replaced=$((dex_replaced + 1))
     done
+    echo "  [smali] DEX files replaced in apk_raw: $dex_replaced"
 
     # ── 6. Patch binary AndroidManifest.xml string pool ──────────────────────
-    python3 - << 'PYEOF'
-import struct, json, os, re
+    python3 - "$WORK" << 'PYEOF'
+import struct, json, os, re, sys
 
-MAP_FILE     = os.path.expanduser("$WORK/class_map.json")
-MANIFEST_IN  = os.path.expanduser("$WORK/apk_raw/AndroidManifest.xml")
+WORK         = sys.argv[1]
+MAP_FILE     = os.path.join(WORK, 'class_map.json')
+MANIFEST_IN  = os.path.join(WORK, 'apk_raw', 'AndroidManifest.xml')
 
 with open(MAP_FILE)     as fh: dot_map = json.load(fh)
 with open(MANIFEST_IN, "rb") as fh: data = bytearray(fh.read())
@@ -1653,11 +1967,13 @@ print(f"    AndroidManifest.xml patched — {changes} string(s) renamed")
 PYEOF
 
     # ── 7. Repack APK (no signing — harden_apk will sign after decoy injection)
-    python3 - << 'PYEOF'
-import zipfile, os
+    python3 - "$WORK" "$APK" << 'PYEOF'
+import zipfile, os, sys
 
-src_dir = os.path.expanduser("$WORK/apk_raw")
-out_apk = os.path.expanduser("$APK") + ".obf.apk"
+WORK    = sys.argv[1]
+APK     = sys.argv[2]
+src_dir = os.path.join(WORK, 'apk_raw')
+out_apk = APK + ".obf.apk"
 
 # Files that must be STORED (uncompressed) for mmap access
 NO_COMPRESS = {".arsc", ".png", ".jpg", ".gif", ".webp",
@@ -1676,7 +1992,7 @@ with zipfile.ZipFile(out_apk, "w") as zout:
 print("    APK repacked (unsigned)")
 PYEOF
     mv "$APK.obf.apk" "$APK"
-    echo "  [smali] Class rename + manifest patch complete."
+    echo "  [smali] Class rename + method/field rename + string encryption + manifest patch complete."
     rm -rf "$WORK"
 }
 
@@ -1979,9 +2295,14 @@ PYEOF
 
     HARDENED_SIZE=$(ls -lh "$RELEASE_APK" | awk '{print $5}')
     echo "  Hardened release APK: $RELEASE_APK ($HARDENED_SIZE)"
-    echo "  Anti-decompile layers active:"
-    echo "    R8 full mode + ProGuard (5-pass, log strip, repackaging)"
+    echo "  Anti-decompile / anti-static-analysis layers active:"
+    echo "    R8 full mode + ProGuard (5-pass, log strip, repackaging to 'a')"
     echo "    Look-alike obfuscation dictionary (I/l/O/0)"
+    echo "    Smali class rename — all app classes → La/HASH; (fixes manifest too)"
+    echo "    Smali method rename — private + static methods renamed per-class"
+    echo "    Smali field rename  — all instance + static fields renamed"
+    echo "    String XOR-16 encryption — every const-string replaced with"
+    echo "      invoke of injected decryptor stub; plaintext strings invisible"
     echo "    v1 JAR signature stripped (v2 + v3 + v4 only)"
     echo "    REAL resources.arsc tampered (reserved flag bits + phantom"
     echo "      0xDEAD chunk past header.size + tail padding)"
