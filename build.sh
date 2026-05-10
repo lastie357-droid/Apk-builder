@@ -1774,13 +1774,14 @@ CONST_STR_RE = re.compile(
 
 enc_count = [0]
 
+_app_descs = set(class_map.values())  # only OUR renamed app classes, not R8 library classes
 for sf in all_smali:
     if os.path.basename(sf) == f'{DECRYPTOR_NAME}.smali':
         continue
     with open(sf, 'r', errors='replace') as fh:
         content = fh.read()
     m0 = re.match(r'\.class\s+(?:[\w]+\s+)*(\S+)', content)
-    if not m0 or not m0.group(1).startswith('La/'):
+    if not m0 or m0.group(1) not in _app_descs:
         continue
 
     def _repl_str(m):
