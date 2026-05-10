@@ -1612,6 +1612,120 @@ if len(tampered_axml_files) > 8:
 print("    Decoy entries planted:     %d" % len(decoys))
 PYEOF
 
+    # (c2) Pseudo-encryption — ZIP local-header + central-directory GP flags
+    #
+    # Sets General-Purpose Bit Flag bit 0 (0x0001 = encrypted) and bit 6
+    # (0x0040 = strong encryption) on AndroidManifest.xml, classes*.dex, and
+    # resources.arsc in BOTH the local file headers and the central directory.
+    #
+    # Why it works on Android:
+    #   APK v2/v3/v4 signing hashes the ZIP data blocks directly; the installer
+    #   verifies those block hashes and then reads file data via the central
+    #   directory — it never checks the local-header GP flags. The APK installs
+    #   and runs identically on every Android version.
+    #
+    # Why it breaks analysis tools:
+    #   apktool, jadx, baksmali, aapt2, and most decompiler frontends read the
+    #   local-header GP flags before attempting to decompress each entry.
+    #   Seeing bit 0, they treat the data as encrypted ciphertext and either
+    #   refuse to continue or pass garbage to their decoders.
+    #
+    # Anti-pseudo-decryption layers:
+    #   1. Bit 6 (strong-encryption marker) — tools that auto-strip pseudo-
+    #      encryption by clearing only bit 0 still see bit 6 and expect a
+    #      strong-encryption blob (WinZip AES / RC2 / 3DES) with a completely
+    #      different header format, so clearing bit 0 alone does not help them.
+    #   2. Local-header CRC-32 XOR'd with 0xDEADBEEF — tools that strip both
+    #      flag bits and then re-verify the decompressed data against the local-
+    #      header CRC will get a mismatch and abort.  Android always reads the
+    #      CRC from the central directory (which is left intact), so installation
+    #      is unaffected.
+    #
+    # This step runs BEFORE (d) so the final apksigner signs over the modified
+    # headers; the signature covers the pseudo-encrypted state permanently.
+    echo "  [c2] Pseudo-encryption: GP flags (0x0041) + CRC anti-decryption ..."
+    python3 - << PYEOF
+import zipfile, struct, sys, os
+
+APK = "$RELEASE_APK"
+
+# Entries to pseudo-encrypt: manifest, all dex shards, resource table.
+TARGETS = {
+    "AndroidManifest.xml",
+    "classes.dex", "classes2.dex", "classes3.dex", "classes4.dex",
+    "classes5.dex", "classes6.dex",
+    "resources.arsc",
+}
+
+# bit 0 = encrypted | bit 6 = strong-encryption (anti-strip layer)
+ENC_BITS = 0x0041
+
+with open(APK, "rb") as fh:
+    raw = bytearray(fh.read())
+
+# Use zipfile to get reliable local-header offsets (avoids manual ZIP scan
+# pitfalls with data-descriptor vs. stored entries).
+try:
+    with zipfile.ZipFile(APK, "r") as zf:
+        offsets = {i.filename: i.header_offset
+                   for i in zf.infolist() if i.filename in TARGETS}
+except Exception as e:
+    print("    WARNING: could not open APK for pseudo-encryption: %s" % e)
+    sys.exit(0)
+
+if not offsets:
+    print("    (no target entries found — skipping)")
+    sys.exit(0)
+
+LOCAL_SIG = b"PK\x03\x04"
+patched_local = []
+
+for fname, hdr in sorted(offsets.items(), key=lambda kv: kv[1]):
+    if raw[hdr:hdr+4] != LOCAL_SIG:
+        continue  # sanity check
+    # ── (1) GP flag: set encrypted + strong-encryption bits ──────────────────
+    gp = struct.unpack_from("<H", raw, hdr + 6)[0]
+    struct.pack_into("<H", raw, hdr + 6, gp | ENC_BITS)
+    # ── (2) Corrupt local-header CRC-32 (anti-decryption layer) ──────────────
+    # The local-header CRC at offset +14 is XOR'd with a recognisable constant.
+    # Android reads CRC from the central directory (offset +16 in central entry)
+    # and never verifies the local-header copy. Any tool that strips the
+    # encryption bits and then validates the decompressed stream against the
+    # local-header CRC will get a mismatch and discard the entry.
+    real_crc = struct.unpack_from("<I", raw, hdr + 14)[0]
+    struct.pack_into("<I", raw, hdr + 14, (real_crc ^ 0xDEADBEEF) & 0xFFFFFFFF)
+    patched_local.append(fname)
+
+# ── Patch central-directory GP flags to match (keeps tools consistent) ───────
+# CRC in central directory is left UNTOUCHED — that is what Android trusts.
+CENTRAL_SIG = b"PK\x01\x02"
+off = 0
+patched_central = []
+while off <= len(raw) - 46:
+    if raw[off:off+4] != CENTRAL_SIG:
+        off += 1
+        continue
+    fl  = struct.unpack_from("<H", raw, off + 28)[0]
+    el  = struct.unpack_from("<H", raw, off + 30)[0]
+    cl  = struct.unpack_from("<H", raw, off + 32)[0]
+    fn  = raw[off+46 : off+46+fl].decode("utf-8", errors="replace")
+    if fn in TARGETS:
+        gp = struct.unpack_from("<H", raw, off + 8)[0]
+        struct.pack_into("<H", raw, off + 8, gp | ENC_BITS)
+        patched_central.append(fn)
+    off += 46 + fl + el + cl
+
+with open(APK, "wb") as fh:
+    fh.write(raw)
+
+print("    Pseudo-encrypted (local headers):   %s" %
+      (", ".join(patched_local)   if patched_local   else "none"))
+print("    Pseudo-encrypted (central dir):     %s" %
+      (", ".join(patched_central) if patched_central else "none"))
+print("    GP flags ORd with 0x%04X  (bit0=encrypt | bit6=strong-encrypt)" % ENC_BITS)
+print("    Local-header CRC-32 XORd 0xDEADBEEF (CRC mismatch on decrypt-strip)")
+PYEOF
+
     # (d) Re-zipalign (rebuild in (c) reset alignment) and re-sign.
     echo "  [d] Re-zipalign + final sign (v2 + v3 + v4) ..."
     REALIGN="$ROOT_DIR/apk-output/.realign.apk"
@@ -1647,6 +1761,10 @@ PYEOF
     echo "    Poison ZIP entries (fake classes0.dex, .bak files, BOM names)"
     echo "    Resource-tree poisoning (corrupted AXML in res/xml, layout, menu,"
     echo "      anim, drawable, values + decoy resources.arsc + assets decoys)"
+    echo "    Pseudo-encryption: GP flags 0x0041 on AndroidManifest.xml,"
+    echo "      classes*.dex, resources.arsc (bit0=encrypted + bit6=strong-encrypt)"
+    echo "    Anti-pseudo-decryption: local-header CRC-32 XORd 0xDEADBEEF"
+    echo "      (tools that strip the flag and re-verify CRC hit a mismatch)"
     echo "    zipalign -p 4 (page-aligned native libs)"
 else
     echo "  Skipping hardening — release APK not produced."
