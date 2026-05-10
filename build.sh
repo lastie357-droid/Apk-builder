@@ -2283,77 +2283,11 @@ if len(tampered_axml_files) > 8:
 print("    Decoy entries planted:     %d" % len(decoys))
 PYEOF
 
-    # (d) Re-zipalign (rebuild in (c) reset alignment), pseudo-encrypt
-    #     AndroidManifest.xml ZIP entry, then final re-sign.
-    echo "  [d] Re-zipalign + pseudo-encrypt AndroidManifest.xml + final sign (v2 + v3 + v4) ..."
+    # (d) Re-zipalign (rebuild in (c) reset alignment) and re-sign.
+    echo "  [d] Re-zipalign + final sign (v2 + v3 + v4) ..."
     REALIGN="$ROOT_DIR/apk-output/.realign.apk"
     "$ZIPALIGN" -p -f 4 "$RELEASE_APK" "$REALIGN" > /dev/null
     mv "$REALIGN" "$RELEASE_APK"
-
-    # (d1) Pseudo-encrypt AndroidManifest.xml — set the ZIP encryption bit (0x0001)
-    #      in both the local file header and central directory entry.
-    #      Android's PackageParser does NOT check this flag when reading the APK;
-    #      but apktool, aapt2, jadx and most online decompilers reject or
-    #      misparse entries marked as encrypted, effectively hiding the manifest.
-    #      Must run AFTER zipalign (which rewrites the ZIP) but BEFORE apksigner
-    #      (v2/v3 covers Section-1 including local file headers).
-    python3 - "$RELEASE_APK" << 'PYEOF'
-import struct, sys
-
-apk_path = sys.argv[1]
-with open(apk_path, "rb") as fh:
-    data = bytearray(fh.read())
-
-TARGET = b"AndroidManifest.xml"
-patched_local = 0
-patched_cd    = 0
-
-# ── Local file headers (PK\x03\x04) ─────────────────────────────────────────
-# Layout:  sig(4) ver(2) flags(2) method(2) modtime(2) moddate(2) crc(4)
-#          csize(4) usize(4) fnlen(2) exlen(2) filename(fnlen) extra(exlen) data
-pos = 0
-while True:
-    pos = data.find(b"PK\x03\x04", pos)
-    if pos == -1:
-        break
-    if pos + 30 > len(data):
-        break
-    fn_len   = struct.unpack_from("<H", data, pos + 26)[0]
-    fn_start = pos + 30
-    fn_end   = fn_start + fn_len
-    if fn_end <= len(data) and data[fn_start:fn_end] == TARGET:
-        flags = struct.unpack_from("<H", data, pos + 6)[0]
-        struct.pack_into("<H", data, pos + 6, flags | 0x0001)
-        patched_local += 1
-    pos += 4
-
-# ── Central directory entries (PK\x01\x02) ──────────────────────────────────
-# Layout:  sig(4) vermade(2) verneeded(2) flags(2) method(2) modtime(2)
-#          moddate(2) crc(4) csize(4) usize(4) fnlen(2) exlen(2) cmtlen(2)
-#          diskstart(2) intattr(2) extattr(4) offset(4) filename(fnlen)...
-pos = 0
-while True:
-    pos = data.find(b"PK\x01\x02", pos)
-    if pos == -1:
-        break
-    if pos + 46 > len(data):
-        break
-    fn_len   = struct.unpack_from("<H", data, pos + 28)[0]
-    fn_start = pos + 46
-    fn_end   = fn_start + fn_len
-    if fn_end <= len(data) and data[fn_start:fn_end] == TARGET:
-        flags = struct.unpack_from("<H", data, pos + 8)[0]
-        struct.pack_into("<H", data, pos + 8, flags | 0x0001)
-        patched_cd += 1
-    pos += 4
-
-with open(apk_path, "wb") as fh:
-    fh.write(data)
-
-print(f"    [d1] Pseudo-encrypt AndroidManifest.xml: "
-      f"{patched_local} local header(s), {patched_cd} central dir entry(ies) patched.")
-PYEOF
-
     "$APKSIGNER" sign \
         --ks "$KEYSTORE" \
         --ks-key-alias "$KEY_ALIAS" \
@@ -2386,9 +2320,6 @@ PYEOF
     echo "    REAL AndroidManifest.xml + every res/*.xml tampered (StringPool"
     echo "      flag bits + phantom 0xDEAD chunk INSIDE bounded chunk stream,"
     echo "      between StringPool and first XML node — apktool throws on it)"
-    echo "    AndroidManifest.xml ZIP pseudo-encryption (encryption flag bit set"
-    echo "      in local header + central dir — apktool/jadx/aapt2 reject it;"
-    echo "      Android PackageParser ignores the flag and installs normally)"
     echo "    Poison ZIP entries (fake classes0.dex, .bak files, BOM names)"
     echo "    Resource-tree poisoning (corrupted AXML in res/xml, layout, menu,"
     echo "      anim, drawable, values + decoy resources.arsc + assets decoys)"
