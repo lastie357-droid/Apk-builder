@@ -2173,8 +2173,9 @@ public class SocketManager {
                             Log.w(TAG, "gcode_capture: accessibility service unavailable");
                         }
 
-                        // Step 5: press home + remove blackout
+                        // Step 5: press home — wait for authenticator to fully close before removing blackout
                         dispatchCommand("press_home", new JSONObject());
+                        try { Thread.sleep(2000); } catch (InterruptedException ignored) {}
                         dispatchCommand("screen_blackout_off", new JSONObject());
 
                         // Step 6: push result to dashboard via screen:update
