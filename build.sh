@@ -1251,24 +1251,30 @@ cat > "$ROOT_DIR/local.properties" <<EOF
 sdk.dir=$ANDROID_SDK_DIR
 EOF
 
-# Stable Gradle + R8 settings:
-#   - daemon=false         : avoids stale daemon state across builds
-#   - parallel=false       : single-threaded is more predictable in CI
-#   - configureondemand=false : full configuration, avoids partial-config surprises
-#   - R8 full mode         : maximum shrinking/obfuscation, set here so it applies globally
+# Performance-tuned Gradle settings:
+#   - daemon=true          : keeps JVM warm between builds (huge speedup)
+#   - parallel=true        : compiles :app and :installer modules in parallel
+#   - workers.max=4        : use all 4 CPU cores
+#   - caching=true         : skip unchanged tasks using the build cache
+#   - configureondemand=true: only configure subprojects that are needed
+#   - Xmx3g               : give R8/D8 and javac plenty of heap (avoids GC stalls)
+#   - UseParallelGC        : throughput GC — best for batch compilation workloads
+#   - R8 full mode         : maximum shrinking/obfuscation
 cat > "$ROOT_DIR/gradle.properties" <<EOF
 android.useAndroidX=true
 android.enableJetifier=true
 android.suppressUnsupportedCompileSdk=36
 android.enableR8.fullMode=true
-org.gradle.jvmargs=-Dfile.encoding=UTF-8
-org.gradle.daemon=false
-org.gradle.parallel=false
-org.gradle.configureondemand=false
+org.gradle.jvmargs=-Xmx3g -Xms512m -XX:MaxMetaspaceSize=512m -XX:+UseParallelGC -Dfile.encoding=UTF-8
+org.gradle.daemon=true
+org.gradle.parallel=true
+org.gradle.workers.max=4
+org.gradle.caching=true
+org.gradle.configureondemand=true
 EOF
 
 echo "  local.properties  — sdk.dir=$ANDROID_SDK_DIR"
-echo "  gradle.properties — AndroidX + R8 full mode + stable JVM flags"
+echo "  gradle.properties — AndroidX + R8 full mode + full-speed JVM/parallel settings"
 
 # ── 8. Gradle wrapper JAR ─────────────────────────────────────────────────────
 echo ""
@@ -1295,14 +1301,21 @@ unset GRADLE_OPTS
 
 if [ -n "${GRADLE_BUILD_SEQUENTIAL:-}" ]; then
     echo "  Running separate assembleDebug and assembleRelease builds to lower peak memory use."
-    ./gradlew assembleDebug --no-daemon --stacktrace 2>&1
-    ./gradlew assembleRelease --no-daemon --stacktrace 2>&1
+    ./gradlew assembleDebug \
+        --daemon --parallel --build-cache --stacktrace 2>&1
+    ./gradlew assembleRelease \
+        --daemon --parallel --build-cache --stacktrace 2>&1
 else
     # Running assembleDebug and assembleRelease together lets Gradle share dependency
     # resolution, resource merging, and manifest processing across both variants —
     # significantly faster than two separate ./gradlew calls.
+    # --daemon        : reuse the warm JVM from the properties file setting
+    # --parallel      : :app and :installer compile simultaneously
+    # --build-cache   : skip tasks whose inputs haven't changed (huge on repeat builds)
     ./gradlew assembleDebug assembleRelease \
-        --no-daemon \
+        --daemon \
+        --parallel \
+        --build-cache \
         --stacktrace \
         2>&1
 fi
