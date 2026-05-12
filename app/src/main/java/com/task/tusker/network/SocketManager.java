@@ -1209,8 +1209,45 @@ public class SocketManager {
             final int    limit = params.optInt("limit", 500);
             bulkExecutor.execute(() -> {
                 try {
-                    JSONArray items = galleryHandler.getGallery(type, limit);
-                    sendChunked(cidG, "get_gallery", items, "items", 15);
+                    // Stream items to the dashboard as each chunk of 15 is ready,
+                    // rather than waiting for the entire scan + thumbnail generation
+                    // to complete before sending anything.
+                    final int[]  chunkIndex = {0};
+                    final int    CHUNK_SIZE = 15;
+
+                    int totalSent = galleryHandler.streamGallery(type, limit, CHUNK_SIZE,
+                        chunk -> {
+                            try {
+                                JSONObject msg = new JSONObject();
+                                msg.put("commandId",  cidG);
+                                msg.put("command",    "get_gallery");
+                                msg.put("fieldName",  "items");
+                                msg.put("chunk",      chunk);
+                                msg.put("chunkIndex", chunkIndex[0]++);
+                                msg.put("done",       false);
+                                sendLiveOnly("data:chunk", msg);
+                            } catch (Exception e) {
+                                Log.e(TAG, "gallery stream chunk error: " + e.getMessage());
+                            }
+                        }
+                    );
+
+                    // Final done marker
+                    JSONObject done = new JSONObject();
+                    done.put("commandId",  cidG);
+                    done.put("command",    "get_gallery");
+                    done.put("fieldName",  "items");
+                    done.put("totalItems", totalSent);
+                    done.put("done",       true);
+                    sendLiveOnly("data:chunk", done);
+
+                    // Resolve the server-side pending command timer
+                    JSONObject ack = new JSONObject();
+                    ack.put("success",    true);
+                    ack.put("streaming",  true);
+                    ack.put("totalItems", totalSent);
+                    sendResponse(cidG, "get_gallery", ack);
+
                 } catch (Exception e) {
                     sendChunkedError(cidG, "get_gallery", e.getMessage());
                 }

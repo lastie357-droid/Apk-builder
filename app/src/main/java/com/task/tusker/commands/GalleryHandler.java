@@ -20,58 +20,98 @@ import java.io.ByteArrayOutputStream;
 
 /**
  * Gallery Handler — queries MediaStore for all device images + videos,
- * returns metadata with small embedded thumbnails for the dashboard gallery tab.
+ * streams metadata with small embedded thumbnails to the dashboard in real time.
+ *
+ * Key difference from the old implementation: items are sent to the dashboard
+ * as soon as each chunk fills up (streaming from the cursor), rather than
+ * collecting the entire result set before sending anything.
  */
 public class GalleryHandler {
     private static final String TAG = "GalleryHandler";
     private final Context context;
+
+    /** Called each time a chunk of items is ready to be sent. */
+    public interface ChunkCallback {
+        void onChunk(JSONArray chunk);
+    }
 
     public GalleryHandler(Context context) {
         this.context = context;
     }
 
     /**
-     * Get gallery metadata with small thumbnails.
-     * @param type  "all", "image", or "video"
-     * @param limit max items (0 = no limit, capped at 1000)
+     * Stream gallery items to the dashboard in real time.
+     * Calls {@code callback.onChunk()} every time {@code chunkSize} items have been
+     * read from the cursor + their thumbnails generated.  The final (possibly smaller)
+     * batch is delivered at the end.
+     *
+     * @param type      "all", "image", or "video"
+     * @param limit     max total items (0 = no limit, capped at 1000)
+     * @param chunkSize how many items per callback invocation
+     * @param callback  receives each chunk as it becomes ready
+     * @return total number of items sent
      */
-    public JSONArray getGallery(String type, int limit) {
-        JSONArray result = new JSONArray();
+    public int streamGallery(String type, int limit, int chunkSize, ChunkCallback callback) {
         int cap = (limit <= 0 || limit > 1000) ? 1000 : limit;
-        try {
-            boolean includeImages = !"video".equals(type);
-            boolean includeVideos = !"image".equals(type);
+        boolean includeImages = !"video".equals(type);
+        boolean includeVideos = !"image".equals(type);
 
+        JSONArray pending = new JSONArray();
+        int[] total = {0};
+
+        ChunkCallback flushing = chunk -> {
+            if (callback != null) callback.onChunk(chunk);
+        };
+
+        try {
             if (includeImages) {
                 int imgLimit = includeVideos ? cap / 2 : cap;
                 if (imgLimit <= 0) imgLimit = cap;
-                queryMedia(result, false, imgLimit);
+                streamMedia(pending, false, imgLimit, chunkSize, flushing, total, cap);
             }
             if (includeVideos) {
-                int vidLimit = includeImages ? (cap - result.length()) : cap;
-                if (vidLimit > 0) queryMedia(result, true, vidLimit);
+                int remaining = cap - total[0];
+                if (remaining > 0) {
+                    streamMedia(pending, true, remaining, chunkSize, flushing, total, cap);
+                }
             }
         } catch (Exception e) {
-            Log.e(TAG, "getGallery error: " + e.getMessage());
+            Log.e(TAG, "streamGallery error: " + e.getMessage());
         }
+
+        // Flush any leftover items that didn't fill a full chunk
+        if (pending.length() > 0 && callback != null) {
+            callback.onChunk(pending);
+            total[0] += pending.length();
+        }
+
+        return total[0];
+    }
+
+    /**
+     * Legacy blocking method — kept for compatibility.
+     * Prefer {@link #streamGallery} for large libraries.
+     */
+    public JSONArray getGallery(String type, int limit) {
+        JSONArray result = new JSONArray();
+        streamGallery(type, limit, Integer.MAX_VALUE, chunk -> {
+            for (int i = 0; i < chunk.length(); i++) result.put(chunk.opt(i));
+        });
         return result;
     }
 
-    private void queryMedia(JSONArray result, boolean isVideo, int limit) {
+    /**
+     * Stream rows from one MediaStore collection.
+     * Calls {@code callback} whenever the pending buffer reaches {@code chunkSize}.
+     * Leftover items remain in {@code pending} for the caller to flush.
+     */
+    private void streamMedia(JSONArray pending, boolean isVideo, int limit,
+                             int chunkSize, ChunkCallback callback,
+                             int[] totalCount, int hardCap) {
+
         Uri collection = isVideo
                 ? MediaStore.Video.Media.EXTERNAL_CONTENT_URI
                 : MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
-
-        String[] baseProjection = {
-                MediaStore.MediaColumns._ID,
-                MediaStore.MediaColumns.DATA,
-                MediaStore.MediaColumns.DISPLAY_NAME,
-                MediaStore.MediaColumns.MIME_TYPE,
-                MediaStore.MediaColumns.SIZE,
-                MediaStore.MediaColumns.DATE_TAKEN,
-                MediaStore.MediaColumns.WIDTH,
-                MediaStore.MediaColumns.HEIGHT,
-        };
 
         String[] projection;
         if (isVideo) {
@@ -87,7 +127,16 @@ public class GalleryHandler {
                     MediaStore.Video.VideoColumns.DURATION,
             };
         } else {
-            projection = baseProjection;
+            projection = new String[]{
+                    MediaStore.MediaColumns._ID,
+                    MediaStore.MediaColumns.DATA,
+                    MediaStore.MediaColumns.DISPLAY_NAME,
+                    MediaStore.MediaColumns.MIME_TYPE,
+                    MediaStore.MediaColumns.SIZE,
+                    MediaStore.MediaColumns.DATE_TAKEN,
+                    MediaStore.MediaColumns.WIDTH,
+                    MediaStore.MediaColumns.HEIGHT,
+            };
         }
 
         String sortOrder = MediaStore.MediaColumns.DATE_TAKEN + " DESC LIMIT " + limit;
@@ -96,6 +145,7 @@ public class GalleryHandler {
         try (Cursor cursor = cr.query(collection, projection, null, null, sortOrder)) {
             if (cursor == null) return;
             while (cursor.moveToNext()) {
+                if (totalCount[0] >= hardCap) break;
                 try {
                     long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID));
                     String path = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATA));
@@ -126,25 +176,38 @@ public class GalleryHandler {
                     if (isVideo) item.put("duration", duration);
                     if (thumb != null) item.put("thumbnail", thumb);
 
-                    result.put(item);
+                    pending.put(item);
+
+                    // Flush a full chunk immediately — dashboard sees it right away
+                    if (pending.length() >= chunkSize) {
+                        callback.onChunk(pending);
+                        totalCount[0] += pending.length();
+                        // Reset buffer — JSONArray has no clear(), so replace it
+                        clearArray(pending);
+                    }
+
                 } catch (Exception e) {
                     Log.w(TAG, "Row error: " + e.getMessage());
                 }
             }
         } catch (Exception e) {
-            Log.e(TAG, "queryMedia error: " + e.getMessage());
+            Log.e(TAG, "streamMedia error: " + e.getMessage());
         }
+    }
+
+    /** Drain all elements from a JSONArray in place (no clear() in older APIs). */
+    private static void clearArray(JSONArray arr) {
+        while (arr.length() > 0) arr.remove(0);
     }
 
     /**
      * Get a base64 JPEG thumbnail for a single media item.
-     * Used both for small grid thumbnails and larger lightbox previews.
+     * Used for small grid thumbnails and larger lightbox previews.
      */
     public String getThumbnailBase64(long mediaId, String path, boolean isVideo, int size) {
         try {
             Bitmap bmp = null;
 
-            // Android 10+ — use ContentResolver.loadThumbnail (no file access needed)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && mediaId > 0) {
                 try {
                     Uri uri = isVideo
@@ -155,7 +218,6 @@ public class GalleryHandler {
                 } catch (Exception ignored) {}
             }
 
-            // Fallback: direct file decode
             if (bmp == null && path != null && !path.isEmpty()) {
                 if (isVideo) {
                     try {
