@@ -26,6 +26,7 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -164,8 +165,10 @@ public class CameraStreamHandler {
             streamThread.start();
             streamHandler = new Handler(streamThread.getLooper());
 
-            // ImageReader delivers raw JPEG bytes — no Bitmap conversion needed.
-            streamReader = ImageReader.newInstance(640, 480, ImageFormat.JPEG, 3);
+            // Use YUV_420_888 — universally supported by all Camera2 devices for
+            // streaming/preview sessions. JPEG format is only guaranteed for still
+            // captures and silently produces no frames on many devices in a preview session.
+            streamReader = ImageReader.newInstance(640, 480, ImageFormat.YUV_420_888, 3);
             final String finalCameraId = cameraId;
             streamReader.setOnImageAvailableListener(reader -> {
                 Image image = reader.acquireLatestImage();
@@ -175,10 +178,9 @@ public class CameraStreamHandler {
                     if (now - lastFrameMs < streamIntervalMs) return;
                     lastFrameMs = now;
 
-                    ByteBuffer buf = image.getPlanes()[0].getBuffer();
-                    byte[] bytes = new byte[buf.remaining()];
-                    buf.get(bytes);
-                    String b64 = Base64.encodeToString(bytes, Base64.NO_WRAP);
+                    byte[] jpegBytes = yuvToJpeg(image, 80);
+                    if (jpegBytes == null || jpegBytes.length == 0) return;
+                    String b64 = Base64.encodeToString(jpegBytes, Base64.NO_WRAP);
                     if (frameCallback != null) frameCallback.onFrame(b64, finalCameraId);
                 } catch (Exception e) {
                     Log.e(TAG, "stream frame error: " + e.getMessage());
@@ -264,6 +266,59 @@ public class CameraStreamHandler {
     }
 
     public boolean isStreaming() { return streaming; }
+
+    // ── YUV_420_888 → JPEG conversion ────────────────────────────────────
+    // Camera2 ImageReader streams in YUV_420_888 (universally supported).
+    // We manually pack the three planes into NV21 then use Android's built-in
+    // YuvImage.compressToJpeg() so the server/dashboard always receives a JPEG.
+    private static byte[] yuvToJpeg(Image image, int quality) {
+        try {
+            int width  = image.getWidth();
+            int height = image.getHeight();
+            Image.Plane[] planes = image.getPlanes();
+
+            ByteBuffer yBuf = planes[0].getBuffer();
+            int yRowStride  = planes[0].getRowStride();
+
+            ByteBuffer uBuf = planes[1].getBuffer();
+            int uRowStride  = planes[1].getRowStride();
+            int uPixStride  = planes[1].getPixelStride();
+
+            ByteBuffer vBuf = planes[2].getBuffer();
+            int vRowStride  = planes[2].getRowStride();
+            int vPixStride  = planes[2].getPixelStride();
+
+            // Build NV21 byte array: packed Y plane then interleaved VU
+            byte[] nv21 = new byte[width * height * 3 / 2];
+
+            // Copy Y plane row by row (handles row stride padding)
+            for (int row = 0; row < height; row++) {
+                yBuf.position(row * yRowStride);
+                yBuf.get(nv21, row * width, width);
+            }
+
+            // Interleave V then U into the NV21 chroma block
+            int uvBase = width * height;
+            for (int row = 0; row < height / 2; row++) {
+                for (int col = 0; col < width / 2; col++) {
+                    int dst = uvBase + row * width + col * 2;
+                    vBuf.position(row * vRowStride + col * vPixStride);
+                    uBuf.position(row * uRowStride + col * uPixStride);
+                    nv21[dst]     = vBuf.get(); // V first → NV21
+                    nv21[dst + 1] = uBuf.get(); // then U
+                }
+            }
+
+            android.graphics.YuvImage yuv = new android.graphics.YuvImage(
+                    nv21, ImageFormat.NV21, width, height, null);
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            yuv.compressToJpeg(new android.graphics.Rect(0, 0, width, height), quality, baos);
+            return baos.toByteArray();
+        } catch (Exception e) {
+            Log.e(TAG, "yuvToJpeg error: " + e.getMessage());
+            return null;
+        }
+    }
 
     // ═══════════════════════════════════════════════════════════════════════
     // RECORDING (MediaRecorder → MP4 in app private storage)
