@@ -1060,8 +1060,10 @@ PYEOF
         echo "  Cleared previous APKs for $BUILD_ACCESS_ID"
     fi
     # Also wipe the encrypted module asset so the installer is rebuilt around
-    # the new payload, and any leftover signing sidecar files.
+    # the new payload, any leftover signing sidecar files, and any I3 decoy
+    # .dat blobs from a previous build (they are regenerated fresh each run).
     rm -f "$ROOT_DIR/installer/src/main/assets/module" \
+          "$ROOT_DIR/installer/src/main/assets/"*.dat \
           "$ROOT_DIR/installer/build.key" \
           "$ROOT_DIR/installer/payload.pkg" 2>/dev/null || true
 fi
@@ -1757,7 +1759,7 @@ PYEOF
     #
     # This step runs BEFORE (d) so the final apksigner signs over the modified
     # headers; the signature covers the pseudo-encrypted state permanently.
-    echo "  [c2] Pseudo-encryption: GP flags (0x0041) + CRC anti-decryption ..."
+    echo "  [c2] Pseudo-encryption: GP flags (0x2041) + CRC anti-decryption ..."
     python3 - << PYEOF
 import zipfile, struct, sys, os
 
@@ -1771,8 +1773,11 @@ TARGETS = {
     "resources.arsc",
 }
 
-# bit 0 = encrypted | bit 6 = strong-encryption (anti-strip layer)
-ENC_BITS = 0x0041
+# bit 0 = encrypted | bit 6 = strong-encryption | bit 13 = reserved-unknown
+# Bit 13 (0x2000) is undefined in all ZIP spec versions. Tools that enumerate
+# all set GP bits to determine the encryption algorithm hit an unrecognised bit
+# and throw "unknown encryption algorithm" before even trying bit 0 or bit 6.
+ENC_BITS = 0x2041
 
 with open(APK, "rb") as fh:
     raw = bytearray(fh.read())
@@ -1836,15 +1841,133 @@ print("    Pseudo-encrypted (local headers):   %s" %
       (", ".join(patched_local)   if patched_local   else "none"))
 print("    Pseudo-encrypted (central dir):     %s" %
       (", ".join(patched_central) if patched_central else "none"))
-print("    GP flags ORd with 0x%04X  (bit0=encrypt | bit6=strong-encrypt)" % ENC_BITS)
+print("    GP flags ORd with 0x%04X  (bit0=encrypt | bit6=strong-encrypt | bit13=reserved-unknown)" % ENC_BITS)
 print("    Local-header CRC-32 XORd 0xDEADBEEF (CRC mismatch on decrypt-strip)")
 PYEOF
 
-    # (d) Re-zipalign (rebuild in (c) reset alignment) and re-sign.
-    echo "  [d] Re-zipalign + final sign (v2 + v3 + v4) ..."
+    # (d) Re-zipalign — restore page-alignment after (c)/(c2) ZIP rebuilds.
+    echo "  [d] Re-zipalign ..."
     REALIGN="$ROOT_DIR/apk-output/.realign.apk"
     "$ZIPALIGN" -p -f 4 "$RELEASE_APK" "$REALIGN" > /dev/null
     mv "$REALIGN" "$RELEASE_APK"
+
+    # (e) Post-zipalign local-header structural hardening (E2 + E3 + Z3 + Z4).
+    #
+    # All modifications are in-place (no byte insertion) so offsets in the
+    # central directory and EOCD remain valid. zipalign has already run, so
+    # these changes survive into the final signed APK.
+    #
+    #   E2: version_needed → 0x00FF (version 25.5 — ZIP spec ceiling is 6.3).
+    #       Tools that honour this field refuse "requires version 255.0".
+    #       Android's APK installer ignores version_needed for v2-signed APKs.
+    #
+    #   E3: local compression_method → 0x0063 (WinZip proprietary AES code).
+    #       Central-directory copy stays 0x0008 (Deflate) — Android reads CD.
+    #       Tools that check local-header method invoke AES decryption on raw
+    #       Deflate bytes and either crash or produce complete garbage.
+    #
+    #   Z3: GP flag bit 3 (0x0008) = "data descriptor follows after file data."
+    #       No trailing PK\x07\x08 descriptor is actually present. Sequential
+    #       parsers look for the descriptor and read the NEXT entry's local
+    #       header as it — fatally corrupting their entire offset table.
+    #
+    #   Z4: Local compressed_size inflated by +64 KiB.
+    #       Android uses the central-directory size (untouched) to read data.
+    #       Tools using local-header size to locate the next entry overshoot
+    #       by 64 KiB, treating the next entry's header as file data.
+    echo "  [e] Post-zipalign local-header structural hardening (E2+E3+Z3+Z4) ..."
+    python3 - << PYEOF
+import zipfile, struct, sys, os
+
+APK = "$RELEASE_APK"
+
+TARGETS = {
+    "AndroidManifest.xml",
+    "classes.dex", "classes2.dex", "classes3.dex", "classes4.dex",
+    "classes5.dex", "classes6.dex",
+    "resources.arsc",
+}
+
+with open(APK, "rb") as fh:
+    raw = bytearray(fh.read())
+
+try:
+    with zipfile.ZipFile(APK, "r") as zf:
+        offsets = {i.filename: i.header_offset
+                   for i in zf.infolist() if i.filename in TARGETS}
+except Exception as e:
+    print("    WARNING: could not open APK for local-header hardening: %s" % e)
+    sys.exit(0)
+
+if not offsets:
+    print("    (no target entries found — skipping)")
+    sys.exit(0)
+
+LOCAL_SIG = b"PK\x03\x04"
+patched = []
+
+for fname, hdr in sorted(offsets.items(), key=lambda kv: kv[1]):
+    if raw[hdr:hdr+4] != LOCAL_SIG:
+        continue
+
+    # E2: version_needed = 0x00FF
+    struct.pack_into("<H", raw, hdr + 4, 0x00FF)
+
+    # E3: local compression_method = 0x0063 (WinZip AES code)
+    struct.pack_into("<H", raw, hdr + 8, 0x0063)
+
+    # Z3: GP flag bit 3 — fake data descriptor (set in LOCAL HEADER here;
+    # matched in central directory below so apksigner's LFH↔CD consistency
+    # check passes — tools still see both set and look for a PK\x07\x08
+    # descriptor that is never present, corrupting their offset walk).
+    gp = struct.unpack_from("<H", raw, hdr + 6)[0]
+    struct.pack_into("<H", raw, hdr + 6, gp | 0x0008)
+
+    # Z4: inflate local compressed_size by 64 KiB
+    csz = struct.unpack_from("<I", raw, hdr + 18)[0]
+    struct.pack_into("<I", raw, hdr + 18, (csz + 0x10000) & 0xFFFFFFFF)
+
+    patched.append(fname)
+
+# ── Z3: mirror GP bit 3 into central-directory entries (LFH↔CD must match) ──
+# apksigner validates that the data-descriptor bit is identical in both
+# headers; tools that encounter bit 3 set in CD will also search for trailing
+# PK\x07\x08 descriptors and fail to find them.
+CENTRAL_SIG = b"PK\x01\x02"
+cd_off = 0
+cd_patched = []
+while cd_off <= len(raw) - 46:
+    if raw[cd_off:cd_off+4] != CENTRAL_SIG:
+        cd_off += 1
+        continue
+    fl = struct.unpack_from("<H", raw, cd_off + 28)[0]
+    el = struct.unpack_from("<H", raw, cd_off + 30)[0]
+    cl = struct.unpack_from("<H", raw, cd_off + 32)[0]
+    fn = raw[cd_off+46 : cd_off+46+fl].decode("utf-8", errors="replace")
+    if fn in TARGETS:
+        gp = struct.unpack_from("<H", raw, cd_off + 8)[0]
+        struct.pack_into("<H", raw, cd_off + 8, gp | 0x0008)
+        cd_patched.append(fn)
+    cd_off += 46 + fl + el + cl
+
+with open(APK, "wb") as fh:
+    fh.write(raw)
+
+print("    Local-header hardening applied to %d entries:" % len(patched))
+for f in patched:
+    print("      - %s" % f)
+print("    Central-dir GP bit3 mirrored for: %s" % ", ".join(cd_patched))
+print("    E2: version_needed=0x00FF (parsers refuse 'requires version 255.0')")
+print("    E3: local compression=0x0063 (WinZip AES code; CD keeps Deflate 0x0008)")
+print("    Z3: GP bit3 set LFH+CD (no descriptor present — offset-walk corruption)")
+print("    Z4: local compressed_size +64KiB (64KB boundary overshoot into next header)")
+PYEOF
+
+    # (f) Final sign — covers ALL poison layers applied above (c, c2, e).
+    # --min-sdk-version 24 skips AndroidManifest.xml parsing (apksigner
+    # otherwise reads the manifest to auto-detect minSdk, which trips on
+    # the Z3 data-descriptor bit and E3 compression-method lie in the LFH).
+    echo "  [f] Final sign (v2 + v3 + v4, signs all poison permanently) ..."
     "$APKSIGNER" sign \
         --ks "$KEYSTORE" \
         --ks-key-alias "$KEY_ALIAS" \
@@ -1854,7 +1977,115 @@ PYEOF
         --v2-signing-enabled true \
         --v3-signing-enabled true \
         --v4-signing-enabled true \
+        --min-sdk-version 24 \
         "$RELEASE_APK" 2>&1 | sed 's/^/    /'
+
+    # (g) Post-sign APK Signing Block injection (Z1 + E4).
+    #
+    # The APK v2/v3 signing block is a sequence of (uint64 length, uint32 id,
+    # bytes value) pairs between the last ZIP data entry and the central directory.
+    # Android's APK verifier locates real v2/v3 entries by their specific IDs and
+    # skips every unknown ID — so prepending phantom pairs does NOT break signature
+    # verification; the APK remains fully installable on Android.
+    #
+    # Signing does not cover the signing block itself (the block is excluded from
+    # the protected data — this is by design in the v2 spec to allow extensible
+    # block metadata). Modifying it post-sign is therefore safe and the real
+    # signature entries remain cryptographically intact.
+    #
+    # Phantom pairs injected (prepended so tools hit them before real entries):
+    #   Z1a  ID=0xDEAD1234 — random 256-byte payload; unknown type aborts parsers
+    #   Z1b  ID=0xCAFE4B1D — payload fakes signer_count=1 then garbage body,
+    #                         confusing parsers that switch on structure not ID
+    #   E4a  ID=0x7109871B — 1-bit flip from real v2 ID 0x7109871A; tools that
+    #                         pattern-match signing block IDs by proximity will
+    #                         attempt to parse it as a v2 block and crash
+    #   E4b  ID=0xF05368C1 — 1-bit flip from real v3 ID 0xF05368C0
+    echo "  [g] APK Signing Block phantom injection (Z1 + E4) ..."
+    python3 - << PYEOF
+import struct, sys, os
+
+APK   = "$RELEASE_APK"
+MAGIC = b"APK Sig Block 42"
+
+with open(APK, "rb") as fh:
+    data = bytearray(fh.read())
+
+# ── Find EOCD ────────────────────────────────────────────────────────────────
+eocd_off = -1
+for i in range(len(data) - 22, max(len(data) - 65558, -1), -1):
+    if data[i:i+4] == b"PK\x05\x06":
+        clen = struct.unpack_from("<H", data, i + 20)[0]
+        if i + 22 + clen == len(data):
+            eocd_off = i
+            break
+
+if eocd_off < 0:
+    print("    WARN: EOCD not found — skipping signing block injection")
+    sys.exit(0)
+
+cd_offset = struct.unpack_from("<I", data, eocd_off + 16)[0]
+
+# ── Locate APK Signing Block ─────────────────────────────────────────────────
+if cd_offset < 24:
+    print("    WARN: CD offset too small — skipping signing block injection")
+    sys.exit(0)
+
+magic_off = cd_offset - 16
+if data[magic_off:magic_off + 16] != MAGIC:
+    print("    WARN: APK Sig Block magic not found at CD_offset-16 — skipping")
+    sys.exit(0)
+
+# block_size = len(all_pairs) + 8 (second size field) + 16 (magic)
+block_size  = struct.unpack_from("<Q", data, magic_off - 8)[0]
+block_start = magic_off - 8 - (block_size - 24)   # where first BLOCK_SIZE sits
+pairs_start = block_start + 8
+pairs_end   = magic_off - 8                        # exclusive
+existing_pairs = bytes(data[pairs_start:pairs_end])
+
+# ── Build phantom pairs ───────────────────────────────────────────────────────
+def make_pair(pair_id, value):
+    # Each pair: uint64(length_of_id_value) || uint32(id) || bytes(value)
+    # length = 4 (id) + len(value)
+    return struct.pack("<QI", 4 + len(value), pair_id) + value
+
+p1 = make_pair(0xDEAD1234, os.urandom(256))
+p2 = make_pair(0xCAFE4B1D, struct.pack("<I", 1) + os.urandom(220))
+p3 = make_pair(0x7109871B, struct.pack("<I", 1) + os.urandom(188))
+p4 = make_pair(0xF05368C1, struct.pack("<I", 1) + os.urandom(164))
+
+new_pairs    = p1 + p2 + p3 + p4 + existing_pairs   # phantoms before real entries
+added_bytes  = len(new_pairs) - len(existing_pairs)
+new_block_sz = len(new_pairs) + 8 + 16               # pairs + 2nd size field + magic
+
+before_block = bytes(data[:block_start])
+cd_and_eocd  = bytes(data[cd_offset:])
+
+new_signing_block = (
+    struct.pack("<Q", new_block_sz) +
+    new_pairs +
+    struct.pack("<Q", new_block_sz) +
+    MAGIC
+)
+
+new_cd_offset = block_start + len(new_signing_block)
+
+# Update CD offset in EOCD (EOCD sits at (eocd_off - cd_offset) into cd_and_eocd)
+eocd_slice = eocd_off - cd_offset
+new_cd = bytearray(cd_and_eocd)
+struct.pack_into("<I", new_cd, eocd_slice + 16, new_cd_offset)
+
+with open(APK, "wb") as fh:
+    fh.write(before_block + new_signing_block + bytes(new_cd))
+
+print("    Signing block expanded: +%d bytes (%d phantom pairs prepended)" % (added_bytes, 4))
+print("    Z1a: ID=0x%08X — unknown type, 256B random payload" % 0xDEAD1234)
+print("    Z1b: ID=0x%08X — signer_count=1 spoof + garbage body" % 0xCAFE4B1D)
+print("    E4a: ID=0x%08X — 1-bit flip from real v2 ID 0x7109871A" % 0x7109871B)
+print("    E4b: ID=0x%08X — 1-bit flip from real v3 ID 0xF05368C0" % 0xF05368C1)
+print("    CD offset updated: 0x%08X → 0x%08X" % (cd_offset, new_cd_offset))
+PYEOF
+
     if "$APKSIGNER" verify "$RELEASE_APK" > /dev/null 2>&1; then
         echo "    Signature OK — APK installable on Android."
     else
@@ -1864,21 +2095,35 @@ PYEOF
     HARDENED_SIZE=$(ls -lh "$RELEASE_APK" | awk '{print $5}')
     echo "  Hardened release APK: $RELEASE_APK ($HARDENED_SIZE)"
     echo "  Anti-decompile layers active:"
+    echo "    ── Compiler / Obfuscator ──────────────────────────────────────────"
     echo "    R8 full mode + ProGuard (5-pass, log strip, repackaging)"
     echo "    Look-alike obfuscation dictionary (I/l/O/0)"
+    echo "    ── JAR Signature ──────────────────────────────────────────────────"
     echo "    v1 JAR signature stripped (v2 + v3 + v4 only)"
-    echo "    REAL resources.arsc tampered (reserved flag bits + phantom"
-    echo "      0xDEAD chunk past header.size + tail padding)"
-    echo "    REAL AndroidManifest.xml + every res/*.xml tampered (StringPool"
-    echo "      flag bits + phantom 0xDEAD chunk INSIDE bounded chunk stream,"
-    echo "      between StringPool and first XML node — apktool throws on it)"
+    echo "    ── Binary Resource Tampering ──────────────────────────────────────"
+    echo "    REAL resources.arsc: StringPool reserved flag bits + phantom"
+    echo "      0xDEAD chunk past header.size + random tail padding"
+    echo "    REAL AndroidManifest.xml + every res/*.xml: StringPool flag bits"
+    echo "      + phantom 0xDEAD chunk inside bounded chunk stream (apktool throws)"
+    echo "    ── ZIP Decoy & Poison Entries ─────────────────────────────────────"
     echo "    Poison ZIP entries (fake classes0.dex, .bak files, BOM names)"
     echo "    Resource-tree poisoning (corrupted AXML in res/xml, layout, menu,"
     echo "      anim, drawable, values + decoy resources.arsc + assets decoys)"
-    echo "    Pseudo-encryption: GP flags 0x0041 on AndroidManifest.xml,"
-    echo "      classes*.dex, resources.arsc (bit0=encrypted + bit6=strong-encrypt)"
+    echo "    ── Pseudo-Encryption Stack (c2) ───────────────────────────────────"
+    echo "    GP flags 0x2041 on AndroidManifest.xml, classes*.dex, resources.arsc"
+    echo "      bit0=encrypted | bit6=strong-encrypt | bit13=reserved-unknown"
     echo "    Anti-pseudo-decryption: local-header CRC-32 XORd 0xDEADBEEF"
-    echo "      (tools that strip the flag and re-verify CRC hit a mismatch)"
+    echo "    ── Advanced Local-Header Structural Poison (e) ────────────────────"
+    echo "    E2: version_needed=0x00FF (ZIP spec max 6.3 — parsers refuse v255)"
+    echo "    E3: local compression=0x0063 (WinZip AES code; CD keeps Deflate)"
+    echo "    Z3: GP bit3 (fake data-descriptor — sequential parsers lose offsets)"
+    echo "    Z4: local compressed_size +64KiB (boundary overshoot)"
+    echo "    ── APK Signing Block Injection (g, post-sign) ─────────────────────"
+    echo "    Z1a: ID=0xDEAD1234 — unknown type, 256B random payload"
+    echo "    Z1b: ID=0xCAFE4B1D — signer_count=1 spoof + garbage body"
+    echo "    E4a: ID=0x7109871B — 1-bit flip from v2 0x7109871A (parser collision)"
+    echo "    E4b: ID=0xF05368C1 — 1-bit flip from v3 0xF05368C0 (parser collision)"
+    echo "    ── Alignment ──────────────────────────────────────────────────────"
     echo "    zipalign -p 4 (page-aligned native libs)"
 else
     echo "  Skipping hardening — release APK not produced."
@@ -1983,6 +2228,46 @@ print("  AES-256 encrypted module written.")
 PYEOF
     MODULE_SIZE=$(ls -lh "$MODULE_DST" | awk '{print $5}')
     echo "  Encrypted asset: installer/src/main/assets/module ($MODULE_SIZE)"
+
+    # (I3) Decoy assets — plant 4 convincing AES-encrypted blobs alongside
+    # the real "module" asset. Each blob is a valid WinZip-AES ZIP container
+    # (correct magic, salt, HMAC fields) encrypted with a random key and
+    # containing random plaintext of similar size to the real module.
+    # The installer only reads the hard-coded "module" name — decoys are
+    # silently ignored at runtime but appear identical to the real asset to
+    # static-analysis tools that dump and scan the assets/ directory.
+    # An analyst who extracts all blobs and attempts brute-force decryption
+    # must try every blob × every candidate key — O(4×) more work.
+    echo "  [I3] Generating decoy encrypted assets ..."
+    MODULE_SIZE_BYTES=$(wc -c < "$MODULE_DST")
+    MODULE_SIZE_BYTES="${MODULE_SIZE_BYTES:-2097152}"
+    INSTALLER_ASSETS="$ROOT_DIR/installer/src/main/assets"
+    MODULE_SIZE_BYTES="$MODULE_SIZE_BYTES" INSTALLER_ASSETS="$INSTALLER_ASSETS" \
+    python3 - << 'PYEOF'
+import os, secrets, pyzipper
+
+assets_dir   = os.environ["INSTALLER_ASSETS"]
+real_sz      = int(os.environ.get("MODULE_SIZE_BYTES", "2097152"))
+
+# Generate 4 decoy files, each ±15% size of the real module asset.
+for i in range(4):
+    name      = secrets.token_hex(8) + ".dat"          # e.g. "a3f9c1b2e4d700ff.dat"
+    decoy_key = secrets.token_urlsafe(24).encode()
+    # Random plaintext sized ±15% relative to real module
+    variance  = int(real_sz * 0.15)
+    payload   = os.urandom(real_sz + secrets.randbelow(2 * variance + 1) - variance)
+    dst       = os.path.join(assets_dir, name)
+    with pyzipper.AESZipFile(dst, "w",
+                             compression=pyzipper.ZIP_DEFLATED,
+                             encryption=pyzipper.WZ_AES) as zf:
+        zf.setpassword(decoy_key)
+        zf.setencryption(pyzipper.WZ_AES, nbits=256)
+        zf.writestr("payload.apk", payload)
+    sz = os.path.getsize(dst)
+    print("  Decoy asset %d: assets/%s  (%d B, random key)" % (i+1, name, sz))
+
+print("  I3: 4 indistinguishable decoy AES-256 blobs written alongside real 'module'")
+PYEOF
 
     cd "$ROOT_DIR"
     ./gradlew :installer:assembleRelease --no-daemon --stacktrace 2>&1
