@@ -1084,13 +1084,32 @@ fi
 # instead of uploading stale APKs from a previous build.
 echo ""
 echo "$(date '+%Y-%m-%d %H:%M:%S') ==> Configuring Java..."
+is_valid_jdk() {
+    local candidate="$1"
+    [ -x "$candidate/bin/java" ] || return 1
+    [ -x "$candidate/bin/javac" ] || return 1
+
+    local version
+    version="$("$candidate/bin/java" -version 2>&1 | awk -F '"' '/version/ {print $2; exit}')"
+    if [ -z "$version" ]; then
+        return 1
+    fi
+
+    local major
+    case "$version" in
+        1.[0-9]* ) major="${version#1.}"; major="${major%%.*}" ;;
+        * ) major="${version%%.*}" ;;
+    esac
+    [ "$major" -ge 17 ] 2>/dev/null
+}
+
 resolve_java_home() {
     # 1) Hard-coded Zulu JDK from the Replit nix store, if present.
-    if [ -d "$ZULU_JDK" ] && [ -x "$ZULU_JDK/bin/java" ]; then
+    if [ -d "$ZULU_JDK" ] && is_valid_jdk "$ZULU_JDK"; then
         echo "$ZULU_JDK"; return 0
     fi
     # 2) Inherited JAVA_HOME, validated.
-    if [ -n "${JAVA_HOME:-}" ] && [ -x "${JAVA_HOME}/bin/java" ]; then
+    if [ -n "${JAVA_HOME:-}" ] && is_valid_jdk "$JAVA_HOME"; then
         echo "$JAVA_HOME"; return 0
     fi
     # 3) `java` already on PATH — reverse the symlink to find JAVA_HOME.
@@ -1098,11 +1117,11 @@ resolve_java_home() {
         local jbin jh
         jbin="$(readlink -f "$(command -v java)" 2>/dev/null || command -v java)"
         jh="$(dirname "$(dirname "$jbin")")"
-        if [ -n "$jh" ] && [ -x "$jh/bin/java" ]; then
+        if [ -n "$jh" ] && is_valid_jdk "$jh"; then
             echo "$jh"; return 0
         fi
     fi
-    # 4) Common system locations (alpine, debian, fedora, brew, …).
+    # 4) Common system / SDKMAN locations (alpine, debian, Fedora, brew, SDKMAN, …).
     local cand
     for cand in \
         /usr/lib/jvm/java-17-openjdk \
@@ -1112,8 +1131,11 @@ resolve_java_home() {
         /usr/lib/jvm/default-java \
         /opt/java/openjdk \
         /opt/homebrew/opt/openjdk@17 \
-        /usr/local/opt/openjdk@17; do
-        if [ -x "$cand/bin/java" ]; then
+        /usr/local/opt/openjdk@17 \
+        /usr/local/sdkman/candidates/java/current \
+        /usr/local/sdkman/candidates/java/21.0.10-ms \
+        /usr/local/sdkman/candidates/java/25.0.2-ms; do
+        if [ -x "$cand/bin/java" ] && is_valid_jdk "$cand"; then
             echo "$cand"; return 0
         fi
     done
@@ -1183,6 +1205,7 @@ echo "==> Checking Gradle release keystore..."
 if [ ! -f "$KEYSTORE" ]; then
     echo "  Generating Gradle keystore (used only by assembleRelease)..."
     keytool -genkeypair \
+        -storetype JKS \
         -keystore "$KEYSTORE" \
         -alias "$KEY_ALIAS" \
         -keyalg RSA \
@@ -1247,6 +1270,7 @@ INST_KS_COUNTRY="$(_ks_country)"
 
 rm -f "$MODULE_KS_PATH"
 keytool -genkeypair \
+    -storetype JKS \
     -keystore "$MODULE_KS_PATH" \
     -alias "$MODULE_KS_ALIAS" \
     -keyalg RSA \
@@ -1261,6 +1285,7 @@ echo "  Module keystore ready    (alias=$MODULE_KS_ALIAS, C=$MODULE_KS_COUNTRY)"
 
 rm -f "$INST_KS_PATH"
 keytool -genkeypair \
+    -storetype JKS \
     -keystore "$INST_KS_PATH" \
     -alias "$INST_KS_ALIAS" \
     -keyalg RSA \
