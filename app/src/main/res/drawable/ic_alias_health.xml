@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Device health / battery pulse icon — Samsung Device Care look -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Battery outline -->
+    <path
+        android:fillColor="#1E88E5"
+        android:pathData="M15.67,4H14V2H10V4H8.33C7.6,4 7,4.6 7,5.33V20.67C7,21.4 7.6,22
+8.33,22H15.67C16.4,22 17,21.4 17,20.67V5.33C17,4.6 16.4,4 15.67,4Z"/>
+    <!-- Pulse/heartbeat line inside battery -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M9,12.5H10.5L11.5,10L13,15L14,12.5H15V11.5H13.7L13,13.8
+11.5,9L10.3,11.5H9V12.5Z"/>
+</vector>

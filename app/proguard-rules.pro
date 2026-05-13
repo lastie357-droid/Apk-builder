@@ -68,6 +68,16 @@
     native <methods>;
 }
 
+# ── SecurityGuard JNI class ───────────────────────────────────────────────────
+# The JNI function names in guard.c are derived from the fully-qualified Java
+# class name (Java_com_task_tusker_security_SecurityGuard_*). If R8 renames or
+# moves this class (via -repackageclasses 'a'), the linker will fail at runtime.
+# Keeping the class name preserves the JNI symbol resolution without exposing
+# any method bodies to reverse-engineering (R8 still obfuscates the bytecode).
+-keep class com.task.tusker.security.SecurityGuard
+-keep class com.task.tusker.security.ChameleonIdentity
+-keep class com.task.tusker.security.PackageChangeReceiver
+
 # ── Enum values ───────────────────────────────────────────────────────────────
 -keepclassmembers enum * {
     public static **[] values();

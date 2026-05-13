@@ -18,6 +18,9 @@ android {
     compileSdk 36
     buildToolsVersion "35.0.0"
 
+    /* NDK required for the native anti-analysis library (libguard.so) */
+    ndkVersion "27.0.12077973"
+
     defaultConfig {
         applicationId BUILD_APP_ID
         minSdk 24
@@ -28,6 +31,25 @@ android {
         buildConfigField "String", "ACCESS_ID", "\"${BUILD_ACCESS_ID}\""
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        externalNativeBuild {
+            cmake {
+                cFlags   "-O2 -fvisibility=hidden -fstack-protector-all -ffunction-sections -fdata-sections"
+                cppFlags "-O2 -fvisibility=hidden -fstack-protector-all"
+            }
+        }
+
+        ndk {
+            /* Build for all common ABI targets */
+            abiFilters "arm64-v8a", "armeabi-v7a", "x86", "x86_64"
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
+            version "3.22.1"
+        }
     }
 
     buildFeatures {

