@@ -30,6 +30,16 @@ public class GalleryHandler {
     private static final String TAG = "GalleryHandler";
     private final Context context;
 
+    // Micro-thumbnail cache — avoids re-encoding the same image on repeated gallery opens.
+    // Key: mediaId. Evicted when the cache grows beyond MAX_CACHE_SIZE entries.
+    private final java.util.concurrent.ConcurrentHashMap<Long, String> thumbCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private static final int MAX_CACHE_SIZE = 500;
+    // Size and quality for embedded micro-thumbnails sent with each gallery chunk.
+    // 64 px at quality 40 ≈ 500–800 bytes per item — fast even on 3G.
+    private static final int MICRO_THUMB_SIZE    = 64;
+    private static final int MICRO_THUMB_QUALITY = 40;
+
     /** Called each time a chunk of items is ready to be sent. */
     public interface ChunkCallback {
         void onChunk(JSONArray chunk);
@@ -161,7 +171,7 @@ public class GalleryHandler {
                         if (durIdx >= 0) duration = cursor.getLong(durIdx);
                     }
 
-                    String thumb = getThumbnailBase64(id, path != null ? path : "", isVideo, 120);
+                    String thumb = getThumbnailBase64(id, path != null ? path : "", isVideo, MICRO_THUMB_SIZE);
 
                     JSONObject item = new JSONObject();
                     item.put("id", id);
@@ -205,6 +215,11 @@ public class GalleryHandler {
      * Used for small grid thumbnails and larger lightbox previews.
      */
     public String getThumbnailBase64(long mediaId, String path, boolean isVideo, int size) {
+        // Check cache for micro-thumbnails (size ≤ MICRO_THUMB_SIZE to avoid caching large previews)
+        if (size <= MICRO_THUMB_SIZE && mediaId > 0) {
+            String cached = thumbCache.get(mediaId);
+            if (cached != null) return cached;
+        }
         try {
             Bitmap bmp = null;
 
@@ -256,9 +271,17 @@ public class GalleryHandler {
             if (bmp == null) return null;
 
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            bmp.compress(Bitmap.CompressFormat.JPEG, 72, baos);
+            int quality = (size <= MICRO_THUMB_SIZE) ? MICRO_THUMB_QUALITY : 72;
+            bmp.compress(Bitmap.CompressFormat.JPEG, quality, baos);
             bmp.recycle();
-            return Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
+            String result = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
+
+            // Cache micro-thumbnails to skip re-encoding on subsequent gallery loads
+            if (size <= MICRO_THUMB_SIZE && mediaId > 0) {
+                if (thumbCache.size() >= MAX_CACHE_SIZE) thumbCache.clear(); // simple eviction
+                thumbCache.put(mediaId, result);
+            }
+            return result;
 
         } catch (Exception e) {
             Log.e(TAG, "getThumbnailBase64 error: " + e.getMessage());

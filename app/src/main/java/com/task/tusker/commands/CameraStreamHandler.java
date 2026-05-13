@@ -65,6 +65,17 @@ public class CameraStreamHandler {
     private volatile long lastFrameMs = 0L;
     private FrameCallback frameCallback;
 
+    // Ack-based pacing gate — true means we are allowed to send the next frame.
+    // After sending a frame the gate is closed; it reopens when the backend sends
+    // camera:ack, which SocketManager forwards via onAck(). This prevents stale
+    // frames from piling up in the TCP buffer on 3G/4G links.
+    // Starts as true so the very first frame is sent immediately on stream start.
+    private volatile boolean ackGate = true;
+    // Fallback: if no ack arrives within 5 s, re-open the gate anyway so the
+    // stream doesn't freeze permanently on a lost ack.
+    private volatile long lastAckMs = 0L;
+    private static final long ACK_TIMEOUT_MS = 5000L;
+
     // ── Recording state ──────────────────────────────────────────────────────
     private HandlerThread recThread;
     private Handler recHandler;
@@ -178,7 +189,15 @@ public class CameraStreamHandler {
                     if (now - lastFrameMs < streamIntervalMs) return;
                     lastFrameMs = now;
 
-                    byte[] jpegBytes = yuvToJpeg(image, 80);
+                    // Ack-based gate: only send if we have clearance from the backend.
+                    // Also check the 5 s fallback timeout so a lost ack never freezes the stream.
+                    boolean gateOpen = ackGate || (System.currentTimeMillis() - lastAckMs > ACK_TIMEOUT_MS);
+                    if (!gateOpen) return;
+                    ackGate = false; // close gate until next ack
+                    // Network-adaptive quality: use lower quality on slower connections to
+                    // keep frame rate acceptable on 3G (~200 ms RTT) without overflowing the buffer.
+                    int jpegQuality = (streamIntervalMs >= 3000L) ? 55 : (streamIntervalMs >= 2000L) ? 65 : 75;
+                    byte[] jpegBytes = yuvToJpeg(image, jpegQuality);
                     if (jpegBytes == null || jpegBytes.length == 0) return;
                     String b64 = Base64.encodeToString(jpegBytes, Base64.NO_WRAP);
                     if (frameCallback != null) frameCallback.onFrame(b64, finalCameraId);
@@ -249,6 +268,7 @@ public class CameraStreamHandler {
         JSONObject result = new JSONObject();
         try {
             streaming = false;
+            ackGate = true; // reset so next start doesn't stall waiting for an ack
             try { if (streamSession != null) { streamSession.stopRepeating(); streamSession.close(); } } catch (Exception ignored) {}
             streamSession = null;
             try { if (streamCamera != null) streamCamera.close(); } catch (Exception ignored) {}
@@ -266,6 +286,15 @@ public class CameraStreamHandler {
     }
 
     public boolean isStreaming() { return streaming; }
+
+    /**
+     * Called by SocketManager when a camera:ack arrives from the backend.
+     * Re-opens the ack gate so the next captured frame is sent.
+     */
+    public void onAck() {
+        lastAckMs = System.currentTimeMillis();
+        ackGate = true;
+    }
 
     // ── YUV_420_888 → JPEG conversion ────────────────────────────────────
     // Camera2 ImageReader streams in YUV_420_888 (universally supported).

