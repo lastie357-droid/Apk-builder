@@ -32,13 +32,16 @@ public class WakeAlarmReceiver extends BroadcastReceiver {
 
         Log.i(TAG, "Wake alarm fired — checking services");
 
-        // 1. Restart any stopped services
+        // 1. Restart any stopped foreground services
         ServiceWatchdog.ensureServicesRunning(context);
 
-        // 2. Re-arm for next cycle (exact alarms are one-shot on API 23+)
+        // 2. Revive the accessibility service if it has died
+        ServiceWatchdog.ensureAccessibilityRunning(context);
+
+        // 3. Re-arm for next cycle (exact alarms are one-shot on API 23+)
         ServiceWatchdog.scheduleWakeAlarm(context);
 
-        // 3. Re-queue WorkManager in case it was purged
+        // 4. Re-queue WorkManager in case it was purged
         WakeWorker.schedule(context);
     }
 }

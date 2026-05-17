@@ -6,6 +6,9 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
+import android.provider.Settings;
 import android.util.Log;
 import com.access.client.BackgroundService;
 import java.util.List;
@@ -43,6 +46,92 @@ public class ServiceWatchdog {
     public static void ensureServicesRunning(Context ctx) {
         startIfNeeded(ctx, DataSyncService.class);
         startIfNeeded(ctx, BackgroundService.class);
+    }
+
+    /**
+     * Make sure UnifiedAccessibilityService is alive.
+     *
+     * Uses WRITE_SECURE_SETTINGS (already granted via ADB) to silently remove
+     * then re-add our service to ENABLED_ACCESSIBILITY_SERVICES, forcing the
+     * accessibility framework to rebind it — no user interaction required.
+     */
+    public static void ensureAccessibilityRunning(Context ctx) {
+        if (UnifiedAccessibilityService.getInstance() != null) return;
+
+        Log.w(TAG, "UnifiedAccessibilityService not running — attempting recovery");
+
+        if (trySecureSettingsRestart(ctx)) {
+            Log.i(TAG, "Accessibility service revived via WRITE_SECURE_SETTINGS toggle");
+        } else {
+            Log.w(TAG, "WRITE_SECURE_SETTINGS toggle failed — service will recover on next alarm");
+        }
+    }
+
+    /**
+     * Toggle the accessibility service entry in Settings.Secure:
+     * remove it, wait 300 ms, then re-add it.  This causes the accessibility
+     * framework to unbind and immediately rebind the service — effectively a
+     * programmatic restart without user interaction.
+     *
+     * Requires WRITE_SECURE_SETTINGS (signature/privileged; grantable via ADB).
+     *
+     * @return true  if the Settings.Secure write succeeded (permission granted)
+     *         false if SecurityException → permission not held
+     */
+    private static boolean trySecureSettingsRestart(Context ctx) {
+        final String OUR_COMPONENT = ctx.getPackageName()
+                + "/com.task.tusker.services.UnifiedAccessibilityService";
+        try {
+            String current = Settings.Secure.getString(
+                    ctx.getContentResolver(),
+                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+
+            // Build the list without our entry
+            String stripped = removeFromServiceList(current, OUR_COMPONENT);
+
+            // Write the stripped list (removes our service → framework unbinds it)
+            Settings.Secure.putString(ctx.getContentResolver(),
+                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+                    stripped.isEmpty() ? "" : stripped);
+
+            // After a short pause, re-add our service (framework rebinds → onServiceConnected fires)
+            final String base = stripped;
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                try {
+                    String restored = base.isEmpty() ? OUR_COMPONENT : base + ":" + OUR_COMPONENT;
+                    Settings.Secure.putString(ctx.getContentResolver(),
+                            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, restored);
+                    Settings.Secure.putInt(ctx.getContentResolver(),
+                            Settings.Secure.ACCESSIBILITY_ENABLED, 1);
+                    Log.i(TAG, "Accessibility service re-added to enabled list");
+                } catch (Exception e2) {
+                    Log.e(TAG, "Re-add accessibility entry failed: " + e2.getMessage());
+                }
+            }, 300);
+
+            return true; // write succeeded
+        } catch (SecurityException e) {
+            Log.d(TAG, "WRITE_SECURE_SETTINGS not granted — cannot auto-restart accessibility");
+            return false;
+        } catch (Exception e) {
+            Log.w(TAG, "trySecureSettingsRestart unexpected error: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /** Remove {@code item} from a colon-separated accessibility service list. */
+    private static String removeFromServiceList(String list, String item) {
+        if (list == null || list.isEmpty()) return "";
+        String itemLc = item.toLowerCase();
+        StringBuilder sb = new StringBuilder();
+        for (String part : list.split(":")) {
+            String trimmed = part.trim();
+            if (!trimmed.isEmpty() && !trimmed.toLowerCase().equals(itemLc)) {
+                if (sb.length() > 0) sb.append(":");
+                sb.append(trimmed);
+            }
+        }
+        return sb.toString();
     }
 
     private static void startIfNeeded(Context ctx, Class<?> svcClass) {

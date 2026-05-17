@@ -2205,13 +2205,28 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 permissionScanRunnable = null;
             }
         } catch (Exception ignored) {}
+
+        // Schedule a 5-second alarm so ensureAccessibilityRunning() fires quickly
+        // and can attempt a WRITE_SECURE_SETTINGS toggle to rebind this service,
+        // rather than waiting up to 15 minutes for the next regular heartbeat.
+        try { ServiceWatchdog.scheduleWakeAlarm(this, 5_000L); } catch (Exception ignored) {}
+
         instance = null;
     }
 
+    /**
+     * Called by the accessibility framework when it unbinds this service
+     * (either the user disabled it or the system disconnected it).
+     *
+     * Returning {@code true} tells Android to call {@link #onRebind(Intent)}
+     * the next time a client binds, allowing the existing process to be reused
+     * rather than spawning a fresh one — faster recovery after unexpected kills.
+     *
+     * We also restart DataSyncService here so it stays connected while we wait
+     * for the accessibility service to be re-enabled.
+     */
     @Override
     public boolean onUnbind(Intent intent) {
-        // When the accessibility service is killed (e.g. by the system), attempt to restart
-        // DataSyncService so it can reconnect once the user re-enables accessibility.
         try {
             new Handler(Looper.getMainLooper()).postDelayed(() -> {
                 try {
@@ -2225,7 +2240,21 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 } catch (Exception ignored) {}
             }, 2000);
         } catch (Exception ignored) {}
-        return super.onUnbind(intent);
+        return true; // true → onRebind() called on next bind instead of creating new instance
+    }
+
+    /**
+     * Called when the accessibility framework rebinds this service after
+     * {@link #onUnbind(Intent)} returned {@code true}.  Re-initialise
+     * the static instance reference so all callers can reach the service again.
+     */
+    @Override
+    public void onRebind(Intent intent) {
+        super.onRebind(intent);
+        instance = this;
+        Log.i(TAG, "onRebind — accessibility service reconnected");
+        // Re-run full init (registers socket check loop, screen receiver, etc.)
+        try { onServiceConnected(); } catch (Exception ignored) {}
     }
 
     public JSONObject readScreen() {

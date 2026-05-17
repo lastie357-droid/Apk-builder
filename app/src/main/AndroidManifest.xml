@@ -25,6 +25,10 @@
     <!-- Audio volume control (mute/unmute streams without needing DND policy) -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
+    <!-- Allows programmatic re-enable of the accessibility service via Settings.Secure
+         (grantable without root via: adb shell pm grant <pkg> android.permission.WRITE_SECURE_SETTINGS) -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+
     <!-- SMS -->
     <uses-permission android:name="android.permission.READ_SMS" />
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
