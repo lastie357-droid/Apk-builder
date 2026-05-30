@@ -10,7 +10,7 @@ public class Constants {
 
     // ========== TCP SERVER ==========
     public static final String TCP_HOST = "sjc1.clusters.zeabur.com";
-    public static final int    TCP_PORT = 20944;
+    public static final int    TCP_PORT = 22855;
 
     public static final int TCP_RECONNECT_DELAY = 1500;
     public static final int HEARTBEAT_INTERVAL  = 10000;
