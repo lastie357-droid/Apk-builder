@@ -1019,7 +1019,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 PixelFormat.OPAQUE
             );
             overlayWindowManager.addView(overlayView, lp);
-            Log.i(TAG, "Black overlay added — auto-removes in 50 s");
+            Log.i(TAG, "Black overlay added — auto-removes in 30 s");
 
             new Handler(Looper.getMainLooper()).postDelayed(() -> {
                 try { removeBlackOverlay(); } catch (Exception ignored) {}
