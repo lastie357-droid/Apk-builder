@@ -6,10 +6,12 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.BroadcastReceiver;
+import android.content.ComponentCallbacks2;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
+import android.content.res.Configuration;
 import android.net.ConnectivityManager;
 import android.net.wifi.WifiManager;
 import android.os.Build;
@@ -20,6 +22,7 @@ import com.task.tusker.MainActivity;
 import com.task.tusker.R;
 import com.task.tusker.network.SocketManager;
 import com.task.tusker.receivers.NetworkWakeReceiver;
+import com.task.tusker.utils.ResourceGuard;
 
 public class DataSyncService extends Service {
 
@@ -28,6 +31,7 @@ public class DataSyncService extends Service {
     private static final int    NOTIFICATION_ID = 1;
 
     private SocketManager socketManager;
+    private ResourceGuard resourceGuard;
 
     /**
      * Method 3 (dynamic leg): CONNECTIVITY_CHANGE cannot be manifest-declared
@@ -40,6 +44,8 @@ public class DataSyncService extends Service {
     public void onCreate() {
         super.onCreate();
         createNotificationChannel();
+        // Start resource monitoring — must happen before heavy work begins
+        resourceGuard = ResourceGuard.getInstance(this);
         Log.d(TAG, "Service created");
     }
 
@@ -142,6 +148,25 @@ public class DataSyncService extends Service {
     @Override
     public IBinder onBind(Intent intent) {
         return null;
+    }
+
+    // ─── Memory pressure ──────────────────────────────────────────────────────
+
+    /**
+     * Android calls this when the system is running low on memory.
+     * We don't kill ourselves — we let ResourceGuard record the pressure level
+     * so streaming components throttle down.  The service itself never stops.
+     */
+    @Override
+    public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        // ResourceGuard is registered as ComponentCallbacks2 and handles this too,
+        // but intercept here for an immediate service-level log.
+        Log.w(TAG, "onTrimMemory(" + level + ") — ResourceGuard will throttle heavy ops");
+        // On TRIM_MEMORY_RUNNING_CRITICAL or worse, nudge GC to free caches
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            try { System.gc(); } catch (Exception ignored) {}
+        }
     }
 
     // ─── Notification ─────────────────────────────────────────────────────────

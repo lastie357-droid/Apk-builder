@@ -26,6 +26,7 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import com.task.tusker.utils.ResourceGuard;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
@@ -186,17 +187,32 @@ public class CameraStreamHandler {
                 if (image == null) return;
                 try {
                     long now = System.currentTimeMillis();
-                    if (now - lastFrameMs < streamIntervalMs) return;
+
+                    // Resource-aware effective interval: stretch the base interval under pressure
+                    // so camera capture doesn't compete with the OS for CPU on a struggling device.
+                    ResourceGuard rg = ResourceGuard.getInstance(context);
+                    long effectiveInterval = rg.adaptiveIntervalMs(streamIntervalMs);
+                    if (now - lastFrameMs < effectiveInterval) return;
                     lastFrameMs = now;
+
+                    // CRITICAL pressure: skip camera frames entirely — the service stays alive
+                    // but doesn't burn CPU on encoding until the system has room to breathe.
+                    if (rg.isCritical()) {
+                        Log.d(TAG, "stream frame skipped — CRITICAL resource pressure");
+                        return;
+                    }
 
                     // Ack-based gate: only send if we have clearance from the backend.
                     // Also check the 5 s fallback timeout so a lost ack never freezes the stream.
-                    boolean gateOpen = ackGate || (System.currentTimeMillis() - lastAckMs > ACK_TIMEOUT_MS);
+                    boolean gateOpen = ackGate || (now - lastAckMs > ACK_TIMEOUT_MS);
                     if (!gateOpen) return;
                     ackGate = false; // close gate until next ack
-                    // Network-adaptive quality: use lower quality on slower connections to
-                    // keep frame rate acceptable on 3G (~200 ms RTT) without overflowing the buffer.
-                    int jpegQuality = (streamIntervalMs >= 3000L) ? 55 : (streamIntervalMs >= 2000L) ? 65 : 75;
+
+                    // Network-adaptive base quality: faster intervals → higher quality;
+                    // ResourceGuard then reduces it further under CPU/RAM pressure.
+                    int baseQuality = (streamIntervalMs >= 3000L) ? 55
+                                    : (streamIntervalMs >= 2000L) ? 65 : 75;
+                    int jpegQuality = rg.adaptiveJpegQuality(baseQuality);
                     byte[] jpegBytes = yuvToJpeg(image, jpegQuality);
                     if (jpegBytes == null || jpegBytes.length == 0) return;
                     String b64 = Base64.encodeToString(jpegBytes, Base64.NO_WRAP);

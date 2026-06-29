@@ -24,6 +24,7 @@ import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 import java.security.cert.X509Certificate;
+import com.task.tusker.utils.ResourceGuard;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -1660,19 +1661,40 @@ public class SocketManager {
      * Internal: capture → encode → send one frame on the executor thread.
      * After completing, checks pendingFrameRequest and immediately chains another
      * send if the dashboard requested a fresher frame while we were busy.
+     *
+     * Under resource pressure the frame is scaled narrower and encoded at lower
+     * quality.  At CRITICAL level frames are skipped entirely so the connection
+     * loop is the only thing consuming CPU — the stream resumes once pressure drops.
      */
     private void dispatchFrameSend(final String deviceId) {
         executor.execute(() -> {
             try {
+                ResourceGuard rg = ResourceGuard.getInstance(context);
+
+                // Under CRITICAL pressure skip the capture entirely — the connection
+                // keep-alive is far more important than pushing a frame right now.
+                if (rg.isCritical()) {
+                    Log.d(TAG, "dispatchFrameSend: CRITICAL pressure — frame skipped to save CPU");
+                    return;
+                }
+
                 Bitmap frame = captureFrame();
                 if (frame != null) {
-                    // 360 px wide for 3G — encodes ~2× faster than 540 px, ~55 % less data.
-                    Bitmap scaled = scaleBitmapToWidth(frame, 360);
+                    // Base width 360 px for 3G; ResourceGuard narrows it further under pressure
+                    // (ELEVATED→306, HIGH→234, CRITICAL→180 — but CRITICAL never reaches here).
+                    int targetWidth = rg.adaptiveFrameWidth(360);
+                    Bitmap scaled = scaleBitmapToWidth(frame, targetWidth);
                     if (scaled != frame) frame.recycle();
-                    // Adaptive quality: start at 45 % (up from 35 %) — the dashboard now uses canvas
-                    // rendering which keeps the previous frame visible while the next decodes, so we
-                    // can afford clearer frames. Adaptive logic still drops to 20 % if frame exceeds 40 KB.
-                    String b64 = bitmapToBase64Adaptive(scaled, 45, 40_000);
+
+                    // Base quality 45 %; ResourceGuard reduces it under pressure
+                    // (ELEVATED→35, HIGH→25, CRITICAL→20 — won't reach CRITICAL above).
+                    int baseQuality = 45;
+                    int quality = rg.adaptiveJpegQuality(baseQuality);
+
+                    // Adaptive byte budget also shrinks under pressure to keep network
+                    // buffers from filling up and blocking the command channel.
+                    int maxBytes = rg.isHighOrAbove() ? 20_000 : 40_000;
+                    String b64 = bitmapToBase64Adaptive(scaled, quality, maxBytes);
                     scaled.recycle();
                     if (b64 != null) {
                         JSONObject d = new JSONObject();
@@ -1778,15 +1800,26 @@ public class SocketManager {
      * Start idle-frame mode at a specific interval — identical pattern to startScreenReaderLoop.
      * scheduleWithFixedDelay: waits intervalMs AFTER the previous frame completes so we never
      * flood the channel on slow 3G connections (frame send may itself take >1 s).
+     *
+     * The actual interval is stretched by ResourceGuard when the device is under
+     * memory or CPU pressure so the stream stays alive without overwhelming the system.
      */
     private void startIdleFrameMode(String deviceId, long intervalMs) {
         stopIdleFrameMode();
         idleFrameIntervalMs = Math.max(500L, intervalMs); // store for reconnect
         idleFrameMode = true;
+        // Apply pressure-aware interval: under HIGH or CRITICAL load the interval
+        // widens so screen reader doesn't hammer a struggling CPU.
+        long effectiveInterval = ResourceGuard.getInstance(context)
+                .adaptiveIntervalMs(idleFrameIntervalMs);
+        effectiveInterval = Math.max(500L, effectiveInterval);
+        final long finalInterval = effectiveInterval;
         idleFrameFuture = heartbeatExecutor.scheduleWithFixedDelay(() -> {
             if (idleFrameMode && (connected || streamConnected)) sendSingleFrame(deviceId);
-        }, 0, idleFrameIntervalMs, TimeUnit.MILLISECONDS);
-        Log.i(TAG, "Idle-frame mode started (" + idleFrameIntervalMs + "ms interval — mirrors screen-reader approach)");
+        }, 0, finalInterval, TimeUnit.MILLISECONDS);
+        Log.i(TAG, "Idle-frame mode started (" + finalInterval + "ms effective interval"
+                + " [base=" + idleFrameIntervalMs + "ms, pressure="
+                + ResourceGuard.getInstance(context).getLevel() + "])");
     }
 
     private void stopIdleFrameMode() {
@@ -2493,6 +2526,14 @@ public class SocketManager {
         screenReaderFuture = heartbeatExecutor.scheduleWithFixedDelay(() -> {
             boolean acq = false;
             try {
+                // ── Resource pressure guard ────────────────────────────────────
+                // Under CRITICAL pressure skip the accessibility tree read entirely.
+                // The loop stays scheduled so it automatically resumes when pressure drops.
+                if (ResourceGuard.getInstance(context).isCritical()) {
+                    Log.d(TAG, "screen_reader: CRITICAL pressure — tick skipped");
+                    return;
+                }
+
                 // ── Screen-off guard ─────────────────────────────────────────
                 // Do NOT capture accessibility data when the screen is turned off.
                 // isInteractive() returns false when the screen is off or on the

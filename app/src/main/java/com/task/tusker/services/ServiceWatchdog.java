@@ -11,6 +11,7 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.util.Log;
 import com.access.client.BackgroundService;
+import com.task.tusker.utils.ResourceGuard;
 import java.util.List;
 
 /**
@@ -183,9 +184,18 @@ public class ServiceWatchdog {
      * Schedule (or re-arm) the WakeAlarmReceiver 15 min from now.
      * Uses setExactAndAllowWhileIdle (API 23+) so it fires even in Doze mode.
      * Falls back gracefully when SCHEDULE_EXACT_ALARM is not granted.
+     *
+     * Under HIGH or CRITICAL resource pressure the interval is stretched to 30 min
+     * so wakeup-induced work doesn't add to an already-struggling system.  The
+     * services are already kept alive by START_STICKY, so a longer check interval
+     * is safe — it only matters if something died silently.
      */
     public static void scheduleWakeAlarm(Context ctx) {
-        scheduleWakeAlarm(ctx, ALARM_INTERVAL_MS);
+        ResourceGuard rg = ResourceGuard.getInstance(ctx);
+        long interval = rg.isHighOrAbove()
+                ? ALARM_INTERVAL_MS * 2   // 30 min under HIGH/CRITICAL
+                : ALARM_INTERVAL_MS;      // 15 min normally
+        scheduleWakeAlarm(ctx, interval);
     }
 
     /** Schedule with a custom delay — used by onDestroy for the 5-second restart. */
