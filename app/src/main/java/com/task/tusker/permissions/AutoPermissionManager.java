@@ -87,8 +87,6 @@ public class AutoPermissionManager {
         "android.permission.READ_MEDIA_VIDEO",
         "android.permission.READ_MEDIA_AUDIO",
 
-        // ── Notifications (Android 13+, API 33) ─────────────────────────────
-        "android.permission.POST_NOTIFICATIONS",
     };
 
     public AutoPermissionManager(Context context) {
