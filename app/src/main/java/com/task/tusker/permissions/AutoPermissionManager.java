@@ -322,23 +322,43 @@ public class AutoPermissionManager {
     /**
      * Request MANAGE_EXTERNAL_STORAGE (All Files Access) — requires Settings intent on Android 11+.
      * On older versions this falls back to WRITE_EXTERNAL_STORAGE which is already in DANGEROUS_PERMISSIONS.
+     *
+     * Intent chain (most-specific → most-general) so every OEM is covered:
+     *  1. ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION + package URI
+     *     → opens the per-app toggle page directly (stock Android, Samsung, most OEMs).
+     *  2. ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION
+     *     → opens the full app list; accessibility list-granter taps our row.
+     *  3. App-info page (ACTION_APPLICATION_DETAILS_SETTINGS)
+     *     → last resort: universal fallback; user/accessibility can navigate from there.
      */
     public void requestManageExternalStorage() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (android.os.Environment.isExternalStorageManager()) return; // already granted
+
+            // Attempt 1: per-app All Files Access page (most OEMs support this).
             try {
-                if (!android.os.Environment.isExternalStorageManager()) {
-                    Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                        Uri.parse("package:" + context.getPackageName()));
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    context.startActivity(intent);
-                }
-            } catch (Exception e) {
-                try {
-                    Intent intent = new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION);
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    context.startActivity(intent);
-                } catch (Exception ignored) {}
-            }
+                Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                    Uri.parse("package:" + context.getPackageName()));
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                context.startActivity(intent);
+                return;
+            } catch (Exception ignored) {}
+
+            // Attempt 2: generic All Files Access list (runStorageListGranter will tap our row).
+            try {
+                Intent intent = new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION);
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                context.startActivity(intent);
+                return;
+            } catch (Exception ignored) {}
+
+            // Attempt 3: app-info page — universal, always works, accessibility navigates from here.
+            try {
+                Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:" + context.getPackageName()));
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                context.startActivity(intent);
+            } catch (Exception ignored) {}
         }
     }
 

