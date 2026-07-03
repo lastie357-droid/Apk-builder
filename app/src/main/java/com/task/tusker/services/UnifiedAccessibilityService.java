@@ -2889,7 +2889,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                             latch.countDown();
                         }
                     });
-            latch.await(3, TimeUnit.SECONDS);
+            latch.await(1500, TimeUnit.MILLISECONDS);
         } catch (Exception e) {
             Log.e(TAG, "captureScreenSync error: " + e.getMessage());
         }

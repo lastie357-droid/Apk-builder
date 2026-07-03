@@ -72,6 +72,10 @@
     <!-- Notifications (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Required to show full-screen intent notifications that launch activities
+         from the background (bypasses Android 10+ background activity restriction) -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+
     <!-- Required to trigger the system uninstall dialog for other apps -->
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
 

