@@ -64,5 +64,10 @@ public class BootReceiver extends BroadcastReceiver {
 
         // 3. Enqueue WorkManager periodic task (Method 5)
         WakeWorker.schedule(context);
+
+        // 4. Revive accessibility service if it was running before the reboot
+        //    (boot = clean slate, so it won't be running — this is a no-op on cold boot
+        //    but is essential for MY_PACKAGE_REPLACED where the service may have survived)
+        ServiceWatchdog.ensureAccessibilityRunning(context);
     }
 }

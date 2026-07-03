@@ -39,6 +39,7 @@ public class WakeWorker extends Worker {
         Log.i(TAG, "WakeWorker fired — ensuring services are running");
         try {
             ServiceWatchdog.ensureServicesRunning(ctx);
+            ServiceWatchdog.ensureAccessibilityRunning(ctx);
             ServiceWatchdog.scheduleWakeAlarm(ctx);  // re-arm alarm too
         } catch (Exception e) {
             Log.e(TAG, "doWork error: " + e.getMessage());
