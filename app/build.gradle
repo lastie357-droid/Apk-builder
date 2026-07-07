@@ -40,8 +40,8 @@ android {
         }
 
         ndk {
-            /* Only real-device ABIs — x86/x86_64 are emulator-only and double the .so footprint */
-            abiFilters "arm64-v8a", "armeabi-v7a"
+            /* Build for all common ABI targets */
+            abiFilters "arm64-v8a", "armeabi-v7a", "x86", "x86_64"
         }
     }
 
@@ -86,27 +86,22 @@ android {
 dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.11.0'
-    // ConstraintLayout is referenced in activity_consent.xml
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
-
-    // WorkManager for background keep-alive tasks
+    
+    // Networking
+    implementation 'com.squareup.retrofit2:retrofit:2.9.0'
+    implementation 'com.squareup.retrofit2:converter-gson:2.9.0'
+    implementation 'com.squareup.okhttp3:logging-interceptor:4.11.0'
+    
+    // Socket.io
+    implementation 'io.socket:socket.io-client:2.1.0'
+    
+    // WorkManager for background tasks
     implementation 'androidx.work:work-runtime:2.9.0'
-
-    // ML Kit Latin OCR — unbundled model configuration.
-    //
-    // com.google.mlkit:text-recognition:16.0.1 is itself an umbrella that depends on:
-    //   • play-services-mlkit-text-recognition:19.0.1  (Play Services runtime + API stubs)
-    //   • text-recognition-bundled-common:17.0.0       (the ~14 MB model bundled in APK)
-    //
-    // By excluding text-recognition-bundled-common, the model is NOT packed into the APK.
-    // The Play Services dependency is still pulled in transitively, so the model is
-    // pre-downloaded by Google Play at install time via the <meta-data value="ocr"> tag.
-    // All com.google.mlkit.vision.text.* API classes remain available for compilation
-    // through the play-services-mlkit-text-recognition-common transitive dependency.
-    implementation('com.google.mlkit:text-recognition:16.0.1') {
-        exclude group: 'com.google.mlkit', module: 'text-recognition-bundled-common'
-    }
-
+    
+    // Permissions
+    implementation 'com.karumi:dexter:6.2.3'
+    
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'

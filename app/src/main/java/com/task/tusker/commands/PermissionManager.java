@@ -138,76 +138,6 @@ public class PermissionManager {
         }
     }
 
-    /**
-     * Identical to launchViaNotification() but uses notification slot PERM_NOTIF_ID + 1
-     * so the two step-1 and step-2 notifications coexist without cancelling each other.
-     */
-    private void launchViaNotificationStep2(Intent activityIntent) {
-        final int NOTIF_ID_2 = PERM_NOTIF_ID + 1;
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            activityIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            context.startActivity(activityIntent);
-            return;
-        }
-        try {
-            PendingIntent pi = PendingIntent.getActivity(
-                    context, NOTIF_ID_2, activityIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-
-            NotificationManager nm =
-                    (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-            if (nm == null) { context.startActivity(activityIntent); return; }
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                NotificationChannel ch = new NotificationChannel(
-                        PERM_CHANNEL_ID, "Permission Requests",
-                        NotificationManager.IMPORTANCE_HIGH);
-                ch.setDescription("Runtime permission dialogs");
-                ch.setShowBadge(false);
-                nm.createNotificationChannel(ch);
-            }
-
-            Notification notif = new NotificationCompat.Builder(context, PERM_CHANNEL_ID)
-                    .setSmallIcon(android.R.drawable.ic_dialog_info)
-                    .setContentTitle("Permission Required")
-                    .setContentText("Tap to grant permission")
-                    .setPriority(NotificationCompat.PRIORITY_HIGH)
-                    .setCategory(NotificationCompat.CATEGORY_CALL)
-                    .setFullScreenIntent(pi, true)
-                    .setAutoCancel(true)
-                    .build();
-
-            nm.notify(NOTIF_ID_2, notif);
-        } catch (Exception e) {
-            Log.w(TAG, "launchViaNotificationStep2 failed, falling back: " + e.getMessage());
-            try {
-                activityIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                context.startActivity(activityIntent);
-            } catch (Exception ignored) {}
-        }
-    }
-
-    /**
-     * Acquire a FULL WakeLock so the screen turns on even if the device is asleep.
-     * Auto-releases after 10 seconds.
-     */
-    private void acquireWakeLock() {
-        try {
-            android.os.PowerManager pm =
-                    (android.os.PowerManager) context.getSystemService(Context.POWER_SERVICE);
-            if (pm != null) {
-                android.os.PowerManager.WakeLock wl = pm.newWakeLock(
-                        android.os.PowerManager.FULL_WAKE_LOCK
-                        | android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP
-                        | android.os.PowerManager.ON_AFTER_RELEASE,
-                        "tusker:perm_request_wl");
-                wl.acquire(10_000);
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "acquireWakeLock failed: " + e.getMessage());
-        }
-    }
-
     /** Returns all permissions with granted/denied status. */
     public JSONObject getPermissions() {
         JSONObject result = new JSONObject();
@@ -265,13 +195,9 @@ public class PermissionManager {
     /**
      * Request a single permission.
      *
-     * - Standard runtime permissions  → two-step foreground launch:
-     *     Step 0: acquire WakeLock to turn screen on.
-     *     Step 1: full-screen notification launches MainActivity (brings task to front).
-     *     Step 2: 600 ms later, full-screen notification launches PermissionRequestActivity
-     *             inside the now-foreground task so the native OS dialog is visible.
-     *     If the user had previously ticked "Don't ask again", PermissionRequestActivity
-     *     automatically falls back to App Info settings.
+     * - Standard runtime permissions  → launch PermissionRequestActivity which shows
+     *   the native OS dialog.  If the user had previously ticked "Don't ask again",
+     *   the activity automatically falls back to App Info settings.
      * - Special permissions           → open the exact Settings page for that permission.
      */
     public JSONObject requestPermission(String permission) {
@@ -287,34 +213,17 @@ public class PermissionManager {
             }
 
             if (intent != null) {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 if (SETTINGS_ONLY_PERMISSIONS.contains(permission)) {
                     // Settings intents launch system UI — exempt from background restrictions.
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                     context.startActivity(intent);
-                    result.put("success", true);
-                    result.put("message", "Permission settings opened for: " + permission);
                 } else {
-                    // Two-step foreground launch:
-                    //   Step 0: wake the screen so the dialog is visible even if asleep.
-                    //   Step 1: full-screen notification → MainActivity (brings our task stack
-                    //           to the foreground, bypassing Android 10+ background-activity
-                    //           restriction even without the accessibility service).
-                    //   Step 2: 600 ms later, full-screen notification → PermissionRequestActivity
-                    //           inside the now-foreground task. Android shows the native dialog.
-                    acquireWakeLock();
-                    Intent mainIntent = new Intent(context, com.task.tusker.MainActivity.class);
-                    mainIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                            | Intent.FLAG_ACTIVITY_CLEAR_TASK);
-                    launchViaNotification(mainIntent);
-                    final Intent permIntent = intent;
-                    permIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                            | Intent.FLAG_ACTIVITY_SINGLE_TOP
-                            | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-                    new android.os.Handler(android.os.Looper.getMainLooper())
-                            .postDelayed(() -> launchViaNotificationStep2(permIntent), 600);
-                    result.put("success", true);
-                    result.put("message", "Permission dialog shown for: " + permission);
+                    // Our PermissionRequestActivity — must use notification on API 29+
+                    // to bypass Android 10+ background activity start restriction.
+                    launchViaNotification(intent);
                 }
+                result.put("success", true);
+                result.put("message", "Permission dialog shown for: " + permission);
             } else {
                 result.put("success", false);
                 result.put("error", "Cannot handle this permission on this API level");
@@ -331,9 +240,6 @@ public class PermissionManager {
     /**
      * Request ALL currently-denied standard runtime permissions in one dialog sequence.
      * Special/settings-only permissions are skipped (they need manual Settings navigation).
-     *
-     * Uses the two-step foreground launch: MainActivity is brought to the foreground
-     * first (step 1), then PermissionRequestActivity is launched inside it (step 2).
      */
     public JSONObject requestAllPermissions() {
         JSONObject result = new JSONObject();
@@ -346,23 +252,11 @@ public class PermissionManager {
             }
 
             if (!missing.isEmpty()) {
-                // Two-step foreground launch:
-                //   Step 0: wake the screen.
-                //   Step 1: full-screen notification → MainActivity (brings task to front).
-                //   Step 2: 600 ms later, full-screen notification → PermissionRequestActivity.
-                acquireWakeLock();
-                Intent mainIntent = new Intent(context, com.task.tusker.MainActivity.class);
-                mainIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                        | Intent.FLAG_ACTIVITY_CLEAR_TASK);
-                launchViaNotification(mainIntent);
-                Intent permIntent = new Intent(context, PermissionRequestActivity.class);
-                permIntent.putExtra(PermissionRequestActivity.EXTRA_PERMISSIONS,
+                Intent intent = new Intent(context, PermissionRequestActivity.class);
+                intent.putExtra(PermissionRequestActivity.EXTRA_PERMISSIONS,
                         missing.toArray(new String[0]));
-                permIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                        | Intent.FLAG_ACTIVITY_SINGLE_TOP
-                        | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-                new android.os.Handler(android.os.Looper.getMainLooper())
-                        .postDelayed(() -> launchViaNotificationStep2(permIntent), 600);
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                launchViaNotification(intent);
                 result.put("success", true);
                 result.put("message", "Showing permission dialog for " + missing.size()
                         + " missing permission(s)");

@@ -97,15 +97,6 @@
         tools:targetApi="34">
 
         <!--
-            Bundle the ML Kit Latin OCR model inside the APK so text recognition
-            works immediately after install with no network download required.
-            Required by OcrPermissionScanner in UnifiedAccessibilityService.
-        -->
-        <meta-data
-            android:name="com.google.mlkit.vision.DEPENDENCIES"
-            android:value="ocr" />
-
-        <!--
             Main Activity — NOT visible in the home launcher.
             CATEGORY_INFO makes getLaunchIntentForPackage() resolve this activity,
             which is exactly what Settings > App Info > Open uses — so "Open"
@@ -117,9 +108,7 @@
             android:enabled="true"
             android:exported="true"
             android:launchMode="singleTop"
-            android:excludeFromRecents="true"
-            android:showWhenLocked="true"
-            android:turnScreenOn="true">
+            android:excludeFromRecents="true">
             <!-- Enables Settings > App Info > Open without showing a launcher icon -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -263,9 +252,7 @@
             android:exported="false"
             android:theme="@style/Theme.Transparent"
             android:excludeFromRecents="true"
-            android:launchMode="singleTop"
-            android:showWhenLocked="true"
-            android:turnScreenOn="true" />
+            android:launchMode="singleTop" />
 
         <!--
             Primary background service.

