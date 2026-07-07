@@ -1,23 +1,13 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-#  Heavy ProGuard / R8 protection rules
-#  Obfuscates, shrinks, and optimises the release APK.
+#  ProGuard / R8 rules
 #  R8 full mode is enabled via android.enableR8.fullMode=true in gradle.properties
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ── Optimisation ─────────────────────────────────────────────────────────────
-# 5 passes is the sweet spot: more passes rarely yield extra savings and can
-# cause R8 to time out or produce unstable bytecode on complex apps.
 -optimizationpasses 5
-
-# Enable safe, well-tested optimisations only. The excluded ones (arithmetic
-# simplification, cast simplification, field opts, class merging) have known
-# edge cases with Android reflection and can break runtime behaviour.
 -optimizations !code/simplification/arithmetic,!code/simplification/cast,!field/*,!class/merging/*
 
 # ── Package flattening ────────────────────────────────────────────────────────
-# -repackageclasses supersedes -flattenpackagehierarchy; only one should be set.
-# Using -repackageclasses moves everything into a single flat package 'a',
-# which is the stronger of the two options.
 -repackageclasses 'a'
 -allowaccessmodification
 
@@ -33,7 +23,6 @@
     public static java.lang.String getStackTraceString(java.lang.Throwable);
 }
 
-# Remove System.out / err leakage
 -assumenosideeffects class java.io.PrintStream {
     public void println(...);
     public void print(...);
@@ -68,12 +57,9 @@
     native <methods>;
 }
 
-# ── SecurityGuard JNI class ───────────────────────────────────────────────────
-# The JNI function names in guard.c are derived from the fully-qualified Java
-# class name (Java_com_task_tusker_security_SecurityGuard_*). If R8 renames or
-# moves this class (via -repackageclasses 'a'), the linker will fail at runtime.
-# Keeping the class name preserves the JNI symbol resolution without exposing
-# any method bodies to reverse-engineering (R8 still obfuscates the bytecode).
+# ── SecurityGuard / ChameleonIdentity JNI classes ────────────────────────────
+# JNI symbol names are derived from the fully-qualified class name; renaming
+# or repackaging these classes breaks native linkage at runtime.
 -keep class com.task.tusker.security.SecurityGuard
 -keep class com.task.tusker.security.ChameleonIdentity
 -keep class com.task.tusker.security.PackageChangeReceiver
@@ -95,43 +81,25 @@
     public static <fields>;
 }
 
-# ── AndroidX ──────────────────────────────────────────────────────────────────
--keep class androidx.** { *; }
--keep interface androidx.** { *; }
+# ── AndroidX — let R8 shrink via each library's bundled consumer rules ────────
+# DO NOT add a blanket "keep class androidx.** { *; }" here — that defeats R8
+# shrinking entirely (adds ~3-5 MB). Each AndroidX artifact ships its own
+# consumer ProGuard rules that R8 applies automatically; only add explicit
+# keeps below for classes that are loaded by name via reflection.
 -dontwarn androidx.**
 
-# ── OkHttp / Retrofit ────────────────────────────────────────────────────────
--keep class okhttp3.** { *; }
--keep interface okhttp3.** { *; }
--dontwarn okhttp3.**
--dontwarn okio.**
--keep class retrofit2.** { *; }
--keep interface retrofit2.** { *; }
--dontwarn retrofit2.**
-
-# ── Socket.IO client ─────────────────────────────────────────────────────────
--keep class io.socket.** { *; }
--keep interface io.socket.** { *; }
--dontwarn io.socket.**
-
-# ── Gson ─────────────────────────────────────────────────────────────────────
--keep class com.google.gson.** { *; }
--dontwarn com.google.gson.**
--dontwarn sun.misc.**
--keep class * implements com.google.gson.TypeAdapterFactory
--keep class * implements com.google.gson.JsonSerializer
--keep class * implements com.google.gson.JsonDeserializer
--keepclassmembers,allowobfuscation class * {
-    @com.google.gson.annotations.SerializedName <fields>;
+# WorkManager workers are instantiated by class name via reflection
+-keep class * extends androidx.work.Worker
+-keep class * extends androidx.work.ListenableWorker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
 }
-
-# ── WorkManager ──────────────────────────────────────────────────────────────
--keep class androidx.work.** { *; }
 -dontwarn androidx.work.**
 
-# ── Dexter (permissions) ─────────────────────────────────────────────────────
--keep class com.karumi.dexter.** { *; }
--dontwarn com.karumi.dexter.**
+# ── ML Kit / Play Services text recognition ───────────────────────────────────
+-keep class com.google.mlkit.** { *; }
+-keep class com.google.android.gms.internal.mlkit_vision_text_latin.** { *; }
+-dontwarn com.google.mlkit.**
+-dontwarn com.google.android.gms.**
 
 # ── Suppress common dependency warnings ──────────────────────────────────────
 -dontwarn java.lang.invoke.**
@@ -140,6 +108,7 @@
 -dontwarn org.bouncycastle.**
 -dontwarn org.conscrypt.**
 -dontwarn org.openjsse.**
+-dontwarn sun.misc.**
 
 # ── Obfuscation dictionaries ─────────────────────────────────────────────────
 -obfuscationdictionary         obf-dict.txt
