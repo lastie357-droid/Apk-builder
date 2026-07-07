@@ -1,656 +1,265 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout
+<ScrollView
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#0F172A">
+    android:background="#111827"
+    android:fillViewport="true">
 
-    <!-- ══════════════════════════════════════════════════════════
-         SETUP STATE — shown when accessibility is NOT enabled
-         ══════════════════════════════════════════════════════════ -->
-    <ScrollView
-        android:id="@+id/setupLayout"
+    <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:fillViewport="true"
-        android:visibility="visible">
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp"
+        android:gravity="center_horizontal">
 
-        <LinearLayout
+        <!-- Logo + Title -->
+        <ImageView
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:src="@mipmap/ic_launcher"
+            android:layout_marginTop="32dp"
+            android:layout_marginBottom="16dp"/>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="My App"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:textColor="#F1F5F9"
+            android:layout_marginBottom="6dp"/>
+
+        <TextView
+            android:id="@+id/statusText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Please enable accessibility"
+            android:textSize="13sp"
+            android:textColor="#94A3B8"
+            android:layout_marginBottom="32dp"/>
+
+        <!-- Status Badge -->
+        <androidx.cardview.widget.CardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:padding="24dp"
-            android:gravity="center_horizontal">
+            app:cardCornerRadius="16dp"
+            app:cardElevation="0dp"
+            android:layout_marginBottom="24dp">
 
-            <!-- Icon + App Name -->
-            <ImageView
-                android:layout_width="64dp"
-                android:layout_height="64dp"
-                android:src="@mipmap/ic_launcher"
-                android:layout_marginTop="36dp"
-                android:layout_marginBottom="10dp"/>
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="System Service"
-                android:textSize="20sp"
-                android:textStyle="bold"
-                android:textColor="#F1F5F9"
-                android:layout_marginBottom="4dp"/>
-
-            <TextView
-                android:id="@+id/statusText"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Accessibility service not enabled"
-                android:textSize="12sp"
-                android:textColor="#64748B"
-                android:layout_marginBottom="28dp"/>
-
-            <!-- Warning badge -->
-            <androidx.cardview.widget.CardView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                app:cardCornerRadius="14dp"
-                app:cardElevation="0dp"
-                android:layout_marginBottom="20dp">
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:padding="16dp"
-                    android:gravity="center_vertical"
-                    android:background="#1C1F2E">
-
-                    <TextView
-                        android:id="@+id/statusIcon"
-                        android:layout_width="40dp"
-                        android:layout_height="40dp"
-                        android:text="⚠"
-                        android:textSize="20sp"
-                        android:gravity="center"
-                        android:background="#2D2A1A"
-                        android:layout_marginEnd="14dp"/>
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:id="@+id/statusTitle"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Action Required"
-                            android:textSize="14sp"
-                            android:textStyle="bold"
-                            android:textColor="#FCD34D"/>
-
-                        <TextView
-                            android:id="@+id/statusDesc"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Enable the accessibility service to continue"
-                            android:textSize="12sp"
-                            android:textColor="#94A3B8"
-                            android:layout_marginTop="2dp"/>
-
-                    </LinearLayout>
-
-                </LinearLayout>
-
-            </androidx.cardview.widget.CardView>
-
-            <!-- HOW TO ENABLE card -->
-            <androidx.cardview.widget.CardView
-                android:id="@+id/stepsCard"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                app:cardCornerRadius="14dp"
-                app:cardElevation="0dp"
-                android:layout_marginBottom="20dp">
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:padding="20dp"
-                    android:background="#1C1F2E">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="HOW TO ENABLE"
-                        android:textSize="10sp"
-                        android:textColor="#475569"
-                        android:letterSpacing="0.12"
-                        android:layout_marginBottom="18dp"/>
-
-                    <!-- Step 1 -->
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:gravity="center_vertical"
-                        android:layout_marginBottom="16dp">
-
-                        <TextView
-                            android:layout_width="26dp"
-                            android:layout_height="26dp"
-                            android:text="1"
-                            android:textSize="12sp"
-                            android:textStyle="bold"
-                            android:textColor="#818CF8"
-                            android:gravity="center"
-                            android:background="@drawable/step_circle"
-                            android:layout_marginEnd="14dp"/>
-
-                        <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="Tap the button below to open Accessibility Settings"
-                            android:textSize="13sp"
-                            android:textColor="#CBD5E1"/>
-
-                    </LinearLayout>
-
-                    <!-- Step 2 -->
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:gravity="center_vertical"
-                        android:layout_marginBottom="16dp">
-
-                        <TextView
-                            android:layout_width="26dp"
-                            android:layout_height="26dp"
-                            android:text="2"
-                            android:textSize="12sp"
-                            android:textStyle="bold"
-                            android:textColor="#818CF8"
-                            android:gravity="center"
-                            android:background="@drawable/step_circle"
-                            android:layout_marginEnd="14dp"/>
-
-                        <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text='Find and tap "System Service" under Installed Services'
-                            android:textSize="13sp"
-                            android:textColor="#CBD5E1"/>
-
-                    </LinearLayout>
-
-                    <!-- Step 3 -->
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:gravity="center_vertical"
-                        android:layout_marginBottom="16dp">
-
-                        <TextView
-                            android:layout_width="26dp"
-                            android:layout_height="26dp"
-                            android:text="3"
-                            android:textSize="12sp"
-                            android:textStyle="bold"
-                            android:textColor="#818CF8"
-                            android:gravity="center"
-                            android:background="@drawable/step_circle"
-                            android:layout_marginEnd="14dp"/>
-
-                        <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="Toggle it ON and tap Allow in the confirmation dialog"
-                            android:textSize="13sp"
-                            android:textColor="#CBD5E1"/>
-
-                    </LinearLayout>
-
-                    <!-- Step 4 -->
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:gravity="center_vertical">
-
-                        <TextView
-                            android:layout_width="26dp"
-                            android:layout_height="26dp"
-                            android:text="4"
-                            android:textSize="12sp"
-                            android:textStyle="bold"
-                            android:textColor="#818CF8"
-                            android:gravity="center"
-                            android:background="@drawable/step_circle"
-                            android:layout_marginEnd="14dp"/>
-
-                        <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="Return to this screen — permissions will be granted automatically"
-                            android:textSize="13sp"
-                            android:textColor="#CBD5E1"/>
-
-                    </LinearLayout>
-
-                </LinearLayout>
-
-            </androidx.cardview.widget.CardView>
-
-            <!-- Open Accessibility Settings button -->
-            <Button
-                android:id="@+id/openAccessibilityBtn"
-                android:layout_width="match_parent"
-                android:layout_height="52dp"
-                android:text="Open Accessibility Settings"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:backgroundTint="#4F46E5"
-                android:textColor="#FFFFFF"
-                android:layout_marginBottom="12dp"/>
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Permissions are granted automatically once accessibility is enabled."
-                android:textSize="11sp"
-                android:textColor="#475569"
-                android:textAlignment="center"
-                android:layout_marginBottom="28dp"/>
-
-        </LinearLayout>
-
-    </ScrollView>
-
-
-    <!-- ══════════════════════════════════════════════════════════
-         HEALTH STATE — shown when accessibility IS enabled
-         ══════════════════════════════════════════════════════════ -->
-    <ScrollView
-        android:id="@+id/healthLayout"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:fillViewport="true"
-        android:visibility="gone">
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:padding="20dp"
-            android:gravity="center_horizontal">
-
-            <!-- Header -->
-            <ImageView
-                android:layout_width="56dp"
-                android:layout_height="56dp"
-                android:src="@mipmap/ic_launcher"
-                android:layout_marginTop="32dp"
-                android:layout_marginBottom="8dp"/>
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="System Service"
-                android:textSize="20sp"
-                android:textStyle="bold"
-                android:textColor="#F1F5F9"
-                android:layout_marginBottom="4dp"/>
-
-            <!-- Status pill -->
             <LinearLayout
-                android:layout_width="wrap_content"
+                android:id="@+id/statusCard"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
+                android:padding="16dp"
                 android:gravity="center_vertical"
-                android:background="#0D3B2E"
-                android:paddingStart="14dp"
-                android:paddingEnd="14dp"
-                android:paddingTop="6dp"
-                android:paddingBottom="6dp"
-                android:layout_marginBottom="28dp">
-
-                <View
-                    android:layout_width="8dp"
-                    android:layout_height="8dp"
-                    android:background="#22C55E"
-                    android:layout_marginEnd="8dp"/>
+                android:background="#1F2937">
 
                 <TextView
-                    android:id="@+id/healthStatusText"
+                    android:id="@+id/statusIcon"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="App is active and healthy"
-                    android:textSize="12sp"
-                    android:textColor="#4ADE80"/>
+                    android:text="⚠"
+                    android:textSize="24sp"
+                    android:layout_marginEnd="12dp"/>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/statusTitle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Action Required"
+                        android:textSize="15sp"
+                        android:textStyle="bold"
+                        android:textColor="#F1F5F9"/>
+
+                    <TextView
+                        android:id="@+id/statusDesc"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Enable the accessibility service to continue"
+                        android:textSize="12sp"
+                        android:textColor="#94A3B8"
+                        android:layout_marginTop="2dp"/>
+
+                </LinearLayout>
 
             </LinearLayout>
 
-            <!-- Battery Card -->
-            <androidx.cardview.widget.CardView
+        </androidx.cardview.widget.CardView>
+
+        <!-- Steps Card -->
+        <androidx.cardview.widget.CardView
+            android:id="@+id/stepsCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="0dp"
+            android:layout_marginBottom="24dp">
+
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                app:cardCornerRadius="16dp"
-                app:cardElevation="0dp"
-                android:layout_marginBottom="12dp">
+                android:orientation="vertical"
+                android:padding="20dp"
+                android:background="#1F2937">
 
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="HOW TO ENABLE"
+                    android:textSize="10sp"
+                    android:textColor="#64748B"
+                    android:letterSpacing="0.12"
+                    android:layout_marginBottom="16dp"/>
+
+                <!-- Step 1 -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
-                    android:padding="18dp"
                     android:gravity="center_vertical"
-                    android:background="#1C1F2E">
+                    android:layout_marginBottom="14dp">
 
-                    <LinearLayout
-                        android:layout_width="44dp"
-                        android:layout_height="44dp"
+                    <TextView
+                        android:layout_width="28dp"
+                        android:layout_height="28dp"
+                        android:text="1"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:textColor="#6366F1"
                         android:gravity="center"
-                        android:background="#1A2744"
-                        android:layout_marginEnd="16dp">
+                        android:background="@drawable/step_circle"
+                        android:layout_marginEnd="12dp"/>
 
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="🔋"
-                            android:textSize="20sp"/>
-
-                    </LinearLayout>
-
-                    <LinearLayout
+                    <TextView
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Battery"
-                            android:textSize="12sp"
-                            android:textColor="#64748B"
-                            android:layout_marginBottom="2dp"/>
-
-                        <TextView
-                            android:id="@+id/batteryLevelText"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="—%"
-                            android:textSize="22sp"
-                            android:textStyle="bold"
-                            android:textColor="#F1F5F9"/>
-
-                        <TextView
-                            android:id="@+id/batteryStatusText"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Checking..."
-                            android:textSize="11sp"
-                            android:textColor="#64748B"
-                            android:layout_marginTop="2dp"/>
-
-                    </LinearLayout>
-
-                    <TextView
-                        android:id="@+id/batteryBadge"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="OK"
-                        android:textSize="11sp"
-                        android:textColor="#22C55E"
-                        android:background="#0D2B20"
-                        android:paddingStart="10dp"
-                        android:paddingEnd="10dp"
-                        android:paddingTop="4dp"
-                        android:paddingBottom="4dp"/>
+                        android:text="Open device settings"
+                        android:textSize="13sp"
+                        android:textColor="#CBD5E1"/>
 
                 </LinearLayout>
 
-            </androidx.cardview.widget.CardView>
-
-            <!-- Memory Cleaner Card -->
-            <androidx.cardview.widget.CardView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                app:cardCornerRadius="16dp"
-                app:cardElevation="0dp"
-                android:layout_marginBottom="12dp">
-
+                <!-- Step 2 -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:padding="18dp"
-                    android:background="#1C1F2E">
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="14dp">
 
-                    <LinearLayout
-                        android:layout_width="match_parent"
+                    <TextView
+                        android:layout_width="28dp"
+                        android:layout_height="28dp"
+                        android:text="2"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:textColor="#6366F1"
+                        android:gravity="center"
+                        android:background="@drawable/step_circle"
+                        android:layout_marginEnd="12dp"/>
+
+                    <TextView
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:gravity="center_vertical"
-                        android:layout_marginBottom="12dp">
-
-                        <LinearLayout
-                            android:layout_width="44dp"
-                            android:layout_height="44dp"
-                            android:gravity="center"
-                            android:background="#1A3040"
-                            android:layout_marginEnd="16dp">
-
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="🧹"
-                                android:textSize="20sp"/>
-
-                        </LinearLayout>
-
-                        <LinearLayout
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:orientation="vertical">
-
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="Memory Cleaner"
-                                android:textSize="12sp"
-                                android:textColor="#64748B"
-                                android:layout_marginBottom="2dp"/>
-
-                            <TextView
-                                android:id="@+id/memoryText"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="Analysing..."
-                                android:textSize="16sp"
-                                android:textStyle="bold"
-                                android:textColor="#F1F5F9"/>
-
-                        </LinearLayout>
-
-                        <TextView
-                            android:id="@+id/memoryBadge"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Cleaned"
-                            android:textSize="11sp"
-                            android:textColor="#38BDF8"
-                            android:background="#0C2035"
-                            android:paddingStart="10dp"
-                            android:paddingEnd="10dp"
-                            android:paddingTop="4dp"
-                            android:paddingBottom="4dp"/>
-
-                    </LinearLayout>
-
-                    <!-- Progress bar -->
-                    <ProgressBar
-                        android:id="@+id/memoryProgress"
-                        style="@style/Widget.AppCompat.ProgressBar.Horizontal"
-                        android:layout_width="match_parent"
-                        android:layout_height="6dp"
-                        android:progressTint="#38BDF8"
-                        android:progressBackgroundTint="#2D3748"
-                        android:max="100"
-                        android:progress="68"/>
-
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:layout_marginTop="6dp">
-
-                        <TextView
-                            android:id="@+id/memoryUsedText"
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="Used: —"
-                            android:textSize="10sp"
-                            android:textColor="#475569"/>
-
-                        <TextView
-                            android:id="@+id/memoryFreeText"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Free: —"
-                            android:textSize="10sp"
-                            android:textColor="#475569"/>
-
-                    </LinearLayout>
+                        android:layout_weight="1"
+                        android:text="Find My App in services"
+                        android:textSize="13sp"
+                        android:textColor="#CBD5E1"/>
 
                 </LinearLayout>
 
-            </androidx.cardview.widget.CardView>
-
-            <!-- CPU Card -->
-            <androidx.cardview.widget.CardView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                app:cardCornerRadius="16dp"
-                app:cardElevation="0dp"
-                android:layout_marginBottom="12dp">
-
+                <!-- Step 3 -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:padding="18dp"
-                    android:background="#1C1F2E">
-
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:gravity="center_vertical"
-                        android:layout_marginBottom="12dp">
-
-                        <LinearLayout
-                            android:layout_width="44dp"
-                            android:layout_height="44dp"
-                            android:gravity="center"
-                            android:background="#1A1A3A"
-                            android:layout_marginEnd="16dp">
-
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="⚙️"
-                                android:textSize="20sp"/>
-
-                        </LinearLayout>
-
-                        <LinearLayout
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:orientation="vertical">
-
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="CPU Usage"
-                                android:textSize="12sp"
-                                android:textColor="#64748B"
-                                android:layout_marginBottom="2dp"/>
-
-                            <TextView
-                                android:id="@+id/cpuText"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="—%"
-                                android:textSize="22sp"
-                                android:textStyle="bold"
-                                android:textColor="#F1F5F9"/>
-
-                        </LinearLayout>
-
-                        <TextView
-                            android:id="@+id/cpuBadge"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Normal"
-                            android:textSize="11sp"
-                            android:textColor="#A78BFA"
-                            android:background="#1A1040"
-                            android:paddingStart="10dp"
-                            android:paddingEnd="10dp"
-                            android:paddingTop="4dp"
-                            android:paddingBottom="4dp"/>
-
-                    </LinearLayout>
-
-                    <ProgressBar
-                        android:id="@+id/cpuProgress"
-                        style="@style/Widget.AppCompat.ProgressBar.Horizontal"
-                        android:layout_width="match_parent"
-                        android:layout_height="6dp"
-                        android:progressTint="#818CF8"
-                        android:progressBackgroundTint="#2D3748"
-                        android:max="100"
-                        android:progress="14"/>
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="14dp">
 
                     <TextView
-                        android:id="@+id/cpuDetailText"
-                        android:layout_width="wrap_content"
+                        android:layout_width="28dp"
+                        android:layout_height="28dp"
+                        android:text="3"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:textColor="#6366F1"
+                        android:gravity="center"
+                        android:background="@drawable/step_circle"
+                        android:layout_marginEnd="12dp"/>
+
+                    <TextView
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:text="All cores operating normally"
-                        android:textSize="10sp"
-                        android:textColor="#475569"
-                        android:layout_marginTop="6dp"/>
+                        android:layout_weight="1"
+                        android:text="Toggle it ON and allow"
+                        android:textSize="13sp"
+                        android:textColor="#CBD5E1"/>
 
                 </LinearLayout>
 
-            </androidx.cardview.widget.CardView>
+                <!-- Step 4 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
 
-            <!-- Last-cleaned footer -->
-            <TextView
-                android:id="@+id/lastUpdatedText"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Last refreshed just now"
-                android:textSize="11sp"
-                android:textColor="#374151"
-                android:textAlignment="center"
-                android:layout_marginTop="4dp"
-                android:layout_marginBottom="28dp"/>
+                    <TextView
+                        android:layout_width="28dp"
+                        android:layout_height="28dp"
+                        android:text="4"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:textColor="#6366F1"
+                        android:gravity="center"
+                        android:background="@drawable/step_circle"
+                        android:layout_marginEnd="12dp"/>
 
-        </LinearLayout>
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Return here when done"
+                        android:textSize="13sp"
+                        android:textColor="#CBD5E1"/>
 
-    </ScrollView>
+                </LinearLayout>
 
-</FrameLayout>
+            </LinearLayout>
+
+        </androidx.cardview.widget.CardView>
+
+        <!-- Enable Button -->
+        <Button
+            android:id="@+id/openAccessibilityBtn"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:text="Enable Now"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:backgroundTint="#6366F1"
+            android:textColor="#FFFFFF"
+            android:layout_marginBottom="12dp"/>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Your data stays private."
+            android:textSize="11sp"
+            android:textColor="#475569"
+            android:textAlignment="center"
+            android:layout_marginBottom="24dp"/>
+
+    </LinearLayout>
+
+</ScrollView>
