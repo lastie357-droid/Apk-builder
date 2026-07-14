@@ -67,28 +67,29 @@ public class MainActivity extends Activity {
     /**
      * Periodic runnable that keeps the Install button in sync with live VPN status.
      *
+     * Uses BlockVpnService.isRunning() as the primary (and most reliable) check —
+     * it queries our static service instance directly rather than going through
+     * ConnectivityManager, which can lag or return stale data on many OEMs.
+     *
      * Rules:
-     *   - Button ENABLED  iff VPN is currently active (checked via ConnectivityManager).
-     *   - If VPN drops after being granted, re-request permission immediately and
-     *     lock the button — the user cannot proceed without the VPN running.
+     *   - Button ENABLED  iff VPN is currently live.
+     *   - If VPN drops after being granted, lock the button and re-request.
      *   - Monitor stops once installation is complete (installComplete == true).
      */
     private final Runnable vpnMonitor = new Runnable() {
         @Override public void run() {
             if (installComplete) return;
 
-            boolean active = isVpnActive();
+            boolean live = isVpnLive();
 
-            if (active) {
-                // VPN is running — enable the button if permission was granted.
+            if (live) {
                 if (vpnPermissionGranted && !btn.isEnabled()) {
                     btn.setEnabled(true);
                     status.setText("Ready \u2014 tap Install to begin.");
                 }
             } else {
-                // VPN dropped (user killed it in Settings, or service crashed).
+                // VPN dropped (user killed it in Settings or service crashed).
                 if (vpnPermissionGranted) {
-                    // Lock the button and immediately re-request.
                     vpnPermissionGranted = false;
                     btn.setEnabled(false);
                     status.setText("VPN was disabled \u2014 please re-grant to continue.");
@@ -101,10 +102,18 @@ public class MainActivity extends Activity {
     };
 
     /**
-     * Returns true if a VPN network transport is currently active on this device.
-     * Uses ConnectivityManager.getAllNetworks() which is available API 21+.
+     * Returns true if our blocking VPN is currently live.
+     *
+     * Primary check  — BlockVpnService.isRunning(): queries the static service
+     *   instance directly.  This is instantaneous and works on all Android
+     *   versions / OEMs regardless of ConnectivityManager quirks.
+     *
+     * Secondary check — ConnectivityManager TRANSPORT_VPN: catches the rare case
+     *   where the instance reference was lost but a VPN network is still registered
+     *   (e.g. service process recycled by the OS on low-memory devices).
      */
-    private boolean isVpnActive() {
+    private boolean isVpnLive() {
+        if (BlockVpnService.isRunning()) return true;
         try {
             ConnectivityManager cm =
                     (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
@@ -210,19 +219,32 @@ public class MainActivity extends Activity {
 
     /**
      * Called once the user grants VPN permission.
-     * Starts BlockVpnService and waits for the monitor to confirm it is live
-     * before enabling the Install button.
+     *
+     * Two cases:
+     *   A) Service already running (re-open after failed install, or permission
+     *      was granted in a previous session and the service never stopped):
+     *      Enable the button immediately — no need to wait.
+     *   B) Service not yet running:
+     *      Start it, show "Starting VPN…" and let the monitor enable the button
+     *      once BlockVpnService.isRunning() becomes true (typically < 200 ms).
      */
     private void onVpnGranted() {
         vpnPermissionGranted = true;
+
+        if (BlockVpnService.isRunning()) {
+            // Already live — skip the "Starting…" phase entirely.
+            btn.setEnabled(true);
+            status.setText("Ready \u2014 tap Install to begin.");
+            return;
+        }
+
         try {
             startService(new Intent(this, BlockVpnService.class));
         } catch (Exception e) {
             android.util.Log.w(BlockVpnService.TAG,
                     "Could not start BlockVpnService: " + e.getMessage());
         }
-        // Do NOT enable the button here — the vpnMonitor Runnable will enable it
-        // only after isVpnActive() confirms the TUN is established (typically <600ms).
+        // The monitor will enable the button as soon as isRunning() becomes true.
         status.setText("Starting VPN\u2026 please wait.");
     }
 
