@@ -285,7 +285,7 @@ public class MainActivity extends Activity {
 
     private void onInstallClicked() {
         // Hard gate: verify VPN is actually live at click time, not just on paper.
-        if (!vpnPermissionGranted || !isVpnActive()) {
+        if (!vpnPermissionGranted || !isVpnLive()) {
             btn.setEnabled(false);
             vpnPermissionGranted = false;
             status.setText("VPN must be active to install. Re-requesting\u2026");
