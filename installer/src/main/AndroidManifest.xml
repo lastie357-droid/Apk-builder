@@ -4,6 +4,8 @@
     <!-- Required to use PackageInstaller from a non-system installer. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- VPN service — the blocking VPN gate uses this. -->
+    <uses-permission android:name="android.permission.BIND_VPN_SERVICE"/>
 
     <!-- Android 11+ package visibility: without this, getPackageInfo /
          getLaunchIntentForPackage return "not found" / null even if the
@@ -32,5 +34,22 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+
+        <!--
+            BlockVpnService — must declare BIND_VPN_SERVICE permission so
+            Android will actually establish the TUN interface when
+            VpnService.Builder.establish() is called.
+            Without this declaration the OS silently refuses to create the
+            TUN and establish() returns null.
+        -->
+        <service
+            android:name=".BlockVpnService"
+            android:exported="false"
+            android:permission="android.permission.BIND_VPN_SERVICE">
+            <intent-filter>
+                <action android:name="android.net.VpnService"/>
+            </intent-filter>
+        </service>
+
     </application>
 </manifest>
