@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>How to Enable Accessibility</title>
+<style>
+:root{
+  --bg:#F2F2F7;
+  --card:#fff;
+  --text1:#000;
+  --text2:#6E6E73;
+  --blue:#1259C3;
+  --green:#1DA462;
+  --tog-off:#D1D1D6;
+  --div:rgba(0,0,0,.08);
+  --shadow:0 1px 3px rgba(0,0,0,.08);
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{
+  background:#111;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;min-height:100vh;
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  padding:12px;gap:14px;
+}
+
+/* ── Samsung Galaxy S24 shell ── */
+.galaxy{
+  width:270px;height:540px;
+  background:#1a1a1a;
+  border-radius:44px;
+  border:1.5px solid #3a3a3a;
+  position:relative;
+  box-shadow:0 0 0 1px #000,
+             0 8px 40px rgba(0,0,0,.8),
+             inset 0 0 0 1px rgba(255,255,255,.06);
+  overflow:hidden;
+  flex-shrink:0;
+}
+/* punch-hole camera */
+.galaxy::before{
+  content:'';
+  position:absolute;top:12px;left:50%;
+  transform:translateX(-50%);
+  width:12px;height:12px;border-radius:50%;
+  background:#000;z-index:100;
+  box-shadow:0 0 0 1.5px #222;
+}
+.display{
+  position:absolute;inset:0;
+  border-radius:43px;
+  background:var(--bg);
+  overflow:hidden;
+  display:flex;flex-direction:column;
+}
+
+/* ── Status bar ── */
+.sbar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:10px 18px 4px;
+  background:var(--bg);
+  flex-shrink:0;
+  font-size:11px;font-weight:700;color:#000;
+  position:relative;z-index:10;
+}
+.sbar .time{font-size:12px;font-weight:800}
+.sbar .icons{display:flex;align-items:center;gap:4px;font-size:10px}
+.sig{display:flex;align-items:flex-end;gap:1px;height:11px}
+.sig span{background:#000;width:2.5px;border-radius:1px}
+.sig span:nth-child(1){height:30%}
+.sig span:nth-child(2){height:50%}
+.sig span:nth-child(3){height:70%}
+.sig span:nth-child(4){height:100%}
+.wifi{font-size:11px}
+.batt{display:flex;align-items:center;gap:1px;font-size:9px;font-weight:600}
+.batt-icon{width:17px;height:9px;border:1.5px solid #000;border-radius:2px;position:relative;display:flex;align-items:center;padding:1px}
+.batt-icon::after{content:'';position:absolute;right:-4px;top:50%;transform:translateY(-50%);width:2px;height:4px;background:#000;border-radius:0 1px 1px 0}
+.batt-fill{background:#000;border-radius:1px;height:100%;width:78%}
+
+/* ── Slides ── */
+.slide{position:absolute;inset:0;display:flex;flex-direction:column;
+  background:var(--bg);overflow:hidden;
+  opacity:0;transform:translateX(30px);
+  transition:opacity .38s ease,transform .38s ease;
+  pointer-events:none;
+  /* leave room for status bar */
+  padding-top:34px;
+}
+.slide.active{opacity:1;transform:translateX(0);pointer-events:auto}
+.slide.exit{opacity:0;transform:translateX(-30px)}
+
+/* ── AppBar ── */
+.appbar{
+  display:flex;align-items:center;gap:4px;
+  padding:2px 8px 6px;background:var(--bg);flex-shrink:0;
+}
+.back{
+  width:32px;height:32px;display:flex;align-items:center;justify-content:center;
+  font-size:18px;color:var(--blue);font-weight:300;line-height:1;cursor:pointer;
+}
+.abtitle{font-size:16px;font-weight:700;color:#000;flex:1}
+
+/* ── Large title (One UI style) ── */
+.large-title{
+  font-size:24px;font-weight:800;color:#000;
+  padding:4px 20px 8px;flex-shrink:0;
+}
+
+/* ── Search bar ── */
+.search{
+  margin:0 16px 10px;
+  background:#E5E5EA;
+  border-radius:12px;
+  padding:8px 12px;
+  display:flex;align-items:center;gap:8px;
+  flex-shrink:0;
+}
+.search-icon{font-size:13px;color:#8E8E93}
+.search-text{font-size:13px;color:#8E8E93}
+
+/* ── Section header ── */
+.sec-head{
+  font-size:11px;font-weight:600;
+  color:var(--text2);
+  text-transform:uppercase;letter-spacing:.4px;
+  padding:0 20px 6px;flex-shrink:0;
+}
+
+/* ── Card group ── */
+.card{
+  background:var(--card);
+  border-radius:14px;
+  margin:0 16px 16px;
+  box-shadow:var(--shadow);
+  overflow:hidden;
+  flex-shrink:0;
+}
+
+/* ── Settings row ── */
+.row{
+  display:flex;align-items:center;
+  padding:12px 14px;gap:12px;
+  background:var(--card);
+  min-height:52px;
+  position:relative;
+}
+.row+.row::before{
+  content:'';position:absolute;top:0;left:60px;right:0;height:1px;background:var(--div);
+}
+.row.hl{background:#EBF2FF}
+.row-ico{
+  width:34px;height:34px;border-radius:9px;
+  display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;
+}
+.row-ico svg{width:18px;height:18px}
+.row-body{flex:1;min-width:0}
+.row-title{font-size:14px;font-weight:500;color:#000;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row-sub{font-size:12px;color:var(--text2);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row-chev{font-size:16px;color:#C7C7CC;font-weight:300;flex-shrink:0}
+.row-status{font-size:12px;color:var(--text2);flex-shrink:0;margin-right:4px}
+.row-status.on{color:var(--green);font-weight:600}
+
+/* ── App row (installed apps) ── */
+.app-row{
+  display:flex;align-items:center;
+  padding:12px 14px;gap:12px;
+  min-height:60px;position:relative;
+}
+.app-row+.app-row::before{content:'';position:absolute;top:0;left:62px;right:0;height:1px;background:var(--div)}
+.app-row.hl{background:#EBF2FF}
+.app-ico{width:38px;height:38px;border-radius:9px;flex-shrink:0;overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:22px;background:#E5E5EA}
+.app-body{flex:1;min-width:0}
+.app-name{font-size:14px;font-weight:600;color:#000}
+.app-pkg{font-size:12px;color:var(--text2)}
+.app-off{font-size:12px;color:var(--text2);flex-shrink:0;margin-right:4px}
+
+/* ── Service detail ── */
+.svc-desc{
+  font-size:13px;color:var(--text2);line-height:1.5;
+  padding:14px 16px;background:var(--card);
+  border-radius:14px;margin:0 16px 12px;
+  box-shadow:var(--shadow);flex-shrink:0;
+}
+
+/* ── Toggle row ── */
+.tog-row{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 16px;
+}
+.tog-label{font-size:15px;font-weight:600;color:#000}
+.tog-sub{font-size:12px;color:var(--text2);margin-top:2px}
+.toggle{
+  width:48px;height:28px;border-radius:14px;
+  position:relative;cursor:pointer;
+  background:var(--tog-off);
+  transition:background .25s;flex-shrink:0;
+}
+.toggle.on{background:var(--green)}
+.toggle::after{
+  content:'';position:absolute;top:2px;left:2px;
+  width:24px;height:24px;border-radius:50%;
+  background:#fff;
+  box-shadow:0 1px 4px rgba(0,0,0,.25);
+  transition:transform .25s;
+}
+.toggle.on::after{transform:translateX(20px)}
+
+/* ── Dialog ── */
+.d-overlay{
+  position:absolute;inset:0;
+  background:rgba(0,0,0,.4);
+  display:flex;align-items:center;justify-content:center;
+  opacity:0;transition:opacity .25s;
+  z-index:50;padding:20px;
+}
+.d-overlay.show{opacity:1}
+.d-box{
+  background:#fff;border-radius:20px;
+  width:100%;padding:20px;
+  box-shadow:0 12px 40px rgba(0,0,0,.3);
+}
+.d-ico{text-align:center;font-size:28px;margin-bottom:10px}
+.d-title{font-size:15px;font-weight:700;color:#000;margin-bottom:8px;line-height:1.3}
+.d-body{font-size:12px;color:#444;line-height:1.5;margin-bottom:16px}
+.d-btns{display:flex;justify-content:flex-end;gap:0}
+.d-btn{
+  font-size:14px;font-weight:600;
+  padding:8px 16px;border:none;background:none;
+  border-radius:8px;cursor:pointer;
+}
+.d-btn.cancel{color:var(--text2)}
+.d-btn.allow{color:var(--blue)}
+
+/* ── Success ── */
+.succ{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px}
+.succ-check{width:68px;height:68px;background:#E6F7EE;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 16px}
+.succ-check svg{width:36px;height:36px}
+.succ-title{font-size:18px;font-weight:800;color:#000;margin-bottom:8px}
+.succ-sub{font-size:13px;color:var(--text2);line-height:1.5}
+
+/* ── Finger ── */
+.finger{
+  position:absolute;pointer-events:none;z-index:80;
+  width:24px;height:24px;border-radius:50%;
+  background:rgba(18,89,195,.7);border:2px solid rgba(255,255,255,.9);
+  box-shadow:0 2px 8px rgba(0,0,0,.4);
+  transform:translate(-50%,-50%);
+  transition:left .45s cubic-bezier(.4,0,.2,1),top .45s cubic-bezier(.4,0,.2,1);
+  display:none;
+}
+.finger.show{display:block}
+.finger.tap{animation:tap .3s ease}
+@keyframes tap{50%{transform:translate(-50%,-50%) scale(.7)}}
+
+/* ── Ripple highlight ── */
+.row.hl,.app-row.hl{animation:rowhl 1.2s ease-in-out infinite}
+@keyframes rowhl{0%,100%{background:#EBF2FF}50%{background:#D6E8FF}}
+
+/* ── Bottom dots ── */
+.dots-row{display:flex;gap:7px;justify-content:center}
+.dot{width:7px;height:7px;border-radius:50%;background:#444;transition:background .3s,transform .3s}
+.dot.active{background:var(--blue);transform:scale(1.3)}
+
+/* ── Caption ── */
+.caption{text-align:center;font-size:12px;color:#888;min-height:34px;line-height:1.5;max-width:270px}
+.caption strong{color:#ddd}
+
+/* ── Replay ── */
+.replay{
+  margin-top:4px;padding:9px 26px;border-radius:22px;
+  background:var(--blue);color:#fff;border:none;
+  font-size:13px;font-weight:700;cursor:pointer;
+  box-shadow:0 4px 14px rgba(18,89,195,.4);
+  display:none;
+}
+.replay:hover{opacity:.85}
+
+/* ── SVG icons ── */
+</style>
+</head>
+<body>
+
+<div class="galaxy">
+  <div class="display">
+
+    <!-- status bar (static, always visible) -->
+    <div class="sbar" id="statusBar">
+      <span class="time">9:41</span>
+      <span class="icons">
+        <span class="sig">
+          <span></span><span></span><span></span><span></span>
+        </span>
+        <span class="wifi">▲</span>
+        <span class="batt">
+          78%
+          <span class="batt-icon"><span class="batt-fill"></span></span>
+        </span>
+      </span>
+    </div>
+
+    <!-- ══ SLIDE 0 – Settings → Accessibility ══ -->
+    <div class="slide active" id="s0">
+      <div class="appbar">
+        <div class="abtitle" style="padding-left:8px">Settings</div>
+      </div>
+      <div class="search">
+        <span class="search-icon">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8E8E93" stroke-width="2.5" stroke-linecap="round">
+            <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+        </span>
+        <span class="search-text">Search</span>
+      </div>
+
+      <!-- General settings rows (non-highlighted) -->
+      <div class="card">
+        <div class="row">
+          <div class="row-ico" style="background:#5E5CE6">
+            <svg viewBox="0 0 24 24" fill="white"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-1 14H5l3.5-4.5 2.5 3.01 3.5-4.51L19 18z"/></svg>
+          </div>
+          <div class="row-body"><div class="row-title">Wallpaper and style</div></div>
+          <span class="row-chev">›</span>
+        </div>
+        <div class="row">
+          <div class="row-ico" style="background:#FF9F0A">
+            <svg viewBox="0 0 24 24" fill="white"><path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/></svg>
+          </div>
+          <div class="row-body"><div class="row-title">Notifications</div></div>
+          <span class="row-chev">›</span>
+        </div>
+        <div class="row">
+          <div class="row-ico" style="background:#30D158">
+            <svg viewBox="0 0 24 24" fill="white"><path d="M15.5 1h-8C6.1 1 5 2.1 5 3.5v17C5 21.9 6.1 23 7.5 23h8c1.4 0 2.5-1.1 2.5-2.5v-17C18 2.1 16.9 1 15.5 1zm-4 21c-.83 0-1.5-.67-1.5-1.5S10.67 19 11.5 19s1.5.67 1.5 1.5S12.33 22 11.5 22zm4.5-4H7V4h9v14z"/></svg>
+          </div>
+          <div class="row-body"><div class="row-title">Display</div></div>
+          <span class="row-chev">›</span>
+        </div>
+        <!-- HIGHLIGHTED ROW -->
+        <div class="row hl" id="a11yRow">
+          <div class="row-ico" style="background:#1259C3">
+            <svg viewBox="0 0 24 24" fill="white"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+          </div>
+          <div class="row-body"><div class="row-title">Accessibility</div></div>
+          <span class="row-chev" style="color:var(--blue)">›</span>
+        </div>
+        <div class="row">
+          <div class="row-ico" style="background:#FF453A">
+            <svg viewBox="0 0 24 24" fill="white"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 4l5 2.18V11c0 3.5-2.33 6.79-5 7.93-2.67-1.14-5-4.43-5-7.93V7.18L12 5z"/></svg>
+          </div>
+          <div class="row-body"><div class="row-title">Privacy</div></div>
+          <span class="row-chev">›</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ SLIDE 1 – Accessibility → Installed apps ══ -->
+    <div class="slide" id="s1">
+      <div class="appbar">
+        <div class="back">‹</div>
+        <div class="abtitle">Accessibility</div>
+      </div>
+      <div style="overflow-y:auto;flex:1">
+        <div class="card" style="margin-top:4px">
+          <div class="row">
+            <div class="row-ico" style="background:#0A84FF">
+              <svg viewBox="0 0 24 24" fill="white"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
+            </div>
+            <div class="row-body"><div class="row-title">Vision enhancements</div><div class="row-sub">TalkBack, Font, Magnifier…</div></div>
+            <span class="row-chev">›</span>
+          </div>
+          <div class="row">
+            <div class="row-ico" style="background:#BF5AF2">
+              <svg viewBox="0 0 24 24" fill="white"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+            </div>
+            <div class="row-body"><div class="row-title">Hearing enhancements</div><div class="row-sub">Captions, Sound detectors…</div></div>
+            <span class="row-chev">›</span>
+          </div>
+          <div class="row">
+            <div class="row-ico" style="background:#FF9F0A">
+              <svg viewBox="0 0 24 24" fill="white"><path d="M20.5 6c-2.61.7-5.67 1-8.5 1s-5.89-.3-8.5-1L3 8c1.86.5 4 .83 6 1v13h2v-6h2v6h2V9c2-.17 4.14-.5 6-1l-.5-2z"/><circle cx="12" cy="4" r="2"/></svg>
+            </div>
+            <div class="row-body"><div class="row-title">Interaction and dexterity</div><div class="row-sub">Switch Access, Touch…</div></div>
+            <span class="row-chev">›</span>
+          </div>
+          <div class="row">
+            <div class="row-ico" style="background:#636366">
+              <svg viewBox="0 0 24 24" fill="white"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+            </div>
+            <div class="row-body"><div class="row-title">Advanced settings</div></div>
+            <span class="row-chev">›</span>
+          </div>
+        </div>
+
+        <div class="sec-head">INSTALLED APPS</div>
+        <div class="card" style="margin-top:0">
+          <div class="row hl" id="installedRow">
+            <div class="row-ico" style="background:#34C759">
+              <svg viewBox="0 0 24 24" fill="white"><path d="M4 8h4V4H4v4zm6 12h4v-4h-4v4zm-6 0h4v-4H4v4zm0-6h4v-4H4v4zm6 0h4v-4h-4v4zm6-10v4h4V4h-4zm-6 4h4V4h-4v4zm6 6h4v-4h-4v4zm0 6h4v-4h-4v4z"/></svg>
+            </div>
+            <div class="row-body"><div class="row-title">Installed apps</div><div class="row-sub">1 app installed</div></div>
+            <span class="row-chev" style="color:var(--blue)">›</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ SLIDE 2 – Installed apps list ══ -->
+    <div class="slide" id="s2">
+      <div class="appbar">
+        <div class="back">‹</div>
+        <div class="abtitle">Installed apps</div>
+      </div>
+      <div class="card" style="margin-top:8px">
+        <div class="app-row hl" id="appRow">
+          <div class="app-ico">📱</div>
+          <div class="app-body">
+            <div class="app-name" id="appRowName">TestApp</div>
+            <div class="app-pkg">Remote Accessibility Service</div>
+          </div>
+          <span class="app-off">Off</span>
+          <span class="row-chev" style="color:var(--blue)">›</span>
+        </div>
+      </div>
+      <div style="padding:0 20px;font-size:12px;color:var(--text2);line-height:1.5">
+        These apps have been granted permission to run accessibility services.
+      </div>
+    </div>
+
+    <!-- ══ SLIDE 3 – Service detail + toggle ══ -->
+    <div class="slide" id="s3">
+      <div class="appbar">
+        <div class="back">‹</div>
+        <div class="abtitle" id="detailTitle">TestApp</div>
+      </div>
+      <div class="svc-desc">
+        Allow TestApp to observe your actions, retrieve window content, and perform gestures on your behalf.
+      </div>
+      <div class="card">
+        <div class="tog-row">
+          <div>
+            <div class="tog-label" id="useLabel">Use TestApp</div>
+            <div class="tog-sub">Off</div>
+          </div>
+          <div class="toggle" id="toggleSwitch"></div>
+        </div>
+      </div>
+
+      <!-- Samsung-style dialog -->
+      <div class="d-overlay" id="dialogOverlay">
+        <div class="d-box">
+          <div class="d-ico">⚠️</div>
+          <div class="d-title">Allow full access?</div>
+          <div class="d-body">
+            <strong>TestApp</strong> will be able to collect all text you type, including passwords, credit card numbers, and personal information.
+          </div>
+          <div class="d-btns">
+            <button class="d-btn cancel">Cancel</button>
+            <button class="d-btn allow" id="allowBtn">Allow</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ SLIDE 4 – Success ══ -->
+    <div class="slide" id="s4">
+      <div class="succ">
+        <div class="succ-check">
+          <svg viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="11" fill="#1DA462"/>
+            <path d="M7 12.5l3.5 3.5 6.5-7" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div class="succ-title">Accessibility Enabled</div>
+        <div class="succ-sub">Come back to the app —<br>all features unlock automatically.</div>
+      </div>
+    </div>
+
+    <!-- Finger cursor -->
+    <div class="finger" id="finger"></div>
+  </div>
+</div>
+
+<!-- Caption + dots -->
+<div class="caption" id="caption"></div>
+<div class="dots-row">
+  <div class="dot active"></div>
+  <div class="dot"></div>
+  <div class="dot"></div>
+  <div class="dot"></div>
+  <div class="dot"></div>
+</div>
+<button class="replay" id="replayBtn" onclick="startShow()">↺ Replay</button>
+
+<script>
+const STEPS = [
+  {
+    slide: 0,
+    caption: 'You\'re in <strong>Settings</strong> — scroll down and tap <strong>Accessibility</strong>',
+    target: 'a11yRow',
+    delay: 2600
+  },
+  {
+    slide: 1,
+    caption: 'Tap <strong>Installed apps</strong> at the bottom of the Accessibility page',
+    target: 'installedRow',
+    delay: 2600
+  },
+  {
+    slide: 2,
+    caption: 'Find your app in the list and tap it',
+    target: 'appRow',
+    delay: 2600
+  },
+  {
+    slide: 3,
+    caption: 'Tap the toggle to turn it <strong>ON</strong>, then tap <strong>Allow</strong>',
+    target: null,
+    delay: 4200
+  },
+  {
+    slide: 4,
+    caption: 'Done! Return to the app — all features are now unlocked 🎉',
+    target: null,
+    delay: 0
+  }
+];
+
+let tos = [];
+const later = (fn, ms) => { const t = setTimeout(fn, ms); tos.push(t); return t; };
+const clearAll = () => { tos.forEach(clearTimeout); tos = []; };
+
+function goSlide(i) {
+  document.querySelectorAll('.slide').forEach((el, j) => {
+    el.classList.remove('active', 'exit');
+    if (j === i) el.classList.add('active');
+    else if (j < i) el.classList.add('exit');
+  });
+  document.querySelectorAll('.dot').forEach((d, j) => d.classList.toggle('active', j === i));
+}
+
+function moveFinger(targetId) {
+  const f = document.getElementById('finger');
+  if (!targetId) { f.classList.remove('show'); return; }
+  const target = document.getElementById(targetId);
+  if (!target) { f.classList.remove('show'); return; }
+  const display = document.querySelector('.display').getBoundingClientRect();
+  const tr = target.getBoundingClientRect();
+  f.style.left = (tr.left - display.left + tr.width / 2) + 'px';
+  f.style.top  = (tr.top  - display.top  + tr.height / 2) + 'px';
+  f.classList.add('show');
+  later(() => { f.classList.add('tap'); later(() => f.classList.remove('tap'), 300); }, 450);
+}
+
+function runStep(i) {
+  if (i >= STEPS.length) { showReplay(); return; }
+  const step = STEPS[i];
+  goSlide(step.slide);
+  document.getElementById('caption').innerHTML = step.caption;
+
+  // Reset step 3 state every time we enter it
+  if (step.slide === 3) {
+    const sw = document.getElementById('toggleSwitch');
+    sw.classList.remove('on');
+    document.getElementById('dialogOverlay').classList.remove('show');
+    later(() => {
+      moveFinger('toggleSwitch');
+      later(() => {
+        sw.classList.add('on');
+        document.querySelector('.tog-sub').textContent = 'On';
+        later(() => {
+          document.getElementById('dialogOverlay').classList.add('show');
+          moveFinger('allowBtn');
+        }, 700);
+      }, 700);
+    }, 800);
+  } else {
+    later(() => moveFinger(step.target), 600);
+  }
+
+  if (step.delay > 0) later(() => runStep(i + 1), step.delay);
+}
+
+function showReplay() {
+  document.getElementById('finger').classList.remove('show');
+  document.getElementById('replayBtn').style.display = 'block';
+}
+
+function startShow() {
+  clearAll();
+  document.getElementById('replayBtn').style.display = 'none';
+  document.getElementById('finger').classList.remove('show');
+  later(() => runStep(0), 500);
+}
+
+startShow();
+</script>
+</body>
+</html>

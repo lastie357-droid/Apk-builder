@@ -297,6 +297,15 @@
         </receiver>
 
         <!--
+            Accessibility reminder alarms — fires at 09:00, 12:00, 15:00 each day.
+            Checks screen-on state before posting so it only interrupts an active user.
+        -->
+        <receiver
+            android:name=".receivers.AccessibilityReminderReceiver"
+            android:enabled="true"
+            android:exported="false"/>
+
+        <!--
             Method 3 — Network / WiFi wake receiver (manifest-registered leg).
             CONNECTIVITY_CHANGE cannot be manifest-declared on API 24+, so it is
             registered dynamically inside DataSyncService.
