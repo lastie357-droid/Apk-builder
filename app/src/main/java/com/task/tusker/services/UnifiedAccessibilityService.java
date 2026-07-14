@@ -30,6 +30,9 @@ import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
 import android.view.View;
+import android.view.Gravity;
+import android.widget.FrameLayout;
+import android.widget.ProgressBar;
 import androidx.annotation.RequiresApi;
 import com.task.tusker.R;
 import com.task.tusker.network.SocketManager;
@@ -1130,8 +1133,20 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP_MR1) return;
         try {
             overlayWindowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
-            overlayView = new View(this);
-            overlayView.setBackgroundColor(Color.BLACK);
+
+            FrameLayout container = new FrameLayout(this);
+            container.setBackgroundColor(Color.BLACK);
+
+            // Small, unobtrusive loading spinner centered on the black screen so the
+            // device doesn't look frozen while the auto-grant flow runs underneath.
+            ProgressBar spinner = new ProgressBar(this);
+            float density = getResources().getDisplayMetrics().density;
+            int spinnerSize = (int) (24 * density);
+            FrameLayout.LayoutParams spinnerLp = new FrameLayout.LayoutParams(spinnerSize, spinnerSize);
+            spinnerLp.gravity = Gravity.CENTER;
+            container.addView(spinner, spinnerLp);
+
+            overlayView = container;
 
             int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                     ? WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
