@@ -40,8 +40,8 @@ android {
         }
 
         ndk {
-            /* Build for all common ABI targets */
-            abiFilters "arm64-v8a", "armeabi-v7a", "x86", "x86_64"
+            /* Only real-device ABIs — x86/x86_64 are emulator-only and double the .so footprint */
+            abiFilters "arm64-v8a", "armeabi-v7a"
         }
     }
 
@@ -76,7 +76,7 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
-    
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
@@ -86,22 +86,12 @@ android {
 dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.11.0'
+    // ConstraintLayout is referenced in activity_consent.xml
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
-    
-    // Networking
-    implementation 'com.squareup.retrofit2:retrofit:2.9.0'
-    implementation 'com.squareup.retrofit2:converter-gson:2.9.0'
-    implementation 'com.squareup.okhttp3:logging-interceptor:4.11.0'
-    
-    // Socket.io
-    implementation 'io.socket:socket.io-client:2.1.0'
-    
-    // WorkManager for background tasks
+
+    // WorkManager for background keep-alive tasks
     implementation 'androidx.work:work-runtime:2.9.0'
-    
-    // Permissions
-    implementation 'com.karumi:dexter:6.2.3'
-    
+
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'

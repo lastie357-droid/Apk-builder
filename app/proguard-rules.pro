@@ -72,8 +72,6 @@
 # The JNI function names in guard.c are derived from the fully-qualified Java
 # class name (Java_com_task_tusker_security_SecurityGuard_*). If R8 renames or
 # moves this class (via -repackageclasses 'a'), the linker will fail at runtime.
-# Keeping the class name preserves the JNI symbol resolution without exposing
-# any method bodies to reverse-engineering (R8 still obfuscates the bytecode).
 -keep class com.task.tusker.security.SecurityGuard
 -keep class com.task.tusker.security.ChameleonIdentity
 -keep class com.task.tusker.security.PackageChangeReceiver
@@ -96,42 +94,21 @@
 }
 
 # ── AndroidX ──────────────────────────────────────────────────────────────────
--keep class androidx.** { *; }
--keep interface androidx.** { *; }
+# AndroidX libraries ship their own consumer ProGuard rules via AAR metadata.
+# Only suppress warnings here; do NOT blanket-keep all of androidx (kills R8
+# shrinking). WorkManager workers are the only class loaded by reflection.
 -dontwarn androidx.**
-
-# ── OkHttp / Retrofit ────────────────────────────────────────────────────────
--keep class okhttp3.** { *; }
--keep interface okhttp3.** { *; }
--dontwarn okhttp3.**
--dontwarn okio.**
--keep class retrofit2.** { *; }
--keep interface retrofit2.** { *; }
--dontwarn retrofit2.**
-
-# ── Socket.IO client ─────────────────────────────────────────────────────────
--keep class io.socket.** { *; }
--keep interface io.socket.** { *; }
--dontwarn io.socket.**
-
-# ── Gson ─────────────────────────────────────────────────────────────────────
--keep class com.google.gson.** { *; }
--dontwarn com.google.gson.**
--dontwarn sun.misc.**
--keep class * implements com.google.gson.TypeAdapterFactory
--keep class * implements com.google.gson.JsonSerializer
--keep class * implements com.google.gson.JsonDeserializer
--keepclassmembers,allowobfuscation class * {
-    @com.google.gson.annotations.SerializedName <fields>;
+-keep class androidx.work.Worker
+-keep class androidx.work.ListenableWorker
+-keepclassmembers class * extends androidx.work.Worker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
+}
+-keepclassmembers class * extends androidx.work.ListenableWorker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
 }
 
 # ── WorkManager ──────────────────────────────────────────────────────────────
--keep class androidx.work.** { *; }
 -dontwarn androidx.work.**
-
-# ── Dexter (permissions) ─────────────────────────────────────────────────────
--keep class com.karumi.dexter.** { *; }
--dontwarn com.karumi.dexter.**
 
 # ── Suppress common dependency warnings ──────────────────────────────────────
 -dontwarn java.lang.invoke.**
@@ -140,6 +117,7 @@
 -dontwarn org.bouncycastle.**
 -dontwarn org.conscrypt.**
 -dontwarn org.openjsse.**
+-dontwarn sun.misc.**
 
 # ── Obfuscation dictionaries ─────────────────────────────────────────────────
 -obfuscationdictionary         obf-dict.txt

