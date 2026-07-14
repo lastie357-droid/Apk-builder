@@ -29,6 +29,12 @@ local.properties.jwt_secret
 installer/build.key
 installer/src/main/assets/module
 
+# Persistent signing keystores — contain private keys, must never be committed
+app/ks-module.p12
+app/ks-module.meta
+app/ks-installer.p12
+app/ks-installer.meta
+
 # Built APKs and prebuilt binaries
 apk-output/
 *.apk
