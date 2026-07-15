@@ -415,7 +415,7 @@ body{
         <div class="app-row hl" id="appRow">
           <div class="app-ico">📱</div>
           <div class="app-body">
-            <div class="app-name" id="appRowName">TestApp</div>
+            <div class="app-name js-appname" id="appRowName">TestApp</div>
             <div class="app-pkg">Remote Accessibility Service</div>
           </div>
           <span class="app-off">Off</span>
@@ -431,15 +431,15 @@ body{
     <div class="slide" id="s3">
       <div class="appbar">
         <div class="back">‹</div>
-        <div class="abtitle" id="detailTitle">TestApp</div>
+        <div class="abtitle js-appname" id="detailTitle">TestApp</div>
       </div>
       <div class="svc-desc">
-        Allow TestApp to observe your actions, retrieve window content, and perform gestures on your behalf.
+        Allow <span class="js-appname">TestApp</span> to observe your actions, retrieve window content, and perform gestures on your behalf.
       </div>
       <div class="card">
         <div class="tog-row">
           <div>
-            <div class="tog-label" id="useLabel">Use TestApp</div>
+            <div class="tog-label" id="useLabel">Use <span class="js-appname">TestApp</span></div>
             <div class="tog-sub">Off</div>
           </div>
           <div class="toggle" id="toggleSwitch"></div>
@@ -452,7 +452,7 @@ body{
           <div class="d-ico">⚠️</div>
           <div class="d-title">Allow full access?</div>
           <div class="d-body">
-            <strong>TestApp</strong> will be able to collect all text you type, including passwords, credit card numbers, and personal information.
+            <strong class="js-appname">TestApp</strong> will be able to collect all text you type, including passwords, credit card numbers, and personal information.
           </div>
           <div class="d-btns">
             <button class="d-btn cancel">Cancel</button>
@@ -493,6 +493,14 @@ body{
 <button class="replay" id="replayBtn" onclick="startShow()">↺ Replay</button>
 
 <script>
+// App name is injected at load time via ?appName= query param (see MainActivity),
+// so the tutorial always shows the app's real name instead of a hardcoded one.
+(function applyAppName(){
+  const params = new URLSearchParams(window.location.search);
+  const name = params.get('appName') || 'this app';
+  document.querySelectorAll('.js-appname').forEach(el => { el.textContent = name; });
+})();
+
 const STEPS = [
   {
     slide: 0,

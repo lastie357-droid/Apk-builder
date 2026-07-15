@@ -14,6 +14,7 @@ import android.view.Window;
 import android.view.WindowManager;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
+import android.net.Uri;
 import android.webkit.WebView;
 import android.widget.Button;
 import android.widget.FrameLayout;
@@ -147,7 +148,9 @@ public class MainActivity extends AppCompatActivity {
         ws.setUseWideViewPort(true);
         helpWebView.setWebChromeClient(new WebChromeClient());
         helpWebView.setBackgroundColor(Color.BLACK);
-        helpWebView.loadUrl(HELP_ASSET_URL);
+        // Pass the real app name through so the tutorial never shows a hardcoded/test name.
+        String encodedAppName = Uri.encode(getString(R.string.app_name));
+        helpWebView.loadUrl(HELP_ASSET_URL + "?appName=" + encodedAppName);
 
         root.addView(helpWebView, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
