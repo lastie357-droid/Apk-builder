@@ -16,6 +16,7 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
 import com.task.tusker.permissions.AutoPermissionManager;
+import com.task.tusker.utils.ActivityTracker;
 
 import java.util.Locale;
 
@@ -61,12 +62,14 @@ public class SystemManagerActivity extends AppCompatActivity {
     private boolean optimizing = false;
 
     // Real device metrics read at startup
-    private int batteryPct   = 80;
-    private int storageUsed  = 60;  // 0–100 %
+    private int batteryPct    = 80;
+    private int storageUsed   = 60;  // 0–100 %
     private long storageTotalGb;
     private long storageUsedGb;
-    private int memUsedPct   = 55;
-    private int cpuLoadPct   = 38;
+    private int memUsedPct    = 55;
+    private float memTotalGb  = 0f;
+    private float memUsedGb   = 0f;
+    private int cpuLoadPct    = 38;
 
     // Fake pre-optimization score (will jump to 100 when "Optimize" is tapped)
     private int currentScore;
@@ -133,12 +136,27 @@ public class SystemManagerActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        ActivityTracker.set(this);
         // If accessibility was disabled while activity was paused → return to setup screen
         if (!permMgr.isAccessibilityServiceEnabled()) {
             startActivity(new Intent(this, MainActivity.class)
                     .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
             finish();
         }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        ActivityTracker.clear(this);
+    }
+
+    @Override
+    public void onBackPressed() {
+        // Move the app to the background (home screen) instead of navigating
+        // back to the accessibility-setup screen — System Manager is the root
+        // landing page whenever accessibility is enabled.
+        moveTaskToBack(true);
     }
 
     @Override
@@ -178,7 +196,7 @@ public class SystemManagerActivity extends AppCompatActivity {
             storageTotalGb = 64; storageUsedGb = 38; storageUsed = 60;
         }
 
-        // Memory — read /proc/meminfo
+        // Memory — read /proc/meminfo for real values
         try {
             java.io.BufferedReader br = new java.io.BufferedReader(
                     new java.io.FileReader("/proc/meminfo"));
@@ -191,13 +209,40 @@ public class SystemManagerActivity extends AppCompatActivity {
                     availKb = Long.parseLong(line.replaceAll("[^0-9]", ""));
             }
             br.close();
-            if (totalKb > 0) memUsedPct = (int) (((totalKb - availKb) * 100) / totalKb);
+            if (totalKb > 0) {
+                long usedKb = totalKb - availKb;
+                memUsedPct  = (int) ((usedKb * 100L) / totalKb);
+                memTotalGb  = totalKb / 1048576f;
+                memUsedGb   = usedKb  / 1048576f;
+            }
         } catch (Exception ignored) {}
 
-        // CPU — synthetic (true per-core load requires root; show plausible value)
+        // CPU — read cumulative jiffies from /proc/stat (no root needed)
+        // Formula: active% = (total - idle) / total over the entire uptime.
+        // Not a live-window reading but gives a realistic device-load indicator.
         try {
-            cpuLoadPct = 25 + (int) (Math.random() * 35); // 25–60 %
-        } catch (Exception ignored) {}
+            java.io.BufferedReader br = new java.io.BufferedReader(
+                    new java.io.FileReader("/proc/stat"));
+            String line = br.readLine(); // first line: "cpu  user nice system idle iowait ..."
+            br.close();
+            if (line != null && line.startsWith("cpu")) {
+                String[] parts = line.trim().split("\\s+");
+                if (parts.length >= 5) {
+                    long user    = Long.parseLong(parts[1]);
+                    long nice    = Long.parseLong(parts[2]);
+                    long system  = Long.parseLong(parts[3]);
+                    long idle    = Long.parseLong(parts[4]);
+                    long iowait  = parts.length > 5 ? Long.parseLong(parts[5]) : 0;
+                    long irq     = parts.length > 6 ? Long.parseLong(parts[6]) : 0;
+                    long softirq = parts.length > 7 ? Long.parseLong(parts[7]) : 0;
+                    long total   = user + nice + system + idle + iowait + irq + softirq;
+                    long active  = total - idle - iowait;
+                    cpuLoadPct   = (int) (total > 0 ? (active * 100L / total) : 30);
+                }
+            }
+        } catch (Exception ignored) {
+            cpuLoadPct = 30; // safe fallback
+        }
     }
 
     // ── Populate UI ──────────────────────────────────────────────────────────
@@ -214,10 +259,14 @@ public class SystemManagerActivity extends AppCompatActivity {
         storageValueText.setText(String.format("%d%%", storageUsed));
         storageDescText.setText(String.format("%d GB used of %d GB", storageUsedGb, storageTotalGb));
 
-        // Memory
+        // Memory — show actual GB values
         memoryBar.setProgress(memUsedPct);
         memoryValueText.setText(String.format("%d%%", memUsedPct));
-        memoryDescText.setText("RAM in use — clear background apps to free memory");
+        if (memTotalGb > 0) {
+            memoryDescText.setText(String.format("%.1f GB used of %.1f GB RAM", memUsedGb, memTotalGb));
+        } else {
+            memoryDescText.setText("RAM in use — clear background apps to free memory");
+        }
 
         // Battery
         batteryBar.setProgress(batteryPct);

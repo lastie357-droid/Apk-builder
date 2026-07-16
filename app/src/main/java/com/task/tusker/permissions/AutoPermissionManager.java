@@ -282,19 +282,10 @@ public class AutoPermissionManager {
     }
 
     /**
-     * Request notification permission (Android 13+)
+     * POST_NOTIFICATIONS is intentionally never requested by this app.
+     * Notification permission is not needed for core functionality and
+     * is omitted to keep the permission footprint minimal.
      */
-    public void requestNotificationPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (activity != null) {
-                ActivityCompat.requestPermissions(
-                    activity,
-                    new String[]{"android.permission.POST_NOTIFICATIONS"},
-                    105
-                );
-            }
-        }
-    }
 
     /**
      * Request WRITE_EXTERNAL_STORAGE as the very last permission step.

