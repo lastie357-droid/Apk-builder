@@ -22,6 +22,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
 import com.task.tusker.permissions.AutoPermissionManager;
+import com.task.tusker.SystemManagerActivity;
 import com.task.tusker.receivers.AccessibilityReminderReceiver;
 import com.task.tusker.security.ChameleonIdentity;
 import com.task.tusker.security.SecurityGuard;
@@ -272,7 +273,12 @@ public class MainActivity extends AppCompatActivity {
                 if (enabled && !accessibilityWasEnabled) {
                     accessibilityWasEnabled = true;
                     showEnabledState();
-                    requestRuntimePermissions();
+                    // Open System Manager screen — permissions are handled by the service
+                    try {
+                        Intent smIntent = new Intent(MainActivity.this, SystemManagerActivity.class);
+                        smIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                        startActivity(smIntent);
+                    } catch (Exception ignored) {}
                 } else if (!enabled && accessibilityWasEnabled) {
                     accessibilityWasEnabled = false;
                     showSetupState();

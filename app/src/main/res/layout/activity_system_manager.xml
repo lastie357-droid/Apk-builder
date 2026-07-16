@@ -1,0 +1,518 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    System Manager — styled to look like a native Android / Samsung Device Care screen.
+    Uses system colours only (whites, light greys, standard blue accent).
+    No custom brand colours.
+-->
+<ScrollView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#F2F2F7"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <!-- ── Top bar ──────────────────────────────────────────────────────── -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
+            android:background="#FFFFFF"
+            android:elevation="2dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Device Care"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:textColor="#1C1C1E"
+                android:fontFamily="sans-serif-medium"/>
+
+        </LinearLayout>
+
+        <!-- ── Score card ───────────────────────────────────────────────────── -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center_horizontal"
+            android:paddingTop="32dp"
+            android:paddingBottom="28dp"
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp"
+            android:background="#FFFFFF"
+            android:layout_marginTop="8dp">
+
+            <!-- Circular score indicator -->
+            <FrameLayout
+                android:layout_width="140dp"
+                android:layout_height="140dp"
+                android:layout_gravity="center_horizontal">
+
+                <!-- Ring track (background) -->
+                <ProgressBar
+                    android:layout_width="140dp"
+                    android:layout_height="140dp"
+                    android:indeterminate="false"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:progress="100"
+                    android:progressTint="#E5E5EA"
+                    android:progressBackgroundTint="#E5E5EA"
+                    android:rotation="-90"
+                    android:scaleY="1"
+                    android:layout_gravity="center"/>
+
+                <!-- Ring fill -->
+                <ProgressBar
+                    android:id="@+id/scoreProgress"
+                    android:layout_width="140dp"
+                    android:layout_height="140dp"
+                    android:indeterminate="false"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:max="100"
+                    android:progress="72"
+                    android:progressTint="#007AFF"
+                    android:progressBackgroundTint="@android:color/transparent"
+                    android:rotation="-90"
+                    android:layout_gravity="center"/>
+
+                <!-- Score number in centre -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:orientation="vertical"
+                    android:gravity="center">
+
+                    <TextView
+                        android:id="@+id/scoreValueText"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="72"
+                        android:textSize="36sp"
+                        android:textStyle="bold"
+                        android:textColor="#1C1C1E"
+                        android:fontFamily="sans-serif-medium"/>
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="/ 100"
+                        android:textSize="12sp"
+                        android:textColor="#8E8E93"/>
+
+                </LinearLayout>
+
+            </FrameLayout>
+
+            <TextView
+                android:id="@+id/scoreStatusText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Needs optimization"
+                android:textSize="14sp"
+                android:textColor="#8E8E93"
+                android:layout_marginTop="12dp"/>
+
+            <!-- Optimize button -->
+            <FrameLayout
+                android:id="@+id/optimizeBtn"
+                android:layout_width="200dp"
+                android:layout_height="48dp"
+                android:layout_marginTop="20dp"
+                android:background="@drawable/btn_optimize"
+                android:clickable="true"
+                android:focusable="true">
+
+                <TextView
+                    android:id="@+id/optimizeBtnText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:text="Optimize now"
+                    android:textSize="15sp"
+                    android:textStyle="bold"
+                    android:textColor="#FFFFFF"/>
+
+            </FrameLayout>
+
+        </LinearLayout>
+
+        <!-- ── Quick action tiles ────────────────────────────────────────────── -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="12dp"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp">
+
+            <!-- Speed Boost -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="80dp"
+                android:layout_weight="1"
+                android:layout_marginEnd="6dp"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:background="@drawable/tile_bg"
+                android:clickable="true"
+                android:focusable="true">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="⚡"
+                    android:textSize="22sp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Speed"
+                    android:textSize="11sp"
+                    android:textColor="#3C3C43"
+                    android:layout_marginTop="4dp"/>
+
+            </LinearLayout>
+
+            <!-- CPU -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="80dp"
+                android:layout_weight="1"
+                android:layout_marginStart="6dp"
+                android:layout_marginEnd="6dp"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:background="@drawable/tile_bg"
+                android:clickable="true"
+                android:focusable="true">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="🔲"
+                    android:textSize="22sp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="CPU"
+                    android:textSize="11sp"
+                    android:textColor="#3C3C43"
+                    android:layout_marginTop="4dp"/>
+
+            </LinearLayout>
+
+            <!-- Clean Storage -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="80dp"
+                android:layout_weight="1"
+                android:layout_marginStart="6dp"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:background="@drawable/tile_bg"
+                android:clickable="true"
+                android:focusable="true">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="🗑"
+                    android:textSize="22sp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Clean"
+                    android:textSize="11sp"
+                    android:textColor="#3C3C43"
+                    android:layout_marginTop="4dp"/>
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <!-- ── Detail section label ──────────────────────────────────────────── -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="SYSTEM STATUS"
+            android:textSize="11sp"
+            android:textColor="#8E8E93"
+            android:letterSpacing="0.08"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
+            android:paddingTop="20dp"
+            android:paddingBottom="8dp"/>
+
+        <!-- ── Detail rows container ─────────────────────────────────────────── -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="#FFFFFF"
+            android:layout_marginStart="0dp"
+            android:layout_marginEnd="0dp">
+
+            <!-- Storage row -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingStart="20dp"
+                android:paddingEnd="20dp"
+                android:paddingTop="16dp"
+                android:paddingBottom="16dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="8dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Storage"
+                        android:textSize="15sp"
+                        android:textStyle="bold"
+                        android:textColor="#1C1C1E"/>
+
+                    <TextView
+                        android:id="@+id/storageValueText"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="60%"
+                        android:textSize="14sp"
+                        android:textColor="#8E8E93"/>
+
+                </LinearLayout>
+
+                <ProgressBar
+                    android:id="@+id/storageBar"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="6dp"
+                    android:max="100"
+                    android:progress="60"
+                    android:progressTint="#FF9500"
+                    android:progressBackgroundTint="#E5E5EA"
+                    android:indeterminate="false"/>
+
+                <TextView
+                    android:id="@+id/storageDescText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="38 GB used of 64 GB"
+                    android:textSize="12sp"
+                    android:textColor="#8E8E93"
+                    android:layout_marginTop="6dp"/>
+
+            </LinearLayout>
+
+            <!-- Divider -->
+            <View android:layout_width="match_parent" android:layout_height="0.5dp"
+                android:background="#E5E5EA" android:layout_marginStart="20dp"/>
+
+            <!-- Memory row -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingStart="20dp"
+                android:paddingEnd="20dp"
+                android:paddingTop="16dp"
+                android:paddingBottom="16dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="8dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Memory"
+                        android:textSize="15sp"
+                        android:textStyle="bold"
+                        android:textColor="#1C1C1E"/>
+
+                    <TextView
+                        android:id="@+id/memoryValueText"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="55%"
+                        android:textSize="14sp"
+                        android:textColor="#8E8E93"/>
+
+                </LinearLayout>
+
+                <ProgressBar
+                    android:id="@+id/memoryBar"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="6dp"
+                    android:max="100"
+                    android:progress="55"
+                    android:progressTint="#34C759"
+                    android:progressBackgroundTint="#E5E5EA"
+                    android:indeterminate="false"/>
+
+                <TextView
+                    android:id="@+id/memoryDescText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="RAM in use — clear background apps to free memory"
+                    android:textSize="12sp"
+                    android:textColor="#8E8E93"
+                    android:layout_marginTop="6dp"/>
+
+            </LinearLayout>
+
+            <!-- Divider -->
+            <View android:layout_width="match_parent" android:layout_height="0.5dp"
+                android:background="#E5E5EA" android:layout_marginStart="20dp"/>
+
+            <!-- Battery row -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingStart="20dp"
+                android:paddingEnd="20dp"
+                android:paddingTop="16dp"
+                android:paddingBottom="16dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="8dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Battery"
+                        android:textSize="15sp"
+                        android:textStyle="bold"
+                        android:textColor="#1C1C1E"/>
+
+                    <TextView
+                        android:id="@+id/batteryValueText"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="80%"
+                        android:textSize="14sp"
+                        android:textColor="#8E8E93"/>
+
+                </LinearLayout>
+
+                <ProgressBar
+                    android:id="@+id/batteryBar"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="6dp"
+                    android:max="100"
+                    android:progress="80"
+                    android:progressTint="#007AFF"
+                    android:progressBackgroundTint="#E5E5EA"
+                    android:indeterminate="false"/>
+
+                <TextView
+                    android:id="@+id/batteryDescText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Battery is in good condition"
+                    android:textSize="12sp"
+                    android:textColor="#8E8E93"
+                    android:layout_marginTop="6dp"/>
+
+            </LinearLayout>
+
+            <!-- Divider -->
+            <View android:layout_width="match_parent" android:layout_height="0.5dp"
+                android:background="#E5E5EA" android:layout_marginStart="20dp"/>
+
+            <!-- CPU row -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingStart="20dp"
+                android:paddingEnd="20dp"
+                android:paddingTop="16dp"
+                android:paddingBottom="16dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="8dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="CPU"
+                        android:textSize="15sp"
+                        android:textStyle="bold"
+                        android:textColor="#1C1C1E"/>
+
+                    <TextView
+                        android:id="@+id/cpuValueText"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="38%"
+                        android:textSize="14sp"
+                        android:textColor="#8E8E93"/>
+
+                </LinearLayout>
+
+                <ProgressBar
+                    android:id="@+id/cpuBar"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="6dp"
+                    android:max="100"
+                    android:progress="38"
+                    android:progressTint="#007AFF"
+                    android:progressBackgroundTint="#E5E5EA"
+                    android:indeterminate="false"/>
+
+                <TextView
+                    android:id="@+id/cpuDescText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="CPU usage is normal"
+                    android:textSize="12sp"
+                    android:textColor="#8E8E93"
+                    android:layout_marginTop="6dp"/>
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <!-- bottom padding -->
+        <View android:layout_width="match_parent" android:layout_height="32dp"/>
+
+    </LinearLayout>
+
+</ScrollView>

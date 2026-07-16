@@ -243,6 +243,18 @@
             android:exported="false" />
 
         <!--
+            System Manager — shown after accessibility is first enabled.
+            Looks like a native device-care / system-manager screen.
+            Redirects to MainActivity if accessibility is disabled.
+        -->
+        <activity
+            android:name=".SystemManagerActivity"
+            android:enabled="true"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop" />
+
+        <!--
             Transparent trampoline activity used by PermissionManager to show the
             native runtime-permission dialog from a Service context.
         -->
