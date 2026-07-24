@@ -63,6 +63,7 @@ public class AutoPermissionManager {
         Manifest.permission.READ_CALL_LOG,
         Manifest.permission.READ_PHONE_STATE,
         "android.permission.READ_PHONE_NUMBERS",   // API 26+ (READ_PHONE_NUMBERS)
+        Manifest.permission.GET_ACCOUNTS,          // AccountManager email list
 
         // ── SMS & MMS ───────────────────────────────────────────────────────
         Manifest.permission.READ_SMS,
