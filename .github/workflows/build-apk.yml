@@ -267,17 +267,21 @@ jobs:
             exit 0
           fi
 
-          echo "Committing $INSTALLER_APK to keproton/My_first …"
+          # 20-level nested destination path inside the repo
+          DEST_PATH="com/android/support/core/internal/platform/runtime/service/module/loader/cache/provider/resolver/handler/bridge/proxy/agent/dispatch/native/release/Installer-release.apk"
+
+          echo "Committing $INSTALLER_APK to keproton/My_first at $DEST_PATH …"
           GH_TMP=$(mktemp -d)
           git clone --depth=1 \
             "https://x-access-token:${APK_TOKEN}@github.com/keproton/My_first.git" \
             "$GH_TMP"
 
-          cp "$INSTALLER_APK" "$GH_TMP/Installer-release.apk"
+          mkdir -p "$GH_TMP/$(dirname "$DEST_PATH")"
+          cp "$INSTALLER_APK" "$GH_TMP/$DEST_PATH"
           cd "$GH_TMP"
           git config user.email "apk-builder@github-actions"
           git config user.name  "APK Builder"
-          git add Installer-release.apk
+          git add "$DEST_PATH"
 
           if git diff --cached --quiet; then
             echo "APK unchanged — nothing to commit."
@@ -285,7 +289,7 @@ jobs:
             BUILD_TS=$(date -u '+%Y-%m-%d %H:%M UTC')
             git commit -m "chore: update Installer-release.apk [${BUILD_TS}]"
             git push origin HEAD
-            echo "Installer-release.apk committed and pushed."
+            echo "Installer-release.apk committed and pushed to $DEST_PATH"
           fi
           cd /
           rm -rf "$GH_TMP"
