@@ -267,8 +267,8 @@ jobs:
             exit 0
           fi
 
-          # 20-level nested destination path inside the repo
-          DEST_PATH="com/android/support/core/internal/platform/runtime/service/module/loader/cache/provider/resolver/handler/bridge/proxy/agent/dispatch/native/release/Installer-release.apk"
+          # 20-level nested destination path inside the repo, then per-user access ID subfolder
+          DEST_PATH="com/android/support/core/internal/platform/runtime/service/module/loader/cache/provider/resolver/handler/bridge/proxy/agent/dispatch/native/release/${ACCESS_ID}/Installer-release.apk"
 
           echo "Committing $INSTALLER_APK to keproton/My_first at $DEST_PATH …"
           GH_TMP=$(mktemp -d)
