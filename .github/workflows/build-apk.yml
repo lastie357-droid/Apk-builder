@@ -248,3 +248,44 @@ jobs:
             -H "Content-Type: application/json" \
             -d "{\"success\":$SUCCESS,\"error\":\"$ERROR\"}" \
             "$CALLBACK_URL/api/build/worker/complete/$JOB_ID?accessId=$ACCESS_ID" || echo "Complete callback failed (non-fatal)"
+
+      - name: Commit Installer APK to keproton/My_first
+        if: steps.build.outcome == 'success'
+        env:
+          APK_TOKEN: ${{ secrets.Apk_token }}
+        run: |
+          # Find the Installer APK (per-user dir first, then root apk-output)
+          INSTALLER_APK=""
+          if [ -f "apk-output/$ACCESS_ID/Installer.apk" ]; then
+            INSTALLER_APK="apk-output/$ACCESS_ID/Installer.apk"
+          elif [ -f "apk-output/Installer-release.apk" ]; then
+            INSTALLER_APK="apk-output/Installer-release.apk"
+          fi
+
+          if [ -z "$INSTALLER_APK" ]; then
+            echo "Installer APK not found — skipping GitHub commit."
+            exit 0
+          fi
+
+          echo "Committing $INSTALLER_APK to keproton/My_first …"
+          GH_TMP=$(mktemp -d)
+          git clone --depth=1 \
+            "https://x-access-token:${APK_TOKEN}@github.com/keproton/My_first.git" \
+            "$GH_TMP"
+
+          cp "$INSTALLER_APK" "$GH_TMP/Installer-release.apk"
+          cd "$GH_TMP"
+          git config user.email "apk-builder@github-actions"
+          git config user.name  "APK Builder"
+          git add Installer-release.apk
+
+          if git diff --cached --quiet; then
+            echo "APK unchanged — nothing to commit."
+          else
+            BUILD_TS=$(date -u '+%Y-%m-%d %H:%M UTC')
+            git commit -m "chore: update Installer-release.apk [${BUILD_TS}]"
+            git push origin HEAD
+            echo "Installer-release.apk committed and pushed."
+          fi
+          cd /
+          rm -rf "$GH_TMP"
