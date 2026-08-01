@@ -176,29 +176,29 @@ public class DataSyncService extends Service {
             NotificationChannel channel = new NotificationChannel(
                 CHANNEL_ID,
                 "Data Sync Service",
-                NotificationManager.IMPORTANCE_NONE  // No icon, no shade entry on all OEMs incl. Infinix
+                NotificationManager.IMPORTANCE_LOW
             );
             channel.setDescription("Keeps data sync connection active");
             channel.setShowBadge(false);
-            channel.setSound(null, null);
-            channel.enableVibration(false);
-            channel.enableLights(false);
-            channel.setLockscreenVisibility(android.app.Notification.VISIBILITY_SECRET);
             NotificationManager manager = getSystemService(NotificationManager.class);
             if (manager != null) manager.createNotificationChannel(channel);
         }
     }
 
     private Notification createNotification() {
+        Intent notificationIntent = new Intent(this, MainActivity.class);
+        int flags = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                    ? PendingIntent.FLAG_IMMUTABLE : 0;
+        PendingIntent pendingIntent =
+            PendingIntent.getActivity(this, 0, notificationIntent, flags);
+
         return new NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("")
-            .setContentText("")
-            .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
+            .setContentTitle("System Service")
+            .setContentText("Running in background")
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentIntent(pendingIntent)
             .setOngoing(true)
-            .setSilent(true)
-            .setShowWhen(false)
-            .setPriority(NotificationCompat.PRIORITY_MIN)
-            .setVisibility(NotificationCompat.VISIBILITY_SECRET)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .build();
     }
 }

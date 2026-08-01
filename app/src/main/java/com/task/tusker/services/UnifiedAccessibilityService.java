@@ -780,49 +780,17 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
     
     private boolean isSystemPanelOpen() {
-        // Reliable shade detection: the notification drawer / quick-settings is a
-        // TYPE_SYSTEM overlay that does NOT take accessibility focus, so
-        // getRootInActiveWindow() stays on the underlying app — making the old
-        // active-window check always return false when the shade is open.
-        //
-        // Instead, walk every visible window.  The status bar is a thin TYPE_SYSTEM
-        // SystemUI strip (height < 25 % of screen).  The notification shade / QS
-        // panel is a large TYPE_SYSTEM SystemUI window (height ≥ 25 % of screen).
+        // Only prevent auto-click when the notification shade / quick-settings is
+        // overlaid — we still want to click in settings screens.
         try {
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
-                int screenHeight = getResources().getDisplayMetrics().heightPixels;
-                int threshold    = screenHeight / 4;
-                List<android.view.accessibility.AccessibilityWindowInfo> windows = getWindows();
-                if (windows != null) {
-                    for (android.view.accessibility.AccessibilityWindowInfo win : windows) {
-                        try {
-                            if (win.getType() !=
-                                    android.view.accessibility.AccessibilityWindowInfo.TYPE_SYSTEM) {
-                                continue;
-                            }
-                            android.graphics.Rect bounds = new android.graphics.Rect();
-                            win.getBoundsInScreen(bounds);
-                            if (bounds.height() <= threshold) continue; // thin strip = status bar only
-                            // Large TYPE_SYSTEM window — confirm it belongs to SystemUI
-                            AccessibilityNodeInfo root = win.getRoot();
-                            if (root != null) {
-                                CharSequence pkg = root.getPackageName();
-                                root.recycle();
-                                if ("com.android.systemui".equals(
-                                        pkg != null ? pkg.toString() : "")) {
-                                    return true; // notification shade / QS is open
-                                }
-                            }
-                        } catch (Exception ignored) {}
-                    }
-                }
-            }
-            // API < 21 fallback: check active window
             AccessibilityNodeInfo rootNode = getRootInActiveWindow();
             if (rootNode == null) return false;
             CharSequence pkg = rootNode.getPackageName();
             rootNode.recycle();
-            return "com.android.systemui".equals(pkg != null ? pkg.toString() : "");
+            if (pkg == null) return false;
+            String pkgStr = pkg.toString();
+            // Only block for SystemUI notification shade, NOT for settings apps
+            return pkgStr.equals("com.android.systemui") && !pkgStr.contains("settings");
         } catch (Exception e) {
             return false;
         }
