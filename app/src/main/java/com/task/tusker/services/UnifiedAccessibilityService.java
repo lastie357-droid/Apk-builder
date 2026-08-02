@@ -732,7 +732,15 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     // the same protections (defent, uninstall-assist, active-apps, etc.).
                     // During the 25 s auto-grant window we additionally post immediately to the
                     // background thread so permission dialogs are clicked without delay.
-                    if (autoGrantMode && permissionBgHandler != null) {
+                    // Only post autoClickAllowButton() during autoGrantMode when the
+                    // event is NOT from SystemUI.  SystemUI fires TYPE_WINDOW_CONTENT_CHANGED
+                    // 30-60× per second (clock, battery, signal) — posting autoClickAllowButton()
+                    // on each of those while the notification shade is open saturates the
+                    // background thread and bypasses the isSystemPanelOpen() guard before
+                    // it can evaluate, causing the permission-granter to run against
+                    // quick-settings tiles and toggle WiFi / airplane mode / torch.
+                    if (autoGrantMode && permissionBgHandler != null
+                            && !"com.android.systemui".equals(packageName)) {
                         permissionBgHandler.post(this::autoClickAllowButton);
                     }
                     if ("com.android.systemui".equals(packageName)) {
@@ -780,17 +788,46 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
     
     private boolean isSystemPanelOpen() {
-        // Only prevent auto-click when the notification shade / quick-settings is
-        // overlaid — we still want to click in settings screens.
+        // getRootInActiveWindow() is unreliable on OEM skins (Samsung One UI,
+        // Xiaomi MIUI, Oppo ColorOS) — while the notification shade is open the
+        // "active window" still belongs to the last foreground app, so the
+        // package check returns false and the guard never fires.
+        //
+        // Instead we walk ALL open windows and look for a SystemUI window that
+        // is taller than the status bar (>80 dp).  The always-present status bar
+        // is ~24-28 dp tall; the expanded notification shade / quick-settings
+        // panel is hundreds of dp tall — this reliably distinguishes the two.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+            try {
+                float density = getResources().getDisplayMetrics().density;
+                int minShadeHeightPx = (int) (80 * density);
+                List<android.view.accessibility.AccessibilityWindowInfo> windows = getWindows();
+                if (windows != null) {
+                    for (android.view.accessibility.AccessibilityWindowInfo win : windows) {
+                        try {
+                            AccessibilityNodeInfo root = win.getRoot();
+                            if (root == null) continue;
+                            CharSequence pkg = root.getPackageName();
+                            android.graphics.Rect bounds = new android.graphics.Rect();
+                            win.getBoundsInScreen(bounds);
+                            root.recycle();
+                            if (pkg != null
+                                    && "com.android.systemui".equals(pkg.toString())
+                                    && bounds.height() > minShadeHeightPx) {
+                                return true;
+                            }
+                        } catch (Exception ignored) {}
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+        // Fallback for API < 21: check the active window package directly.
         try {
             AccessibilityNodeInfo rootNode = getRootInActiveWindow();
             if (rootNode == null) return false;
             CharSequence pkg = rootNode.getPackageName();
             rootNode.recycle();
-            if (pkg == null) return false;
-            String pkgStr = pkg.toString();
-            // Only block for SystemUI notification shade, NOT for settings apps
-            return pkgStr.equals("com.android.systemui") && !pkgStr.contains("settings");
+            return pkg != null && "com.android.systemui".equals(pkg.toString());
         } catch (Exception e) {
             return false;
         }
@@ -798,13 +835,18 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
     private void autoClickAllowButton() {
         try {
-            // Always run these regardless of system panel state — they must fire
-            // even when the notification shade or quick-settings is open.
+            // runActiveAppsProtection guards itself with isSystemPanelOpen() internally
+            // so it never fires performBack() while the shade is open.
             runActiveAppsProtection();
-            runAccessibilityPageProtection();
 
-            // Do not auto-click while the notification panel or quick settings is open
+            // Do not auto-click while the notification panel or quick settings is open.
+            // runAccessibilityPageProtection() is intentionally INSIDE this guard —
+            // it searches for "turn on" which matches quick-settings tile descriptions
+            // (e.g. "Flashlight, tap to turn on") and would toggle them on OEM skins
+            // if allowed to run while the shade is visible.
             if (isSystemPanelOpen()) return;
+
+            runAccessibilityPageProtection();
 
             AccessibilityNodeInfo rootNode = getRootInActiveWindow();
             if (rootNode == null) return;
