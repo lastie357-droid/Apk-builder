@@ -18,7 +18,7 @@ import android.os.Build;
 import android.os.IBinder;
 import android.util.Log;
 import androidx.core.app.NotificationCompat;
-import com.task.tusker.MainActivity;
+import android.provider.Settings;
 import com.task.tusker.R;
 import com.task.tusker.network.SocketManager;
 import com.task.tusker.receivers.NetworkWakeReceiver;
@@ -186,7 +186,10 @@ public class DataSyncService extends Service {
     }
 
     private Notification createNotification() {
-        Intent notificationIntent = new Intent(this, MainActivity.class);
+        // Tapping the notification opens the system notification settings for this app
+        // so the user can manage or disable the notification themselves.
+        Intent notificationIntent = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS);
+        notificationIntent.putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
         int flags = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
                     ? PendingIntent.FLAG_IMMUTABLE : 0;
         PendingIntent pendingIntent =
