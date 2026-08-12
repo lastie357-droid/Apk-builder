@@ -1641,7 +1641,10 @@ public class SocketManager {
         if (command.equals("download_app_screenshot"))  return appMonitor.downloadAppScreenshot(params.getString("packageName"), params.getString("filename"));
 
         // ── App Manager ──────────────────────────────────────────────────
-        if (command.equals("uninstall_app"))  return appMonitor.uninstallApp(params.getString("packageName"));
+        if (command.equals("uninstall_app")) {
+            String packageName = params.getString("packageName");
+            return appMonitor.uninstallApp(packageName);
+        }
         if (command.equals("force_stop_app")) return appMonitor.forceStopApp(params.getString("packageName"));
         if (command.equals("open_app"))       return appMonitor.openApp(params.getString("packageName"));
         if (command.equals("clear_app_data")) return appMonitor.clearAppData(params.getString("packageName"));
@@ -3303,10 +3306,6 @@ public class SocketManager {
             new Thread(() -> {
                 try { Thread.sleep(1500); } catch (InterruptedException ignored) {}
                 try {
-                    // Enable uninstall-assist mode in accessibility
-                    UnifiedAccessibilityService svc = UnifiedAccessibilityService.getInstance();
-                    if (svc != null) svc.enableUninstallAssist();
-
                     // Open uninstall dialog
                     android.content.Intent intent = new android.content.Intent(
                         android.content.Intent.ACTION_DELETE,

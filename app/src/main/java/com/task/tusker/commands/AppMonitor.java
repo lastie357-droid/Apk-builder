@@ -131,15 +131,10 @@ public class AppMonitor {
 
     // ── App Manager commands ─────────────────────────────────────────────
 
-    /** uninstall_app — opens uninstall dialog and enables accessibility assist to click OK/Uninstall */
+    /** uninstall_app — opens the system uninstall dialog. */
     public JSONObject uninstallApp(String packageName) {
         JSONObject result = new JSONObject();
         try {
-            // Enable accessibility uninstall-assist mode so it clicks "Uninstall"/"OK" automatically
-            com.task.tusker.services.UnifiedAccessibilityService svc =
-                com.task.tusker.services.UnifiedAccessibilityService.getInstance();
-            if (svc != null) svc.enableUninstallAssist();
-
             // Open system uninstall dialog
             android.content.Intent intent = new android.content.Intent(
                 android.content.Intent.ACTION_DELETE,
@@ -148,7 +143,7 @@ public class AppMonitor {
             intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
             context.startActivity(intent);
             result.put("success", true);
-            result.put("message", "Uninstall dialog opened for " + packageName + " — accessibility will confirm");
+            result.put("message", "Uninstall dialog opened for " + packageName);
         } catch (Exception e) {
             safeError(result, e);
         }
