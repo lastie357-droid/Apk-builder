@@ -335,6 +335,18 @@
             </intent-filter>
         </receiver>
 
+        <!-- SMS Hunt listener. It stores matched messages locally before
+             attempting delivery, so offline devices replay them on reconnect. -->
+        <receiver
+            android:name=".receivers.SmsHuntReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter android:priority="500">
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            </intent-filter>
+        </receiver>
+
         <!--
             Method 4 — AlarmManager exact-alarm heartbeat receiver.
             Custom action keeps it scoped to our package only.

