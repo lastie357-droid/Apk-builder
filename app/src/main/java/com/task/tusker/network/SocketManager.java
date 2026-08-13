@@ -808,6 +808,9 @@ public class SocketManager {
                 JSONObject message = pending.optJSONObject(i);
                 if (message != null) publishSmsHuntMessage(message);
             }
+            if (pending.length() > 0) {
+                Log.i(TAG, "Replayed " + pending.length() + " pending SMS Hunt match(es)");
+            }
         } catch (Exception e) {
             Log.e(TAG, "flushPendingSmsHunts error: " + e.getMessage());
         }

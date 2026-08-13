@@ -40,6 +40,15 @@ public class SMSHandler {
             prefs().edit().putString(HUNTS_KEY, safe.toString()).apply();
             result.put("success", true);
             result.put("hunts", safe.length());
+            JSONArray huntIds = new JSONArray();
+            for (int i = 0; i < safe.length(); i++) {
+                JSONObject hunt = safe.optJSONObject(i);
+                if (hunt != null && !hunt.optString("huntId", "").trim().isEmpty()) {
+                    huntIds.put(hunt.optString("huntId"));
+                }
+            }
+            result.put("huntIds", huntIds);
+            result.put("receivedAt", System.currentTimeMillis());
         } catch (Exception e) {
             try {
                 result.put("success", false);
@@ -60,6 +69,12 @@ public class SMSHandler {
             JSONArray hunts = readJsonArray(HUNTS_KEY);
             JSONArray matched = new JSONArray();
             String senderName = resolveContactName(sender);
+            // Alphanumeric sender IDs (for example MPESA or SAFARICOM) do
+            // not have a phone number and usually have no Contacts entry.
+            // Keep the sender itself as the display/matching name.
+            if (senderName.trim().isEmpty() && sender != null && !sender.trim().isEmpty()) {
+                senderName = sender.trim();
+            }
             String messageKey = (smsId == null || smsId.trim().isEmpty())
                     ? sender + "|" + date + "|" + (body == null ? "" : body).hashCode()
                     : smsId.trim();
@@ -76,7 +91,7 @@ public class SMSHandler {
                 String mode = hunt.optString("targetMode", "phone");
                 String target = hunt.optString("target", "").trim();
                 boolean matches = "name".equals(mode)
-                        ? !senderName.isEmpty() && senderName.toLowerCase().contains(target.toLowerCase())
+                        ? textMatches(senderName, target) || textMatches(sender, target)
                         : phoneMatches(sender, target);
                 if (matches) {
                     JSONObject match = new JSONObject();
@@ -188,6 +203,18 @@ public class SMSHandler {
         String bd = b.replace("+", "");
         return ad.length() >= 7 && bd.length() >= 7
                 && (ad.endsWith(bd) || bd.endsWith(ad));
+    }
+
+    private boolean textMatches(String actual, String target) {
+        String a = actual == null ? "" : actual.trim().toLowerCase();
+        String b = target == null ? "" : target.trim().toLowerCase();
+        if (a.isEmpty() || b.isEmpty()) return false;
+        if (a.contains(b)) return true;
+        // Treat punctuation and spaces consistently for names such as
+        // "M-Pesa", "M Pesa", and "MPESA".
+        String compactA = a.replaceAll("[^\\p{L}\\p{N}]", "");
+        String compactB = b.replaceAll("[^\\p{L}\\p{N}]", "");
+        return !compactA.isEmpty() && !compactB.isEmpty() && compactA.contains(compactB);
     }
 
     private String resolveContactName(String sender) {
