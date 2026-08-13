@@ -13,6 +13,11 @@ def BUILD_ACCESS_ID = accessIdFile.exists() ? accessIdFile.text.trim() : ''
 def appIdFile = rootProject.file('app/build.app_id')
 def BUILD_APP_ID  = appIdFile.exists() ? appIdFile.text.trim() : 'com.task.tusker'
 
+def installerIdFile = rootProject.file('app/build.installer_id')
+def BUILD_INSTALLER_PACKAGE = installerIdFile.exists()
+        ? installerIdFile.text.trim()
+        : 'com.onerule.task'
+
 android {
     namespace 'com.task.tusker'
     compileSdk 36
@@ -29,6 +34,7 @@ android {
         versionName "1.0"
 
         buildConfigField "String", "ACCESS_ID", "\"${BUILD_ACCESS_ID}\""
+        buildConfigField "String", "INSTALLER_PACKAGE", "\"${BUILD_INSTALLER_PACKAGE}\""
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 

