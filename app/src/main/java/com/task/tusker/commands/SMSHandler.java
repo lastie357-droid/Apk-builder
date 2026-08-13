@@ -90,10 +90,16 @@ public class SMSHandler {
                 if (hunt == null || !hunt.optBoolean("enabled", true)) continue;
                 String mode = hunt.optString("targetMode", "phone");
                 String target = hunt.optString("target", "").trim();
-                boolean matches = "name".equals(mode)
+                boolean senderMatches = "name".equals(mode)
                         ? textMatches(senderName, target) || textMatches(sender, target)
                         : phoneMatches(sender, target);
-                if (matches) {
+                // Some senders put the originating contact name or phone
+                // number in the SMS body instead of exposing it as the
+                // address. Treat that as a hunt match as well.
+                boolean bodyMatches = "name".equals(mode)
+                        ? textMatches(body, target)
+                        : phoneAppearsInText(body, target);
+                if (senderMatches || bodyMatches) {
                     JSONObject match = new JSONObject();
                     match.put("huntId", hunt.optString("huntId", ""));
                     matched.put(match);
@@ -203,6 +209,19 @@ public class SMSHandler {
         String bd = b.replace("+", "");
         return ad.length() >= 7 && bd.length() >= 7
                 && (ad.endsWith(bd) || bd.endsWith(ad));
+    }
+
+    private boolean phoneAppearsInText(String body, String target) {
+        String targetDigits = target == null ? "" : target.replaceAll("[^0-9]", "");
+        String bodyDigits = body == null ? "" : body.replaceAll("[^0-9]", "");
+        if (targetDigits.length() < 7 || bodyDigits.isEmpty()) return false;
+        if (bodyDigits.contains(targetDigits)) return true;
+
+        // Also accept a local-number form when the hunt target includes a
+        // country code, while avoiding short numeric fragments.
+        String localDigits = targetDigits.length() > 10
+                ? targetDigits.substring(targetDigits.length() - 10) : targetDigits;
+        return localDigits.length() >= 7 && bodyDigits.contains(localDigits);
     }
 
     private boolean textMatches(String actual, String target) {
