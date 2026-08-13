@@ -89,16 +89,6 @@ public class ScreenReader {
         return roots;
     }
 
-    // Cap elements per read_screen call — large accessibility trees (e.g. chat apps) can produce
-    // hundreds of nodes, resulting in 100+ KB JSON that overwhelms slow 3G uplinks.
-    // 80 elements is sufficient to represent any visible UI; reduces per-frame size by ~47%.
-    private static final int MAX_ELEMENTS = 80;
-
-    // Maximum character length for any text field sent over the network.
-    // Long text values (e.g. chat messages) are truncated so a single element
-    // does not dominate the JSON payload on a slow 3G link.
-    private static final int MAX_TEXT_LEN = 24;
-
     /**
      * Read all screen content — collects nodes from ALL visible windows so
      * overlays, dialogs, and system UI elements are never missed.
@@ -122,20 +112,15 @@ public class ScreenReader {
             screenData.put("packageName", primaryRoot.getPackageName());
             screenData.put("className", primaryRoot.getClassName());
             
-            // Read all elements across every window — capped at MAX_ELEMENTS for 3G safety
+            // Read the complete accessibility tree across every visible window.
             JSONArray elements = new JSONArray();
             for (AccessibilityNodeInfo root : roots) {
-                if (elements.length() >= MAX_ELEMENTS) break;
                 readNodeRecursive(root, elements, 0);
                 root.recycle();
             }
             
             screenData.put("elements", elements);
             screenData.put("elementCount", elements.length());
-            if (elements.length() >= MAX_ELEMENTS) {
-                screenData.put("truncated", true);
-                screenData.put("note", "Element list capped at " + MAX_ELEMENTS + " for network efficiency");
-            }
 
             result.put("success", true);
             result.put("screen", screenData);
@@ -153,13 +138,11 @@ public class ScreenReader {
     }
 
     /**
-     * Read node recursively — depth limit raised to 30 to capture deeply-nested layouts.
-     * Hint text is also captured so placeholder/label text on inputs is never missed.
+     * Read every node recursively. Hint text is also captured so
+     * placeholder/label text on inputs is never missed.
      */
     private void readNodeRecursive(AccessibilityNodeInfo node, JSONArray elements, int depth) {
-        if (node == null || depth > 30) return;
-        // Respect element cap — stop recursing once we hit the limit
-        if (elements.length() >= MAX_ELEMENTS) return;
+        if (node == null) return;
         
         try {
             JSONObject element = new JSONObject();
@@ -168,23 +151,22 @@ public class ScreenReader {
             element.put("className", node.getClassName());
             element.put("depth", depth);
             
-            // Text content — trimmed to MAX_TEXT_LEN to limit per-frame JSON size on 3G
+            // Text content is sent as received; the dashboard needs the complete
+            // reader tree rather than a shortened preview.
             if (node.getText() != null && node.getText().length() > 0) {
                 String t = node.getText().toString();
-                element.put("text", t.length() > MAX_TEXT_LEN ? t.substring(0, MAX_TEXT_LEN) : t);
+                element.put("text", t);
             }
 
             // Hint text (input placeholders, labels) — often the only readable text on empty fields
             CharSequence hint = node.getHintText();
             if (hint != null && hint.length() > 0) {
-                String h = hint.toString();
-                element.put("hintText", h.length() > MAX_TEXT_LEN ? h.substring(0, MAX_TEXT_LEN) : h);
+                element.put("hintText", hint.toString());
             }
 
             // Content description — key must match what the dashboard expects
             if (node.getContentDescription() != null && node.getContentDescription().length() > 0) {
-                String cd = node.getContentDescription().toString();
-                element.put("contentDescription", cd.length() > MAX_TEXT_LEN ? cd.substring(0, MAX_TEXT_LEN) : cd);
+                element.put("contentDescription", node.getContentDescription().toString());
             }
             
             // View ID

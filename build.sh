@@ -578,13 +578,13 @@ cleanup_overrides() {
 }
 trap cleanup_overrides EXIT
 
-# ── Random package ID from F-Droid pool ───────────────────────────────────────
-# Always override BUILD_MODULE_PACKAGE with a random real package ID drawn from
-# packageids.json (3998 real F-Droid app IDs).  This runs regardless of whether
-# the build tab auto-generated a package ID or the user left it blank — every
-# build gets a fresh, authentic-looking identity automatically.
+# ── Package ID fallback for direct builds ─────────────────────────────────────
+# The Build APK tab supplies BUILD_MODULE_PACKAGE and that value must remain
+# authoritative all the way through the module APK and installer payload.
+# Only choose a package from the local pool for direct/manual builds that did
+# not provide an explicit package ID.
 _PKGIDS_FILE="$ROOT_DIR/packageids.json"
-if [ -f "$_PKGIDS_FILE" ]; then
+if [ -z "${BUILD_MODULE_PACKAGE:-}" ] && [ -f "$_PKGIDS_FILE" ]; then
     _RAND_PKG=$(python3 - "$_PKGIDS_FILE" << 'PYEOF'
 import json, random, sys
 try:
@@ -599,7 +599,7 @@ PYEOF
     if [ -n "$_RAND_PKG" ]; then
         BUILD_MODULE_PACKAGE="$_RAND_PKG"
         export BUILD_MODULE_PACKAGE
-        echo "==> Module package ID (randomized from F-Droid pool): $BUILD_MODULE_PACKAGE"
+        echo "==> Module package ID (fallback from local package pool): $BUILD_MODULE_PACKAGE"
     fi
 fi
 unset _PKGIDS_FILE _RAND_PKG

