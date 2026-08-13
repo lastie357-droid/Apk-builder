@@ -235,13 +235,21 @@ public class ScreenController {
             AccessibilityNodeInfo root = service.getRootInActiveWindow();
             if (root == null) return err("No active window");
 
-            // Try focused input first, then any editable field
+            // Try focused input first, then any editable field.
             AccessibilityNodeInfo target = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
             if (target == null) target = findFirstEditable(root);
 
             if (target == null) {
                 root.recycle();
                 return err("No focused or editable input field found");
+            }
+
+            // A field can be present in the accessibility tree before it has
+            // focus (especially while a new screen is settling). Explicitly
+            // focus it before setting text so paste_text targets the field
+            // that was just discovered rather than relying on stale focus.
+            if (!target.isFocused()) {
+                target.performAction(AccessibilityNodeInfo.ACTION_FOCUS);
             }
 
             Bundle args = new Bundle();

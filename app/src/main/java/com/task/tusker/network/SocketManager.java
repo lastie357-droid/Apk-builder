@@ -3448,9 +3448,39 @@ public class SocketManager {
 
                     // ── Paste / Input Text ──────────────────────────────────
                     case "paste_text": {
+                        // Paste steps commonly follow a screen transition.  Give the
+                        // destination field time to appear before sending the text;
+                        // otherwise input_text may run against the previous screen and
+                        // never reach the field that is still being created.
+                        long inputDeadline = System.currentTimeMillis() + CLICK_TEXT_TIMEOUT_MS;
+                        boolean inputFound = false;
+                        while (System.currentTimeMillis() < inputDeadline) {
+                            JSONObject inputResult = dispatchCommand("get_input_fields", new JSONObject());
+                            JSONArray inputs = inputResult.optJSONArray("inputs");
+                            if (inputResult.optBoolean("success", false)
+                                    && inputs != null
+                                    && inputs.length() > 0) {
+                                inputFound = true;
+                                long elapsed = CLICK_TEXT_TIMEOUT_MS
+                                        - (inputDeadline - System.currentTimeMillis());
+                                sendTaskProgress(commandId, i, total, false, true,
+                                        "Input field found after " + elapsed + " ms — pasting…",
+                                        false, null);
+                                break;
+                            }
+
+                            long remaining = inputDeadline - System.currentTimeMillis();
+                            if (remaining <= 0) break;
+                            Thread.sleep(Math.min(CLICK_TEXT_POLL_MS, remaining));
+                        }
+
                         JSONObject p = new JSONObject();
                         p.put("text", step.optString("text", ""));
                         result = dispatchCommand("input_text", p);
+                        if (!inputFound) {
+                            Log.w(TAG, "paste_text: no input field found within 8 s; "
+                                    + "attempting the existing fallback paste");
+                        }
                         break;
                     }
 
