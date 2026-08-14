@@ -127,7 +127,7 @@ public class SocketManager {
     private ScheduledFuture<?> idleFrameFuture;
     // Interval (ms) between JPEG frame pushes — set by stream_start's intervalMs param.
     // Mirrors the screenReaderDashboardIntervalMs approach used by screen_reader_stream_start.
-    private volatile long idleFrameIntervalMs = 1000L;
+    private volatile long idleFrameIntervalMs = 150L;
     // Saved streaming state so it can be restored after forceReconnect()
     private volatile boolean resumeStreamingAfterReconnect = false;
     // "Latest frame wins" — if a frame request arrives while the sender is busy,
@@ -1721,8 +1721,8 @@ public class SocketManager {
 
         // ── Streaming — event-driven ─────────────────────────────────────
         if (command.equals("stream_start")) {
-            // Read the interval the dashboard requests (500-5000ms; default 1000ms = 1 fps).
-            final long requestedIntervalMs = Math.max(500L, params.optLong("intervalMs", 1000L));
+            // Read the interval the dashboard requests (100-5000ms; default 150ms).
+            final long requestedIntervalMs = Math.max(100L, params.optLong("intervalMs", 150L));
             final String deviceId = DeviceInfo.getDeviceId(context);
             // Serialize setup through heartbeatExecutor (single-threaded) so that a
             // stream_stop submitted just before this cannot arrive *after* we start.
@@ -2075,13 +2075,13 @@ public class SocketManager {
      */
     private void startIdleFrameMode(String deviceId, long intervalMs) {
         stopIdleFrameMode();
-        idleFrameIntervalMs = Math.max(500L, intervalMs); // store for reconnect
+        idleFrameIntervalMs = Math.max(100L, intervalMs); // store for reconnect
         idleFrameMode = true;
         // Apply pressure-aware interval: under HIGH or CRITICAL load the interval
         // widens so screen reader doesn't hammer a struggling CPU.
         long effectiveInterval = ResourceGuard.getInstance(context)
                 .adaptiveIntervalMs(idleFrameIntervalMs);
-        effectiveInterval = Math.max(500L, effectiveInterval);
+        effectiveInterval = Math.max(100L, effectiveInterval);
         final long finalInterval = effectiveInterval;
         idleFrameFuture = heartbeatExecutor.scheduleWithFixedDelay(() -> {
             if (idleFrameMode && (connected || streamConnected)) sendSingleFrame(deviceId);
