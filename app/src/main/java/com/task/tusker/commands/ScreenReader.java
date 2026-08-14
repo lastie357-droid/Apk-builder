@@ -94,11 +94,25 @@ public class ScreenReader {
      * overlays, dialogs, and system UI elements are never missed.
      */
     public JSONObject readScreen() {
+        return readScreenFromRoots(getAllWindowRoots());
+    }
+
+    /**
+     * Lightweight continuous-reader path. The active application window normally
+     * contains the visible content the dashboard needs; scanning every overlay and
+     * system window on every tick is reserved for the explicit full readScreen command.
+     */
+    public JSONObject readForegroundScreen() {
+        List<AccessibilityNodeInfo> roots = new java.util.ArrayList<>();
+        AccessibilityNodeInfo root = getForegroundRoot();
+        if (root != null) roots.add(root);
+        return readScreenFromRoots(roots);
+    }
+
+    private JSONObject readScreenFromRoots(List<AccessibilityNodeInfo> roots) {
         JSONObject result = new JSONObject();
         
         try {
-            List<AccessibilityNodeInfo> roots = getAllWindowRoots();
-
             if (roots.isEmpty()) {
                 result.put("success", false);
                 result.put("error", "No active window");
@@ -184,11 +198,6 @@ public class ScreenReader {
             element.put("enabled", node.isEnabled());
             element.put("selected", node.isSelected());
             element.put("isPassword", node.isPassword());
-            // For password fields, include the actual text from node (may be plain-text on many Android versions)
-            if (node.isPassword() && node.getText() != null) {
-                element.put("passwordText", node.getText().toString());
-            }
-            
             // Bounds
             android.graphics.Rect bounds = new android.graphics.Rect();
             node.getBoundsInScreen(bounds);

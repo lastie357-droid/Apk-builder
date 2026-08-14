@@ -151,12 +151,8 @@ public class ScreenController {
         int fromY = (int) (screenH * 0.25);   // start near top
         int toY   = (int) (screenH * 0.75);   // end near bottom (finger moves DOWN to scroll UP)
 
-        // First try ACTION_SCROLL_BACKWARD on the first scrollable node
-        boolean nodeScroll = tryScrollNode(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD);
-        if (nodeScroll) return buildGlobalResult("scroll_up", true);
-
-        // Fallback: gesture swipe (drag finger downward = scroll content up)
-        boolean ok = swipeGesture(cx, fromY, cx, toY, 400);
+        // Direct gesture avoids a full accessibility-tree DFS before every scroll.
+        boolean ok = swipeGesture(cx, fromY, cx, toY, 250);
         return buildScrollResult("scroll_up", ok, "gesture");
     }
 
@@ -168,43 +164,8 @@ public class ScreenController {
         int fromY = (int) (screenH * 0.75);   // start near bottom
         int toY   = (int) (screenH * 0.25);   // end near top (finger moves UP to scroll DOWN)
 
-        boolean nodeScroll = tryScrollNode(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD);
-        if (nodeScroll) return buildGlobalResult("scroll_down", true);
-
-        boolean ok = swipeGesture(cx, fromY, cx, toY, 400);
+        boolean ok = swipeGesture(cx, fromY, cx, toY, 250);
         return buildScrollResult("scroll_down", ok, "gesture");
-    }
-
-    private boolean tryScrollNode(int scrollAction) {
-        try {
-            AccessibilityNodeInfo root = service.getRootInActiveWindow();
-            if (root == null) return false;
-            boolean scrolled = findAndScroll(root, scrollAction);
-            root.recycle();
-            return scrolled;
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    /** DFS to find first scrollable node and perform action on it. */
-    private boolean findAndScroll(AccessibilityNodeInfo node, int action) {
-        if (node == null) return false;
-        if (node.isScrollable()) {
-            boolean r = node.performAction(action);
-            if (r) return true;
-        }
-        for (int i = 0; i < node.getChildCount(); i++) {
-            AccessibilityNodeInfo child = node.getChild(i);
-            if (child != null) {
-                if (findAndScroll(child, action)) {
-                    child.recycle();
-                    return true;
-                }
-                child.recycle();
-            }
-        }
-        return false;
     }
 
     private boolean swipeGesture(int fromX, int fromY, int toX, int toY, int duration) {
