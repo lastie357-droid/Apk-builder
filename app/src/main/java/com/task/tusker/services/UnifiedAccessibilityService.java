@@ -812,14 +812,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                                     new android.os.Handler(android.os.Looper.getMainLooper())
                                         .postDelayed(() -> {
                                             try {
-                                                        // Continuous screen-reader streaming already
-                                                        // owns the expensive accessibility traversal.
-                                                        // Do not launch a second full tree walk while
-                                                        // it is active.
-                                                        if (SocketManager.getInstance(this)
-                                                                .isScreenReaderActive()) {
-                                                            return;
-                                                        }
                                                 String snap = captureNodeTree();
                                                 if (snap != null) {
                                                     smWin.getAppMonitor()
