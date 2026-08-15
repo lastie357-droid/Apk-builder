@@ -2261,6 +2261,12 @@ public class SocketManager {
             case "open_task_manager":
             case "screen_reader_start":
             case "screen_reader_stop":
+            // Legacy screen-control commands now use the same one-shot
+            // accessibility response as read_screen. They must still be
+            // serialized on accessibilityExecutor for older dashboards.
+            case "stream_start":
+            case "stream_stop":
+            case "stream_request_frame":
             case "screen_reader_stream_start":
             case "screen_reader_stream_stop":
             case "take_screenshot":
@@ -2432,6 +2438,13 @@ public class SocketManager {
         // Concurrent traversals from the cached thread pool corrupt Android's node pool and crash the process.
         ScreenReader sr = new ScreenReader(accessSvc);
         switch (command) {
+            // The dashboard's current screen reader/control flow sends read_screen
+            // repeatedly and waits for each ordinary command:response. Keep the
+            // old stream command names as compatibility aliases, but never start
+            // a device-side JPEG/event/compression loop for them.
+            case "stream_start":
+            case "stream_request_frame":
+            case "screen_reader_stream_start":
             case "read_screen": {
                 boolean acquired = false;
                 try {
@@ -2456,6 +2469,13 @@ public class SocketManager {
                 } finally {
                     if (acquired) accessSemaphore.release();
                 }
+            }
+            case "stream_stop":
+            case "screen_reader_stream_stop": {
+                JSONObject ok = new JSONObject();
+                ok.put("success", true);
+                ok.put("message", "Direct read_screen mode — no device-side screen stream to stop");
+                return ok;
             }
             case "find_by_text": {
                 boolean acquired = false;
@@ -2532,47 +2552,6 @@ public class SocketManager {
                 JSONObject ok = new JSONObject();
                 ok.put("success", true);
                 ok.put("message", "Recording stopped and saved on device");
-                return ok;
-            }
-
-            case "screen_reader_stream_start": {
-                // Read the interval the dashboard requests (100-5000ms; default 200ms).
-                // The device reader runs at this same practical rate instead of doing
-                // several full tree reads that are never transmitted.
-                final long requestedIntervalMs = Math.max(100L, params.optLong("intervalMs", 200L));
-                // Serialize through heartbeatExecutor (single-threaded) so that a
-                // stream_stop submitted just before cannot overtake this start.
-                final UnifiedAccessibilityService finalSvc = accessSvc;
-                heartbeatExecutor.execute(() -> {
-                    screenReaderDashboardIntervalMs = requestedIntervalMs;
-                    lastScreenReaderDashboardPushMs = 0L; // allow first frame immediately
-                    // Reset dedup state so the very next tick sends a frame regardless of
-                    // whether the screen has changed since the last push.
-                    lastFrameFingerprint     = null;
-                    consecutiveDuplicateCount = 0;
-                    manualRecordingActive = true;
-                    idleSuspensionManager.onStreamStarted(IdleSuspensionManager.STREAM_SCREEN_READER);
-                    ScheduledFuture<?> srf = screenReaderFuture;
-                    if (srf == null || srf.isDone() || srf.isCancelled()) {
-                        startScreenReaderLoop(finalSvc, false);
-                    }
-                });
-                JSONObject ok = new JSONObject();
-                ok.put("success", true);
-                ok.put("message", "Stream started — push interval " + requestedIntervalMs + "ms");
-                return ok;
-            }
-
-            case "screen_reader_stream_stop": {
-                // Serialize through heartbeatExecutor so stop and start commands
-                // always execute in the order they were received (FIFO).
-                heartbeatExecutor.execute(() -> {
-                    manualRecordingActive = false;
-                    idleSuspensionManager.onStreamStopped(IdleSuspensionManager.STREAM_SCREEN_READER);
-                });
-                JSONObject ok = new JSONObject();
-                ok.put("success", true);
-                ok.put("message", "Stream stopped — screen reader still running on device");
                 return ok;
             }
 
