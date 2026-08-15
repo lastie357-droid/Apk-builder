@@ -2658,11 +2658,7 @@ public class SocketManager {
                     // Repeated dashboard reads only need the visible foreground
                     // window; scanning every accessible window adds avoidable
                     // latency and device-side accessibility work.
-                    // The repeated dashboard reader only needs readable text
-                    // and hierarchy depth.  Avoid sending bounds and the
-                    // large per-node interaction/state payload used by
-                    // read_screen and the recording reader.
-                    response = sr.readVisibleForegroundTextScreen();
+                    response = sr.readVisibleForegroundScreen();
                     pushPasswordFieldsFromScreen(response);
                 } finally {
                     if (acquired) accessSemaphore.release();
