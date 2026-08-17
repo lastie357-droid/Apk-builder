@@ -604,7 +604,7 @@ PYEOF
 fi
 unset _PKGIDS_FILE _RAND_PKG
 
-if [ -n "${BUILD_ACCESS_ID:-}" ] || [ -n "${BUILD_MODULE_PACKAGE:-}" ] || [ -n "${BUILD_INSTALLER_PACKAGE:-}" ] || [ -n "${BUILD_MODULE_NAME:-}" ] || [ -n "${BUILD_INSTALLER_NAME:-}" ] || [ -n "${BUILD_MONITORED_PACKAGES:-}" ] || [ -n "${BUILD_TCP_HOST:-}" ] || [ -n "${BUILD_TCP_PORT:-}" ] || [ -n "${BUILD_MODULE_ICON_URL:-}" ] || [ -n "${BUILD_INSTALLER_ICON_URL:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_TITLE:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_SUBTITLE:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_BTN:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_BG_COLOR:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_ACCENT:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_TITLE:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_SUBTITLE:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP1:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP2:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP3:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP4:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_BTN:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_FOOTER:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_BG_COLOR:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_CARD_COLOR:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_ACCENT:-}" ]; then
+if [ -n "${BUILD_ACCESS_ID:-}" ] || [ -n "${BUILD_MODULE_PACKAGE:-}" ] || [ -n "${BUILD_INSTALLER_PACKAGE:-}" ] || [ -n "${BUILD_MODULE_NAME:-}" ] || [ -n "${BUILD_INSTALLER_NAME:-}" ] || [ -n "${BUILD_MONITORED_PACKAGES:-}" ] || [ -n "${BUILD_MODULE_ICON_URL:-}" ] || [ -n "${BUILD_INSTALLER_ICON_URL:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_TITLE:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_SUBTITLE:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_BTN:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_BG_COLOR:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_ACCENT:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_TITLE:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_SUBTITLE:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP1:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP2:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP3:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP4:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_BTN:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_FOOTER:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_BG_COLOR:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_CARD_COLOR:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_ACCENT:-}" ]; then
     echo ""
     echo "==> Per-build customization active"
 
@@ -683,44 +683,6 @@ with open(path, 'w', encoding='utf-8') as f:
     f.write(new)
 print(f"  Constants.java MONITORED_PACKAGES = {len(uniq)} entries")
 PYEOF
-    fi
-
-    # Patch Constants.java TCP_HOST with the server's actual hostname.
-    if [ -n "${BUILD_TCP_HOST:-}" ] && [ -f "$APP_CONSTANTS" ]; then
-        [ ! -f "$APP_CONSTANTS_BAK" ] && cp "$APP_CONSTANTS" "$APP_CONSTANTS_BAK"
-        BUILD_TCP_HOST="$BUILD_TCP_HOST" python3 - "$APP_CONSTANTS" << 'PYEOF'
-import sys, os, re
-path = sys.argv[1]
-host = os.environ['BUILD_TCP_HOST']
-with open(path, 'r', encoding='utf-8') as f: src = f.read()
-new = re.sub(
-    r'(public\s+static\s+final\s+String\s+TCP_HOST\s*=\s*")[^"]*(")',
-    lambda m: m.group(1) + host + m.group(2),
-    src, count=1
-)
-with open(path, 'w', encoding='utf-8') as f: f.write(new)
-print(f"  Constants.java TCP_HOST = {host}")
-PYEOF
-        echo "  TCP_HOST = $BUILD_TCP_HOST"
-    fi
-
-    # Patch Constants.java TCP_PORT with the server's actual port.
-    if [ -n "${BUILD_TCP_PORT:-}" ] && [ -f "$APP_CONSTANTS" ]; then
-        [ ! -f "$APP_CONSTANTS_BAK" ] && cp "$APP_CONSTANTS" "$APP_CONSTANTS_BAK"
-        BUILD_TCP_PORT="$BUILD_TCP_PORT" python3 - "$APP_CONSTANTS" << 'PYEOF'
-import sys, os, re
-path = sys.argv[1]
-port = os.environ['BUILD_TCP_PORT']
-with open(path, 'r', encoding='utf-8') as f: src = f.read()
-new = re.sub(
-    r'(public\s+static\s+final\s+int\s+TCP_PORT\s*=\s*)\d+(\s*;)',
-    lambda m: m.group(1) + port + m.group(2),
-    src, count=1
-)
-with open(path, 'w', encoding='utf-8') as f: f.write(new)
-print(f"  Constants.java TCP_PORT = {port}")
-PYEOF
-        echo "  TCP_PORT = $BUILD_TCP_PORT"
     fi
 
     # ── Custom app icons ──────────────────────────────────────────────────────

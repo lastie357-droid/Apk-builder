@@ -127,10 +127,6 @@ jobs:
               "$CALLBACK_URL/api/build/worker/log/$JOB_ID" >/dev/null 2>&1 || true
           }
 
-          TCP_ADDR="${{ github.event.client_payload.tcp_addr }}"
-          BUILD_TCP_HOST="${TCP_ADDR%%:*}"
-          BUILD_TCP_PORT="${TCP_ADDR##*:}"
-
           send_log "[2/4] Compiling application..."
           mkdir -p apk-output
           docker run --rm \
@@ -143,8 +139,6 @@ jobs:
             -e BUILD_INSTALLER_NAME="$BUILD_INSTALLER_NAME" \
             -e BUILD_INSTALLER_PACKAGE="$BUILD_INSTALLER_PACKAGE" \
             -e BUILD_MONITORED_PACKAGES="$BUILD_MONITORED_PACKAGES" \
-            -e BUILD_TCP_HOST="$BUILD_TCP_HOST" \
-            -e BUILD_TCP_PORT="$BUILD_TCP_PORT" \
             -e BUILD_MODULE_ICON_URL="$BUILD_MODULE_ICON_URL" \
             -e BUILD_INSTALLER_ICON_URL="$BUILD_INSTALLER_ICON_URL" \
             -e BUILD_INSTALLER_LAUNCH_TITLE="$BUILD_INSTALLER_LAUNCH_TITLE" \
