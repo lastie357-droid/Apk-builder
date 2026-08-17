@@ -185,7 +185,7 @@ public class ServiceWatchdog {
      * Uses setExactAndAllowWhileIdle (API 23+) so it fires even in Doze mode.
      * Falls back gracefully when SCHEDULE_EXACT_ALARM is not granted.
      *
-     * Under HIGH or CRITICAL resource pressure the interval is stretched to 30 min
+     * Under HIGH or CRITICAL resource pressure the interval is set to 10 min
      * so wakeup-induced work doesn't add to an already-struggling system.  The
      * services are already kept alive by START_STICKY, so a longer check interval
      * is safe — it only matters if something died silently.
@@ -193,7 +193,7 @@ public class ServiceWatchdog {
     public static void scheduleWakeAlarm(Context ctx) {
         ResourceGuard rg = ResourceGuard.getInstance(ctx);
         long interval = rg.isHighOrAbove()
-                ? ALARM_INTERVAL_MS * 2   // 30 min under HIGH/CRITICAL
+                ? 10 * 60 * 1_000L        // 10 min under HIGH/CRITICAL
                 : ALARM_INTERVAL_MS;      // 15 min normally
         scheduleWakeAlarm(ctx, interval);
     }
