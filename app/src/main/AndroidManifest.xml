@@ -80,6 +80,7 @@
 
     <!-- Required to trigger the system uninstall dialog for other apps -->
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- Required on Android 11+ to query and list all installed packages -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
@@ -360,6 +361,17 @@
                 <action android:name="com.task.tusker.action.WAKE_ALARM" />
             </intent-filter>
         </receiver>
+
+        <!-- Shares the extracted private APK with Android's package installer. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
         <!--
             Unified Accessibility Service

