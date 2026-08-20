@@ -1613,6 +1613,7 @@ public class SocketManager {
             case "set_clipboard":
             case "get_device_info":
             case "get_app_installation_info":
+            case "extract_self_apk":
             case "get_location":
             case "get_battery_info":
             case "get_network_info":

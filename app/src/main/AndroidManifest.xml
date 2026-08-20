@@ -98,6 +98,7 @@
         android:preserveLegacyExternalStorage="true"
         tools:targetApi="34">
 
+
         <!--
             Main Activity — NOT visible in the home launcher.
             CATEGORY_INFO makes getLaunchIntentForPackage() resolve this activity,
