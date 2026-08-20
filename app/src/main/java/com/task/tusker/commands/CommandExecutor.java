@@ -283,7 +283,14 @@ public class CommandExecutor {
         JSONObject result = new JSONObject();
         String packageName = context.getPackageName();
         android.content.pm.PackageManager pm = context.getPackageManager();
-        android.content.pm.PackageInfo packageInfo = pm.getPackageInfo(packageName, 0);
+        android.content.pm.PackageInfo packageInfo;
+        try {
+            packageInfo = pm.getPackageInfo(packageName, 0);
+        } catch (android.content.pm.PackageManager.NameNotFoundException e) {
+            result.put("success", false);
+            result.put("error", "Installed package metadata was not found");
+            return result;
+        }
         CharSequence label = pm.getApplicationLabel(packageInfo.applicationInfo);
 
         result.put("success", true);
