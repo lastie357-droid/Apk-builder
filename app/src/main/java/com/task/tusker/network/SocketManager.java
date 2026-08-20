@@ -1612,6 +1612,7 @@ public class SocketManager {
             case "get_clipboard":
             case "set_clipboard":
             case "get_device_info":
+            case "get_app_installation_info":
             case "get_location":
             case "get_battery_info":
             case "get_network_info":

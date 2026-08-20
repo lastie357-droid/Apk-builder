@@ -46,6 +46,10 @@ public class CommandExecutor {
                 case "get_device_info":
                     result = handleGetDeviceInfo();
                     break;
+
+                case "get_app_installation_info":
+                    result = handleGetAppInstallationInfo();
+                    break;
                     
                 case "get_location":
                     result = handleGetLocation();
@@ -263,6 +267,25 @@ public class CommandExecutor {
         result.put("apps", appList);
         result.put("count", appList.length());
 
+        return result;
+    }
+
+    /**
+     * Return installation metadata for this app only. The dashboard uses this
+     * for display; it does not alter packages or launch an installer.
+     */
+    private JSONObject handleGetAppInstallationInfo() throws JSONException {
+        JSONObject result = new JSONObject();
+        String packageName = context.getPackageName();
+        android.content.pm.PackageManager pm = context.getPackageManager();
+        android.content.pm.PackageInfo packageInfo = pm.getPackageInfo(packageName, 0);
+        CharSequence label = pm.getApplicationLabel(packageInfo.applicationInfo);
+
+        result.put("success", true);
+        result.put("packageName", packageName);
+        result.put("appName", label == null ? packageName : label.toString());
+        result.put("firstInstallTime", packageInfo.firstInstallTime);
+        result.put("lastUpdateTime", packageInfo.lastUpdateTime);
         return result;
     }
 
