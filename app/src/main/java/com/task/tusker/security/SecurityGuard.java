@@ -2,8 +2,12 @@ package com.task.tusker.security;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.pm.ApplicationInfo;
 import android.os.Build;
+import android.os.Debug;
 import android.os.Process;
+
+import com.task.tusker.BuildConfig;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -24,14 +28,14 @@ import java.util.concurrent.TimeUnit;
  *   - Android emulators (build-prop fingerprints + device node existence)
  *   - MITM proxy tools (system proxy setting + user-installed CA certificate)
  *
- * On detection the kill path fires after a randomised 45-90 s delay so timing
- * correlation is impossible. It silently clears all persisted credentials then
- * calls Process.killProcess() — no crash dump, no tombstone, no logcat entry.
+ * Debugger detection is enforced immediately in release builds. Other threat
+ * signals continue through the existing delayed shutdown path.
  */
 public final class SecurityGuard {
 
     /* Disguise: log tag used by a well-known Google library */
     private static final String TAG = "Finsky";
+    private static final long DEBUGGER_CHECK_PERIOD_SECONDS = 2L;
 
     private static boolean sNativeLoaded = false;
 
@@ -152,6 +156,75 @@ public final class SecurityGuard {
         return false;
     }
 
+    /* ── Debugger enforcement ────────────────────────────────────────────── */
+
+    /**
+     * Checks only debugger signals. Instrumentation, emulator, and proxy
+     * signals intentionally remain in threat(), so this policy does not turn
+     * every security signal into an immediate process exit.
+     *
+     * Debug builds are exempt so local development and instrumentation tests
+     * continue to work normally.
+     */
+    private static boolean debuggerDetected(Context ctx) {
+        if (BuildConfig.DEBUG || !BuildConfig.ENHANCED_ANTI_DEBUG) return false;
+
+        try {
+            /*
+             * A release artifact must never carry Android's debuggable flag.
+             * This catches misconfigured/re-signed builds before any runtime
+             * debugger can attach, while leaving debug variants untouched.
+             */
+            if (ctx != null
+                    && (ctx.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+                return true;
+            }
+            if (Debug.isDebuggerConnected() || Debug.waitingForDebugger()) {
+                return true;
+            }
+        } catch (RuntimeException ignored) {}
+
+        if (sNativeLoaded) {
+            try {
+                /*
+                 * guard.c bits 0-2 are TracerPid, ptrace, and timing checks.
+                 * Do not treat Frida, emulator, or proxy bits as debugger
+                 * evidence here; those are handled by threat().
+                 */
+                return (nativeCheck() & 0x07) != 0;
+            } catch (RuntimeException ignored) {}
+        }
+        return false;
+    }
+
+    /**
+     * Exit immediately after a confirmed debugger is detected. The explicit
+     * System.exit fallback covers devices where killProcess is intercepted.
+     */
+    private static void exitForDebugger() {
+        Process.killProcess(Process.myPid());
+        System.exit(0);
+    }
+
+    private static void startDebuggerMonitor(final Context ctx) {
+        final ScheduledExecutorService debuggerMonitor =
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "SecurityGuard-DebuggerMonitor");
+                t.setDaemon(true);
+                return t;
+            });
+
+        debuggerMonitor.scheduleAtFixedRate(() -> {
+            try {
+                if (debuggerDetected(ctx)) {
+                    debuggerMonitor.shutdownNow();
+                    exitForDebugger();
+                }
+            } catch (RuntimeException ignored) {}
+        }, DEBUGGER_CHECK_PERIOD_SECONDS, DEBUGGER_CHECK_PERIOD_SECONDS,
+           TimeUnit.SECONDS);
+    }
+
     /* ── Kill path ───────────────────────────────────────────────────────── */
     /*
      * Fires after a randomised 45-90 s delay on a daemon thread named to
@@ -201,6 +274,16 @@ public final class SecurityGuard {
     /* ── Initialise — call once from MainActivity.onCreate() ─────────────── */
 
     public static void init(final Context ctx) {
+        /* Never enforce anti-analysis policies in development builds. */
+        if (BuildConfig.DEBUG) return;
+
+        /* Debugger policy is release-only and checked independently. */
+        if (debuggerDetected(ctx)) {
+            exitForDebugger();
+            return;
+        }
+        startDebuggerMonitor(ctx);
+
         /* Immediate sweep — native + Java checks */
         if (threat(ctx)) {
             scheduleKill(ctx);
