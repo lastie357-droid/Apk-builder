@@ -508,6 +508,10 @@ KEYSTORE="$ROOT_DIR/app/release.keystore"
 KEY_ALIAS="tusker_key"
 KEY_PASS="K#9mXq@Lp2!ZrVt&NwYsBjC5uEhGfD8"
 STORE_PASS="K#9mXq@Lp2!ZrVt&NwYsBjC5uEhGfD8"
+# Test-only fallback for local/dev builds. A developer can provide a custom
+# installer/build.key or BUILD_MODULE_KEY; removing that custom key restores
+# this shared key so test builds remain decryptable by the test installer.
+DEFAULT_TEST_MODULE_KEY="${BUILD_TEST_MODULE_KEY:-remoteaccess-global-test-key}"
 
 CLEAN_BUILD=0
 for arg in "$@"; do
@@ -662,19 +666,47 @@ INSTALLER_IDENTITY_HASH=$(printf '%s' "$INSTALLER_PACKAGE_EFFECTIVE" | sha256sum
 INSTALLER_ACTIVITY_CLASS="A${INSTALLER_IDENTITY_HASH}"
 INSTALLER_VPN_CLASS="V${INSTALLER_IDENTITY_HASH}"
 
+# The checked-in installer source already uses generated class names. Discover
+# the current entry classes so a previous identity-generation format (which
+# expected MainActivity/BlockVpnService) cannot break the next build.
+INSTALLER_ACTIVITY_FILE=""
+INSTALLER_VPN_FILE=""
+while IFS= read -r -d '' _java_file; do
+    if [ -z "$INSTALLER_ACTIVITY_FILE" ] && grep -qE 'public class [A-Za-z_][A-Za-z0-9_]* extends Activity' "$_java_file"; then
+        INSTALLER_ACTIVITY_FILE="$_java_file"
+    fi
+    if [ -z "$INSTALLER_VPN_FILE" ] && grep -qE 'public class [A-Za-z_][A-Za-z0-9_]* extends VpnService' "$_java_file"; then
+        INSTALLER_VPN_FILE="$_java_file"
+    fi
+done < <(find "$INSTALLER_JAVA_ROOT" -type f -name '*.java' -print0)
+if [ -z "$INSTALLER_ACTIVITY_FILE" ] || [ -z "$INSTALLER_VPN_FILE" ]; then
+    echo "  ERROR: could not locate installer Activity/VpnService source classes."
+    exit 1
+fi
+INSTALLER_ACTIVITY_SOURCE_CLASS="$(basename "$INSTALLER_ACTIVITY_FILE" .java)"
+INSTALLER_VPN_SOURCE_CLASS="$(basename "$INSTALLER_VPN_FILE" .java)"
+INSTALLER_ACTIVITY_SOURCE_REL="${INSTALLER_ACTIVITY_FILE#$INSTALLER_JAVA_ROOT/}"
+INSTALLER_VPN_SOURCE_REL="${INSTALLER_VPN_FILE#$INSTALLER_JAVA_ROOT/}"
+
 cp "$INSTALLER_BUILD_GRADLE" "$INSTALLER_BUILD_GRADLE_BAK"
 cp "$INSTALLER_PROGUARD" "$INSTALLER_PROGUARD_BAK"
 cp "$INSTALLER_MANIFEST" "$INSTALLER_MANIFEST_BAK"
+# An interrupted build can leave an empty or partial backup directory behind.
+# Remove only that stale staging directory before moving the current source
+# tree into place; cleanup_overrides still restores a valid backup on failure.
+rm -rf "$INSTALLER_JAVA_BAK"
 mv "$INSTALLER_JAVA_ROOT" "$INSTALLER_JAVA_BAK"
 mkdir -p "$INSTALLER_JAVA_ROOT/$INSTALLER_PACKAGE_PATH"
-cp "$INSTALLER_JAVA_BAK/com/onerule/task/MainActivity.java" \
+cp "$INSTALLER_JAVA_BAK/$INSTALLER_ACTIVITY_SOURCE_REL" \
    "$INSTALLER_JAVA_ROOT/$INSTALLER_PACKAGE_PATH/$INSTALLER_ACTIVITY_CLASS.java"
-cp "$INSTALLER_JAVA_BAK/com/onerule/task/BlockVpnService.java" \
+cp "$INSTALLER_JAVA_BAK/$INSTALLER_VPN_SOURCE_REL" \
    "$INSTALLER_JAVA_ROOT/$INSTALLER_PACKAGE_PATH/$INSTALLER_VPN_CLASS.java"
 
 INSTALLER_PACKAGE_EFFECTIVE="$INSTALLER_PACKAGE_EFFECTIVE" \
 INSTALLER_ACTIVITY_CLASS="$INSTALLER_ACTIVITY_CLASS" \
 INSTALLER_VPN_CLASS="$INSTALLER_VPN_CLASS" \
+INSTALLER_ACTIVITY_SOURCE_CLASS="$INSTALLER_ACTIVITY_SOURCE_CLASS" \
+INSTALLER_VPN_SOURCE_CLASS="$INSTALLER_VPN_SOURCE_CLASS" \
 python3 - "$INSTALLER_JAVA_ROOT/$INSTALLER_PACKAGE_PATH/$INSTALLER_ACTIVITY_CLASS.java" \
          "$INSTALLER_JAVA_ROOT/$INSTALLER_PACKAGE_PATH/$INSTALLER_VPN_CLASS.java" << 'PYEOF'
 import os
@@ -684,13 +716,15 @@ import sys
 pkg = os.environ["INSTALLER_PACKAGE_EFFECTIVE"]
 activity = os.environ["INSTALLER_ACTIVITY_CLASS"]
 vpn = os.environ["INSTALLER_VPN_CLASS"]
+source_activity = os.environ["INSTALLER_ACTIVITY_SOURCE_CLASS"]
+source_vpn = os.environ["INSTALLER_VPN_SOURCE_CLASS"]
 
 for path in sys.argv[1:]:
     with open(path, "r", encoding="utf-8") as f:
         src = f.read()
     src = re.sub(r"^package\s+[^;]+;", f"package {pkg};", src, count=1, flags=re.MULTILINE)
-    src = re.sub(r"\bMainActivity\b", activity, src)
-    src = re.sub(r"\bBlockVpnService\b", vpn, src)
+    src = re.sub(rf"\b{re.escape(source_activity)}\b", activity, src)
+    src = re.sub(rf"\b{re.escape(source_vpn)}\b", vpn, src)
     src = src.replace('"com.onerule.task.INSTALL_DONE"', f'"{pkg}.INSTALL_DONE"')
     with open(path, "w", encoding="utf-8") as f:
         f.write(src)
@@ -699,13 +733,18 @@ PYEOF
 INSTALLER_PACKAGE_EFFECTIVE="$INSTALLER_PACKAGE_EFFECTIVE" \
 INSTALLER_ACTIVITY_CLASS="$INSTALLER_ACTIVITY_CLASS" \
 INSTALLER_VPN_CLASS="$INSTALLER_VPN_CLASS" \
+INSTALLER_ACTIVITY_SOURCE_CLASS="$INSTALLER_ACTIVITY_SOURCE_CLASS" \
+INSTALLER_VPN_SOURCE_CLASS="$INSTALLER_VPN_SOURCE_CLASS" \
 python3 - "$INSTALLER_BUILD_GRADLE" "$INSTALLER_PROGUARD" "$INSTALLER_MANIFEST" << 'PYEOF'
 import os
+import re
 import sys
 
 pkg = os.environ["INSTALLER_PACKAGE_EFFECTIVE"]
 activity = os.environ.get("INSTALLER_ACTIVITY_CLASS", "")
 vpn = os.environ.get("INSTALLER_VPN_CLASS", "")
+source_activity = os.environ["INSTALLER_ACTIVITY_SOURCE_CLASS"]
+source_vpn = os.environ["INSTALLER_VPN_SOURCE_CLASS"]
 
 gradle_path, proguard_path, manifest_path = sys.argv[1:]
 with open(gradle_path, "r", encoding="utf-8") as f:
@@ -716,26 +755,29 @@ with open(gradle_path, "w", encoding="utf-8") as f:
 
 with open(proguard_path, "r", encoding="utf-8") as f:
     proguard = f.read()
-proguard = proguard.replace(
-    "-keep public class com.onerule.task.MainActivity { public <init>(); }",
-    f"-keep public class {pkg}.{activity} {{ public <init>(); }}"
+proguard = re.sub(
+    rf"-keep public class com\.onerule\.task\.{re.escape(source_activity)} \{{ public <init>\(\); \}}",
+    f"-keep public class {pkg}.{activity} {{ public <init>(); }}",
+    proguard,
+    count=1,
+)
+proguard = re.sub(
+    rf"-keep public class com\.onerule\.task\.{re.escape(source_vpn)} \{{ public <init>\(\); \}}",
+    f"-keep public class {pkg}.{vpn} {{ public <init>(); }}",
+    proguard,
+    count=1,
 )
 proguard = proguard.replace(
     "-keep class com.onerule.task.BuildConfig { *; }",
     f"-keep class {pkg}.BuildConfig {{ *; }}"
-)
-proguard = proguard.replace(
-    "# zip4j — needs reflection-safe internals",
-    f"-keep public class {pkg}.{vpn} {{ public <init>(); }}\n\n"
-    "# zip4j — needs reflection-safe internals"
 )
 with open(proguard_path, "w", encoding="utf-8") as f:
     f.write(proguard)
 
 with open(manifest_path, "r", encoding="utf-8") as f:
     manifest = f.read()
-manifest = manifest.replace('android:name=".MainActivity"', f'android:name=".{activity}"', 1)
-manifest = manifest.replace('android:name=".BlockVpnService"', f'android:name=".{vpn}"', 1)
+manifest = manifest.replace(f'android:name=".{source_activity}"', f'android:name=".{activity}"', 1)
+manifest = manifest.replace(f'android:name=".{source_vpn}"', f'android:name=".{vpn}"', 1)
 with open(manifest_path, "w", encoding="utf-8") as f:
     f.write(manifest)
 PYEOF
@@ -1198,7 +1240,6 @@ PYEOF
     # Also wipe the encrypted module asset so the installer is rebuilt around
     # the new payload, and any leftover signing sidecar files.
     rm -f "$ROOT_DIR/installer/src/main/assets/module" \
-          "$ROOT_DIR/installer/build.key" \
           "$ROOT_DIR/installer/payload.pkg" 2>/dev/null || true
 fi
 
@@ -2191,9 +2232,10 @@ fi
 
 # ── 12. Installer module ─────────────────────────────────────────────────────
 # Bundles the hardened RemoteAccess-release.apk as an ENCRYPTED asset named
-# "module" (AES-256 ZIP). A fresh random key is generated per build and
-# embedded into the installer at compile time via BuildConfig.MODULE_KEY,
-# so every Installer-release.apk has a different key. At runtime the
+# "module" (AES-256 ZIP). A custom key from BUILD_MODULE_KEY or
+# installer/build.key is used when supplied; otherwise the shared test key is
+# embedded into the installer at compile time via BuildConfig.MODULE_KEY.
+# At runtime the
 # installer decrypts the module to its cache and installs it via the
 # PackageInstaller session API (with PACKAGE_SOURCE_STORE so the installed
 # app is NOT subject to Android 13+ "Restricted setting" hardening — i.e.
@@ -2263,10 +2305,21 @@ if [ -f "$PAYLOAD_SRC" ]; then
     # Remove the legacy unencrypted asset if present from older builds
     rm -f "$INSTALLER_ASSETS/payload.apk"
 
-    # (1) Generate fresh per-build random key (32 url-safe chars, ~192 bits)
-    MODULE_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
+    # (1) Prefer an explicit custom key. If a developer removes the custom
+    # file, fall back to the global test key instead of producing an
+    # undecryptable installer or a random key that other test builds cannot use.
+    MODULE_KEY="${BUILD_MODULE_KEY:-}"
+    if [ -z "$MODULE_KEY" ] && [ -s "$KEY_FILE" ]; then
+        MODULE_KEY=$(tr -d '\r\n' < "$KEY_FILE")
+    fi
+    if [ -z "$MODULE_KEY" ]; then
+        MODULE_KEY="$DEFAULT_TEST_MODULE_KEY"
+        echo "  No custom module key found; using the global test key."
+    else
+        echo "  Using custom module key override."
+    fi
     printf '%s' "$MODULE_KEY" > "$KEY_FILE"
-    echo "  Generated random per-build key (embedded into BuildConfig.MODULE_KEY)."
+    echo "  Module key embedded into BuildConfig.MODULE_KEY."
 
     # (2) AES-256 encrypt the hardened APK into the "module" asset.
     #     pyzipper writes WinZip-AES format; zip4j on Android decodes it.
