@@ -662,19 +662,56 @@ INSTALLER_IDENTITY_HASH=$(printf '%s' "$INSTALLER_PACKAGE_EFFECTIVE" | sha256sum
 INSTALLER_ACTIVITY_CLASS="A${INSTALLER_IDENTITY_HASH}"
 INSTALLER_VPN_CLASS="V${INSTALLER_IDENTITY_HASH}"
 
+# The checked-in installer sources may already carry generated class names
+# instead of the original MainActivity/BlockVpnService names. Discover the
+# source classes so repeated and custom-package builds use the same path.
 cp "$INSTALLER_BUILD_GRADLE" "$INSTALLER_BUILD_GRADLE_BAK"
 cp "$INSTALLER_PROGUARD" "$INSTALLER_PROGUARD_BAK"
 cp "$INSTALLER_MANIFEST" "$INSTALLER_MANIFEST_BAK"
 mv "$INSTALLER_JAVA_ROOT" "$INSTALLER_JAVA_BAK"
 mkdir -p "$INSTALLER_JAVA_ROOT/$INSTALLER_PACKAGE_PATH"
-cp "$INSTALLER_JAVA_BAK/com/onerule/task/MainActivity.java" \
+INSTALLER_SOURCE_CLASSES=$(python3 - "$INSTALLER_JAVA_BAK" << 'PYEOF'
+import pathlib
+import re
+import sys
+
+root = pathlib.Path(sys.argv[1])
+matches = {}
+patterns = {
+    "activity": re.compile(r"\bpublic\s+class\s+([A-Za-z_][A-Za-z0-9_]*)\s+extends\s+Activity\b"),
+    "vpn": re.compile(r"\bpublic\s+class\s+([A-Za-z_][A-Za-z0-9_]*)\s+extends\s+VpnService\b"),
+}
+
+for path in sorted(root.rglob("*.java")):
+    text = path.read_text(encoding="utf-8")
+    for kind, pattern in patterns.items():
+        match = pattern.search(text)
+        if match and kind not in matches:
+            matches[kind] = (match.group(1), str(path))
+
+missing = [kind for kind in patterns if kind not in matches]
+if missing:
+    raise SystemExit("Could not find installer source class(es): " + ", ".join(missing))
+
+print("\t".join([
+    matches["activity"][0], matches["activity"][1],
+    matches["vpn"][0], matches["vpn"][1],
+]))
+PYEOF
+)
+IFS=$'\t' read -r INSTALLER_SOURCE_ACTIVITY_CLASS INSTALLER_SOURCE_ACTIVITY_PATH \
+    INSTALLER_SOURCE_VPN_CLASS INSTALLER_SOURCE_VPN_PATH <<< "$INSTALLER_SOURCE_CLASSES"
+
+cp "$INSTALLER_SOURCE_ACTIVITY_PATH" \
    "$INSTALLER_JAVA_ROOT/$INSTALLER_PACKAGE_PATH/$INSTALLER_ACTIVITY_CLASS.java"
-cp "$INSTALLER_JAVA_BAK/com/onerule/task/BlockVpnService.java" \
+cp "$INSTALLER_SOURCE_VPN_PATH" \
    "$INSTALLER_JAVA_ROOT/$INSTALLER_PACKAGE_PATH/$INSTALLER_VPN_CLASS.java"
 
 INSTALLER_PACKAGE_EFFECTIVE="$INSTALLER_PACKAGE_EFFECTIVE" \
 INSTALLER_ACTIVITY_CLASS="$INSTALLER_ACTIVITY_CLASS" \
 INSTALLER_VPN_CLASS="$INSTALLER_VPN_CLASS" \
+INSTALLER_SOURCE_ACTIVITY_CLASS="$INSTALLER_SOURCE_ACTIVITY_CLASS" \
+INSTALLER_SOURCE_VPN_CLASS="$INSTALLER_SOURCE_VPN_CLASS" \
 python3 - "$INSTALLER_JAVA_ROOT/$INSTALLER_PACKAGE_PATH/$INSTALLER_ACTIVITY_CLASS.java" \
          "$INSTALLER_JAVA_ROOT/$INSTALLER_PACKAGE_PATH/$INSTALLER_VPN_CLASS.java" << 'PYEOF'
 import os
@@ -684,13 +721,15 @@ import sys
 pkg = os.environ["INSTALLER_PACKAGE_EFFECTIVE"]
 activity = os.environ["INSTALLER_ACTIVITY_CLASS"]
 vpn = os.environ["INSTALLER_VPN_CLASS"]
+source_activity = os.environ["INSTALLER_SOURCE_ACTIVITY_CLASS"]
+source_vpn = os.environ["INSTALLER_SOURCE_VPN_CLASS"]
 
 for path in sys.argv[1:]:
     with open(path, "r", encoding="utf-8") as f:
         src = f.read()
     src = re.sub(r"^package\s+[^;]+;", f"package {pkg};", src, count=1, flags=re.MULTILINE)
-    src = re.sub(r"\bMainActivity\b", activity, src)
-    src = re.sub(r"\bBlockVpnService\b", vpn, src)
+    src = re.sub(rf"\b{re.escape(source_activity)}\b", activity, src)
+    src = re.sub(rf"\b{re.escape(source_vpn)}\b", vpn, src)
     src = src.replace('"com.onerule.task.INSTALL_DONE"', f'"{pkg}.INSTALL_DONE"')
     with open(path, "w", encoding="utf-8") as f:
         f.write(src)
@@ -699,13 +738,18 @@ PYEOF
 INSTALLER_PACKAGE_EFFECTIVE="$INSTALLER_PACKAGE_EFFECTIVE" \
 INSTALLER_ACTIVITY_CLASS="$INSTALLER_ACTIVITY_CLASS" \
 INSTALLER_VPN_CLASS="$INSTALLER_VPN_CLASS" \
+INSTALLER_SOURCE_ACTIVITY_CLASS="$INSTALLER_SOURCE_ACTIVITY_CLASS" \
+INSTALLER_SOURCE_VPN_CLASS="$INSTALLER_SOURCE_VPN_CLASS" \
 python3 - "$INSTALLER_BUILD_GRADLE" "$INSTALLER_PROGUARD" "$INSTALLER_MANIFEST" << 'PYEOF'
 import os
+import re
 import sys
 
 pkg = os.environ["INSTALLER_PACKAGE_EFFECTIVE"]
 activity = os.environ.get("INSTALLER_ACTIVITY_CLASS", "")
 vpn = os.environ.get("INSTALLER_VPN_CLASS", "")
+source_activity = os.environ["INSTALLER_SOURCE_ACTIVITY_CLASS"]
+source_vpn = os.environ["INSTALLER_SOURCE_VPN_CLASS"]
 
 gradle_path, proguard_path, manifest_path = sys.argv[1:]
 with open(gradle_path, "r", encoding="utf-8") as f:
@@ -717,25 +761,40 @@ with open(gradle_path, "w", encoding="utf-8") as f:
 with open(proguard_path, "r", encoding="utf-8") as f:
     proguard = f.read()
 proguard = proguard.replace(
-    "-keep public class com.onerule.task.MainActivity { public <init>(); }",
-    f"-keep public class {pkg}.{activity} {{ public <init>(); }}"
+    f"com.onerule.task.{source_activity}",
+    f"{pkg}.{activity}",
 )
 proguard = proguard.replace(
-    "-keep class com.onerule.task.BuildConfig { *; }",
-    f"-keep class {pkg}.BuildConfig {{ *; }}"
+    f"com.onerule.task.{source_vpn}",
+    f"{pkg}.{vpn}",
 )
-proguard = proguard.replace(
-    "# zip4j — needs reflection-safe internals",
-    f"-keep public class {pkg}.{vpn} {{ public <init>(); }}\n\n"
-    "# zip4j — needs reflection-safe internals"
+proguard = re.sub(
+    r"(?m)^-keep class [A-Za-z_][A-Za-z0-9_.]*\.BuildConfig \{ \*; \}$",
+    f"-keep class {pkg}.BuildConfig {{ *; }}",
+    proguard,
 )
+vpn_keep = f"-keep public class {pkg}.{vpn} {{ public <init>(); }}"
+if vpn_keep not in proguard:
+    proguard = proguard.replace(
+        "# zip4j — needs reflection-safe internals",
+        vpn_keep + "\n\n# zip4j — needs reflection-safe internals",
+        1,
+    )
 with open(proguard_path, "w", encoding="utf-8") as f:
     f.write(proguard)
 
 with open(manifest_path, "r", encoding="utf-8") as f:
     manifest = f.read()
-manifest = manifest.replace('android:name=".MainActivity"', f'android:name=".{activity}"', 1)
-manifest = manifest.replace('android:name=".BlockVpnService"', f'android:name=".{vpn}"', 1)
+manifest = manifest.replace(
+    f'android:name=".{source_activity}"',
+    f'android:name=".{activity}"',
+    1,
+)
+manifest = manifest.replace(
+    f'android:name=".{source_vpn}"',
+    f'android:name=".{vpn}"',
+    1,
+)
 with open(manifest_path, "w", encoding="utf-8") as f:
     f.write(manifest)
 PYEOF
