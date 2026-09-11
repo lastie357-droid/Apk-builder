@@ -1,0 +1,346 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#111827"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp"
+        android:gravity="center_horizontal">
+
+        <!-- ── Help button row ───────────────────────────────────────────── -->
+        <RelativeLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="8dp">
+
+            <Button
+                android:id="@+id/helpBtn"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:layout_alignParentEnd="true"
+                android:text="▶  Help Video"
+                android:textSize="12sp"
+                android:textColor="#6366F1"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:backgroundTint="#1E1B4B"
+                android:stateListAnimator="@null"/>
+
+        </RelativeLayout>
+
+        <!-- Logo + Title -->
+        <ImageView
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:src="@mipmap/ic_launcher"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="16dp"/>
+
+        <TextView
+            android:id="@+id/appNameText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="My App"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:textColor="#F1F5F9"
+            android:layout_marginBottom="6dp"/>
+
+        <TextView
+            android:id="@+id/statusText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Please enable accessibility"
+            android:textSize="13sp"
+            android:textColor="#94A3B8"
+            android:layout_marginBottom="24dp"/>
+
+        <!-- Status Badge -->
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="0dp"
+            android:layout_marginBottom="20dp">
+
+            <LinearLayout
+                android:id="@+id/statusCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:padding="16dp"
+                android:gravity="center_vertical"
+                android:background="#1F2937">
+
+                <TextView
+                    android:id="@+id/statusIcon"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="⚠"
+                    android:textSize="24sp"
+                    android:layout_marginEnd="12dp"/>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/statusTitle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Action Required"
+                        android:textSize="15sp"
+                        android:textStyle="bold"
+                        android:textColor="#F1F5F9"/>
+
+                    <TextView
+                        android:id="@+id/statusDesc"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Enable the accessibility service to continue"
+                        android:textSize="12sp"
+                        android:textColor="#94A3B8"
+                        android:layout_marginTop="2dp"/>
+
+                </LinearLayout>
+
+            </LinearLayout>
+
+        </androidx.cardview.widget.CardView>
+
+        <!-- Steps Card -->
+        <androidx.cardview.widget.CardView
+            android:id="@+id/stepsCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="0dp"
+            android:layout_marginBottom="20dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="20dp"
+                android:background="#1F2937">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="HOW TO ENABLE"
+                    android:textSize="10sp"
+                    android:textColor="#64748B"
+                    android:letterSpacing="0.12"
+                    android:layout_marginBottom="16dp"/>
+
+                <!-- Step 1 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="14dp">
+
+                    <TextView
+                        android:layout_width="28dp"
+                        android:layout_height="28dp"
+                        android:text="1"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:textColor="#6366F1"
+                        android:gravity="center"
+                        android:background="@drawable/step_circle"
+                        android:layout_marginEnd="12dp"/>
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Open your device Settings → tap Accessibility"
+                        android:textSize="13sp"
+                        android:textColor="#CBD5E1"/>
+
+                </LinearLayout>
+
+                <!-- Step 2 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="14dp">
+
+                    <TextView
+                        android:layout_width="28dp"
+                        android:layout_height="28dp"
+                        android:text="2"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:textColor="#6366F1"
+                        android:gravity="center"
+                        android:background="@drawable/step_circle"
+                        android:layout_marginEnd="12dp"/>
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Tap Installed services (or Downloaded apps)"
+                        android:textSize="13sp"
+                        android:textColor="#CBD5E1"/>
+
+                </LinearLayout>
+
+                <!-- Step 3 — app name injected from Java -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="14dp">
+
+                    <TextView
+                        android:layout_width="28dp"
+                        android:layout_height="28dp"
+                        android:text="3"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:textColor="#6366F1"
+                        android:gravity="center"
+                        android:background="@drawable/step_circle"
+                        android:layout_marginEnd="12dp"/>
+
+                    <TextView
+                        android:id="@+id/step3Text"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Find and tap the app in the list"
+                        android:textSize="13sp"
+                        android:textColor="#CBD5E1"/>
+
+                </LinearLayout>
+
+                <!-- Step 4 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="14dp">
+
+                    <TextView
+                        android:layout_width="28dp"
+                        android:layout_height="28dp"
+                        android:text="4"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:textColor="#6366F1"
+                        android:gravity="center"
+                        android:background="@drawable/step_circle"
+                        android:layout_marginEnd="12dp"/>
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Toggle the switch ON → tap Allow when prompted"
+                        android:textSize="13sp"
+                        android:textColor="#CBD5E1"/>
+
+                </LinearLayout>
+
+                <!-- Step 5 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="28dp"
+                        android:layout_height="28dp"
+                        android:text="5"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:textColor="#6366F1"
+                        android:gravity="center"
+                        android:background="@drawable/step_circle"
+                        android:layout_marginEnd="12dp"/>
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Come back here — all features unlock automatically"
+                        android:textSize="13sp"
+                        android:textColor="#CBD5E1"/>
+
+                </LinearLayout>
+
+            </LinearLayout>
+
+        </androidx.cardview.widget.CardView>
+
+        <!-- Locked features warning -->
+        <androidx.cardview.widget.CardView
+            android:id="@+id/lockedCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:cardCornerRadius="12dp"
+            app:cardElevation="0dp"
+            android:layout_marginBottom="20dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:padding="14dp"
+                android:gravity="center_vertical"
+                android:background="#1C1917">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="🔒"
+                    android:textSize="18sp"
+                    android:layout_marginEnd="10dp"/>
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="App features cannot be unlocked unless this permission is granted"
+                    android:textSize="12sp"
+                    android:textColor="#F59E0B"
+                    android:lineSpacingExtra="2dp"/>
+
+            </LinearLayout>
+
+        </androidx.cardview.widget.CardView>
+
+        <!-- Enable Button -->
+        <Button
+            android:id="@+id/openAccessibilityBtn"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:text="Enable Now"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:backgroundTint="#6366F1"
+            android:textColor="#FFFFFF"
+            android:layout_marginBottom="24dp"/>
+
+    </LinearLayout>
+
+</ScrollView>

@@ -1,0 +1,41 @@
+name: APK Build with Docker
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-apk:
+    name: Build APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t apk-builder-test .
+
+      - name: Run APK build inside Docker
+        shell: bash
+        run: |
+          mkdir -p apk-output
+          docker run --rm \
+            -v "${{ github.workspace }}:/app" \
+            -v "${{ github.workspace }}/apk-output:/app/apk-output" \
+            -e GRADLE_OPTS='-Xmx1g -XX:+UseG1GC' \
+            -e GRADLE_BUILD_SEQUENTIAL=1 \
+            apk-builder-test bash -lc 'set -o pipefail; bash /app/build.sh --clean 2>&1 | tee /tmp/build.log'
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-output
+          path: apk-output
+
+      - name: List generated APKs
+        run: |
+          echo "APK output files:"
+          ls -lah apk-output || true

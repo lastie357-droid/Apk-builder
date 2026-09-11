@@ -1,0 +1,104 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Per-build customisation written by build.sh (when invoked from the
+// /api/build/apk endpoint). All optional — when these files are absent,
+// the in-tree defaults are used.
+//   app/build.access_id  → baked into BuildConfig.ACCESS_ID
+//   app/build.app_id     → overrides applicationId for this build
+def accessIdFile = rootProject.file('app/build.access_id')
+def BUILD_ACCESS_ID = accessIdFile.exists() ? accessIdFile.text.trim() : ''
+
+def appIdFile = rootProject.file('app/build.app_id')
+def BUILD_APP_ID  = appIdFile.exists() ? appIdFile.text.trim() : 'com.task.tusker'
+
+def installerIdFile = rootProject.file('app/build.installer_id')
+def BUILD_INSTALLER_PACKAGE = installerIdFile.exists()
+        ? installerIdFile.text.trim()
+        : 'com.onerule.task'
+
+android {
+    namespace 'com.task.tusker'
+    compileSdk 36
+    buildToolsVersion "35.0.0"
+
+    /* NDK required for the native anti-analysis library (libguard.so) */
+    ndkVersion "27.0.12077973"
+
+    defaultConfig {
+        applicationId BUILD_APP_ID
+        minSdk 24
+        targetSdk 36
+        versionCode 1
+        versionName "1.0"
+
+        buildConfigField "String", "ACCESS_ID", "\"${BUILD_ACCESS_ID}\""
+        buildConfigField "String", "INSTALLER_PACKAGE", "\"${BUILD_INSTALLER_PACKAGE}\""
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        externalNativeBuild {
+            cmake {
+                cFlags   "-O2 -fvisibility=hidden -fstack-protector-all -ffunction-sections -fdata-sections"
+                cppFlags "-O2 -fvisibility=hidden -fstack-protector-all"
+            }
+        }
+
+        ndk {
+            /* Only real-device ABIs — x86/x86_64 are emulator-only and double the .so footprint */
+            abiFilters "arm64-v8a", "armeabi-v7a"
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
+            version "3.22.1"
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    signingConfigs {
+        release {
+            storeFile file('release.keystore')
+            storePassword 'K#9mXq@Lp2!ZrVt&NwYsBjC5uEhGfD8'
+            keyAlias 'tusker_key'
+            keyPassword 'K#9mXq@Lp2!ZrVt&NwYsBjC5uEhGfD8'
+        }
+    }
+
+    buildTypes {
+        debug {
+            minifyEnabled false
+        }
+        release {
+            minifyEnabled true
+            shrinkResources true
+            signingConfig signingConfigs.release
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.11.0'
+    // ConstraintLayout is referenced in activity_consent.xml
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+
+    // WorkManager for background keep-alive tasks
+    implementation 'androidx.work:work-runtime:2.9.0'
+
+    testImplementation 'junit:junit:4.13.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.1.5'
+    androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
+}

