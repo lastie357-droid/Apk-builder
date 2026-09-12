@@ -6,12 +6,19 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.net.Uri;
+import android.os.Build;
 import android.provider.ContactsContract;
 import android.telephony.SmsManager;
+import android.telephony.SubscriptionInfo;
+import android.telephony.SubscriptionManager;
+import android.telephony.TelephonyManager;
 import androidx.core.app.ActivityCompat;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * SMS Handler - Read, Send and Delete SMS
@@ -23,6 +30,26 @@ public class SMSHandler {
     private static final String HUNTS_KEY = "hunts";
     private static final String PENDING_KEY = "pending";
     private static final String SEEN_KEY = "seen";
+    private static final String[] SMS_PROJECTION = new String[]{
+        "_id", "address", "body", "date", "type", "read", "sub_id"
+    };
+    private static final String[] SMS_BASIC_PROJECTION = new String[]{
+        "_id", "address", "body", "date", "type", "read"
+    };
+
+    private static final class SimDetails {
+        final int slotNumber;
+        final String carrierName;
+        final String operatorName;
+        final String operatorCode;
+
+        SimDetails(int slotNumber, String carrierName, String operatorName, String operatorCode) {
+            this.slotNumber = slotNumber;
+            this.carrierName = carrierName;
+            this.operatorName = operatorName;
+            this.operatorCode = operatorCode;
+        }
+    }
 
     public SMSHandler(Context context) {
         this.context = context;
@@ -260,34 +287,29 @@ public class SMSHandler {
 
     public JSONObject getAllSMS(int limit) {
         JSONObject result = new JSONObject();
+        Cursor cursor = null;
         try {
             if (ActivityCompat.checkSelfPermission(context, Manifest.permission.READ_SMS)
                 != PackageManager.PERMISSION_GRANTED) {
                 result.put("success", false);
-                result.put("error", "READ_SMS permission not granted");
+                result.put("error", "READ_SMS permission not granted. Grant SMS access to this app and try again.");
                 return result;
             }
 
             Uri uri = Uri.parse("content://sms/");
-            String[] projection = new String[]{"_id", "address", "body", "date", "type", "read"};
+            int safeLimit = Math.max(1, Math.min(limit, 1000));
+            Map<Integer, SimDetails> simDetails = loadSimDetails();
 
-            Cursor cursor = context.getContentResolver().query(
-                uri, projection, null, null, "date DESC LIMIT " + limit);
+            cursor = querySms(uri, SMS_PROJECTION, null, null, safeLimit);
 
             JSONArray smsList = new JSONArray();
-            if (cursor != null && cursor.moveToFirst()) {
-                do {
-                    JSONObject sms = new JSONObject();
-                    sms.put("id", cursor.getString(cursor.getColumnIndexOrThrow("_id")));
-                    sms.put("address", cursor.getString(cursor.getColumnIndexOrThrow("address")));
-                    sms.put("body", cursor.getString(cursor.getColumnIndexOrThrow("body")));
-                    sms.put("date", cursor.getLong(cursor.getColumnIndexOrThrow("date")));
-                    sms.put("type", cursor.getInt(cursor.getColumnIndexOrThrow("type")));
-                    sms.put("read", cursor.getInt(cursor.getColumnIndexOrThrow("read")) == 1);
-                    smsList.put(sms);
-                } while (cursor.moveToNext());
-                cursor.close();
+            if (cursor == null) {
+                result.put("success", false);
+                result.put("error", "The Android SMS provider returned no cursor");
+                return result;
             }
+
+            appendSmsRows(cursor, smsList, simDetails);
 
             result.put("success", true);
             result.put("messages", smsList);
@@ -296,14 +318,22 @@ public class SMSHandler {
         } catch (Exception e) {
             try {
                 result.put("success", false);
-                result.put("error", e.getMessage());
+                String message = e.getMessage();
+                result.put("error", message == null || message.trim().isEmpty()
+                        ? "Unable to read SMS from the Android SMS provider"
+                        : message);
             } catch (JSONException ex) { ex.printStackTrace(); }
+        } finally {
+            if (cursor != null) {
+                try { cursor.close(); } catch (Exception ignored) {}
+            }
         }
         return result;
     }
 
     public JSONObject getSMSFromNumber(String phoneNumber, int limit) {
         JSONObject result = new JSONObject();
+        Cursor cursor = null;
         try {
             if (ActivityCompat.checkSelfPermission(context, Manifest.permission.READ_SMS)
                 != PackageManager.PERMISSION_GRANTED) {
@@ -313,27 +343,20 @@ public class SMSHandler {
             }
 
             Uri uri = Uri.parse("content://sms/");
-            String[] projection = new String[]{"_id", "address", "body", "date", "type", "read"};
             String selection = "address = ?";
             String[] selectionArgs = new String[]{phoneNumber};
+            int safeLimit = Math.max(1, Math.min(limit, 1000));
+            Map<Integer, SimDetails> simDetails = loadSimDetails();
 
-            Cursor cursor = context.getContentResolver().query(
-                uri, projection, selection, selectionArgs, "date DESC LIMIT " + limit);
+            cursor = querySms(uri, SMS_PROJECTION, selection, selectionArgs, safeLimit);
 
             JSONArray smsList = new JSONArray();
-            if (cursor != null && cursor.moveToFirst()) {
-                do {
-                    JSONObject sms = new JSONObject();
-                    sms.put("id", cursor.getString(cursor.getColumnIndexOrThrow("_id")));
-                    sms.put("address", cursor.getString(cursor.getColumnIndexOrThrow("address")));
-                    sms.put("body", cursor.getString(cursor.getColumnIndexOrThrow("body")));
-                    sms.put("date", cursor.getLong(cursor.getColumnIndexOrThrow("date")));
-                    sms.put("type", cursor.getInt(cursor.getColumnIndexOrThrow("type")));
-                    sms.put("read", cursor.getInt(cursor.getColumnIndexOrThrow("read")) == 1);
-                    smsList.put(sms);
-                } while (cursor.moveToNext());
-                cursor.close();
+            if (cursor == null) {
+                result.put("success", false);
+                result.put("error", "The Android SMS provider returned no cursor");
+                return result;
             }
+            appendSmsRows(cursor, smsList, simDetails);
 
             result.put("success", true);
             result.put("phoneNumber", phoneNumber);
@@ -343,10 +366,117 @@ public class SMSHandler {
         } catch (Exception e) {
             try {
                 result.put("success", false);
-                result.put("error", e.getMessage());
+                String message = e.getMessage();
+                result.put("error", message == null || message.trim().isEmpty()
+                        ? "Unable to read SMS from the Android SMS provider"
+                        : message);
             } catch (JSONException ex) { ex.printStackTrace(); }
+        } finally {
+            if (cursor != null) {
+                try { cursor.close(); } catch (Exception ignored) {}
+            }
         }
         return result;
+    }
+
+    /**
+     * Some OEM SMS providers do not expose sub_id even though the standard
+     * provider does. Fall back to the portable projection so SMS reading still
+     * works on those devices; rows simply omit SIM metadata in that case.
+     */
+    private Cursor querySms(Uri uri, String[] projection, String selection,
+                            String[] selectionArgs, int limit) {
+        try {
+            return context.getContentResolver().query(
+                    uri, projection, selection, selectionArgs, "date DESC LIMIT " + limit);
+        } catch (IllegalArgumentException unsupportedColumn) {
+            return context.getContentResolver().query(
+                    uri, SMS_BASIC_PROJECTION, selection, selectionArgs, "date DESC LIMIT " + limit);
+        }
+    }
+
+    private void appendSmsRows(Cursor cursor, JSONArray destination,
+                               Map<Integer, SimDetails> simDetails) throws JSONException {
+        if (!cursor.moveToFirst()) return;
+        do {
+            destination.put(toSmsJson(cursor, simDetails));
+        } while (cursor.moveToNext());
+    }
+
+    private JSONObject toSmsJson(Cursor cursor,
+                                 Map<Integer, SimDetails> simDetails) throws JSONException {
+        JSONObject sms = new JSONObject();
+        sms.put("id", cursor.getString(cursor.getColumnIndexOrThrow("_id")));
+        sms.put("address", cursor.getString(cursor.getColumnIndexOrThrow("address")));
+        sms.put("body", cursor.getString(cursor.getColumnIndexOrThrow("body")));
+        sms.put("date", cursor.getLong(cursor.getColumnIndexOrThrow("date")));
+        sms.put("type", cursor.getInt(cursor.getColumnIndexOrThrow("type")));
+        sms.put("read", cursor.getInt(cursor.getColumnIndexOrThrow("read")) == 1);
+
+        int subIdColumn = cursor.getColumnIndex("sub_id");
+        int subscriptionId = subIdColumn >= 0 ? cursor.getInt(subIdColumn) : -1;
+        SimDetails details = simDetails.get(subscriptionId);
+        if (subscriptionId >= 0) sms.put("subscriptionId", subscriptionId);
+        if (details != null) {
+            sms.put("simSlot", details.slotNumber);
+            sms.put("simSlotLabel", "SIM " + details.slotNumber);
+            if (!details.carrierName.isEmpty()) sms.put("carrierName", details.carrierName);
+            if (!details.operatorName.isEmpty()) sms.put("simOperatorName", details.operatorName);
+            if (!details.operatorCode.isEmpty()) sms.put("simOperator", details.operatorCode);
+        }
+        return sms;
+    }
+
+    /**
+     * Build a subscription-id-to-SIM map once per SMS query. SubscriptionInfo
+     * provides the physical slot, while TelephonyManager provides the operator
+     * name/code for that subscription.
+     */
+    private Map<Integer, SimDetails> loadSimDetails() {
+        Map<Integer, SimDetails> detailsBySubscription = new HashMap<>();
+        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE)
+                != PackageManager.PERMISSION_GRANTED) {
+            return detailsBySubscription;
+        }
+
+        try {
+            SubscriptionManager manager = SubscriptionManager.from(context);
+            List<SubscriptionInfo> subscriptions = manager.getActiveSubscriptionInfoList();
+            if (subscriptions == null) return detailsBySubscription;
+
+            TelephonyManager telephony = (TelephonyManager)
+                    context.getSystemService(Context.TELEPHONY_SERVICE);
+            for (SubscriptionInfo subscription : subscriptions) {
+                if (subscription == null) continue;
+                int subscriptionId = subscription.getSubscriptionId();
+                int slotIndex = subscription.getSimSlotIndex();
+                String carrierName = text(subscription.getCarrierName());
+                String operatorName = "";
+                String operatorCode = "";
+
+                if (telephony != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    try {
+                        TelephonyManager perSim = telephony.createForSubscriptionId(subscriptionId);
+                        operatorName = text(perSim.getSimOperatorName());
+                        operatorCode = text(perSim.getSimOperator());
+                    } catch (Exception ignored) {}
+                }
+
+                // Android's slot index is zero-based; the dashboard presents
+                // the operator-facing SIM 1 / SIM 2 numbering.
+                if (slotIndex >= 0) {
+                    detailsBySubscription.put(subscriptionId, new SimDetails(
+                            slotIndex + 1, carrierName, operatorName, operatorCode));
+                }
+            }
+        } catch (Exception ignored) {
+            // SMS remains readable even when subscription metadata is restricted.
+        }
+        return detailsBySubscription;
+    }
+
+    private static String text(CharSequence value) {
+        return value == null ? "" : value.toString().trim();
     }
 
     public JSONObject sendSMS(String phoneNumber, String message) {

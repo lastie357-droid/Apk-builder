@@ -1751,6 +1751,11 @@ public class SocketManager {
             bulkExecutor.execute(() -> {
                 try {
                     JSONObject full = smsHandler.getAllSMS(smsLimit);
+                    if (!full.optBoolean("success", false)) {
+                        sendChunkedError(cidSms, "get_all_sms",
+                                full.optString("error", "Unable to read SMS"));
+                        return;
+                    }
                     JSONArray arr = full.optJSONArray("messages");
                     if (arr == null) arr = new JSONArray();
                     sendChunked(cidSms, "get_all_sms", arr, "messages", 50);

