@@ -3,6 +3,8 @@ package com.task.tusker.network;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Base64;
 import android.util.Log;
 import com.task.tusker.advanced.NotificationInterceptor;
@@ -305,10 +307,46 @@ public class SocketManager {
         java.util.concurrent.Future<?> scheduled;
     }
 
+    /**
+     * A task run is deliberately restarted from its original step list after the
+     * device is locked.  We do not retain a step cursor because continuing at the
+     * old cursor could leave the target app in an unknown state.
+     */
+    private static final class TaskRun {
+        final JSONArray steps;
+        final String commandId;
+        volatile Thread thread;
+        volatile boolean restartRequested;
+        volatile int currentStepIndex = -1;
+
+        TaskRun(JSONArray steps, String commandId) {
+            this.steps = steps;
+            this.commandId = commandId;
+        }
+    }
+
+    private static final class PendingTask {
+        final JSONArray steps;
+        final String commandId;
+
+        PendingTask(JSONArray steps, String commandId) {
+            this.steps = steps;
+            this.commandId = commandId;
+        }
+    }
+
     private final java.util.concurrent.ConcurrentHashMap<String, CommandSlot> commandSlots =
             new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.concurrent.ConcurrentHashMap<String, CommandSlot> activeCommandSlots =
             new java.util.concurrent.ConcurrentHashMap<>();
+
+    // Task Studio runs are kept separate from normal command coalescing because
+    // the task command acknowledges immediately while its steps run in a worker.
+    private final Object taskLock = new Object();
+    private final java.util.Map<String, TaskRun> activeTaskRuns = new java.util.HashMap<>();
+    private final java.util.Map<String, PendingTask> waitingTasks = new java.util.HashMap<>();
+    private final Handler taskLockHandler = new Handler(Looper.getMainLooper());
+    private android.content.BroadcastReceiver taskLockReceiver;
 
     // Touch/swipe deduplication — ignore identical command within 250 ms
     private volatile String  lastTouchKey  = "";
@@ -460,6 +498,8 @@ public class SocketManager {
                 } catch (Exception ignored) {}
             }
         });
+
+        registerTaskLockReceiver();
     }
 
     /** Called by UnifiedAccessibilityService once it's running, to init gesture recorder. */
@@ -2095,16 +2135,7 @@ public class SocketManager {
             // and process kills — the device owns the workflow independently.
             boolean stored = saveTaskToDevice(steps, commandId);
 
-            // Start execution in a background thread.  The task uses the in-memory
-            // steps reference (already fully received before we got here) which is
-            // equivalent to the file we just saved.
-            new Thread(() -> { try { executeTaskLocal(steps, commandId); } catch (Exception e) { Log.e(TAG, "run_task_local: " + e.getMessage()); } }, "task-local").start();
-
-            return new JSONObject()
-                    .put("success", true)
-                    .put("started", true)
-                    .put("stored", stored)
-                    .put("steps", steps.length());
+            return startOrQueueTask(steps, commandId, stored);
         }
         if (command.equals("disable_app"))    return appMonitor.disableApp(params.getString("packageName"));
 
@@ -3799,7 +3830,182 @@ public class SocketManager {
         }
     }
 
-    private void executeTaskLocal(JSONArray steps, String commandId) {
+    /**
+     * Register lock/unlock events at the task layer.  This intentionally does
+     * not change the dashboard/backend protocol: the task command is still
+     * acknowledged immediately, while task:progress reports waiting/restart
+     * state to the existing Task Studio UI.
+     */
+    private void registerTaskLockReceiver() {
+        if (taskLockReceiver != null) return;
+
+        taskLockReceiver = new android.content.BroadcastReceiver() {
+            @Override
+            public void onReceive(Context receiverContext, android.content.Intent intent) {
+                if (intent == null || intent.getAction() == null) return;
+                String action = intent.getAction();
+
+                if (android.content.Intent.ACTION_SCREEN_OFF.equals(action)) {
+                    // Keyguard state can lag the SCREEN_OFF broadcast on some OEMs.
+                    taskLockHandler.postDelayed(() -> {
+                        if (isDeviceLocked()) requestTaskRestartForLock();
+                    }, 200L);
+                } else if (android.content.Intent.ACTION_USER_PRESENT.equals(action)) {
+                    startWaitingTasksAfterUnlock();
+                } else if (android.content.Intent.ACTION_SCREEN_ON.equals(action)) {
+                    // Covers devices that wake without delivering USER_PRESENT.
+                    taskLockHandler.postDelayed(() -> {
+                        if (!isDeviceLocked()) startWaitingTasksAfterUnlock();
+                    }, 300L);
+                }
+            }
+        };
+
+        android.content.IntentFilter filter = new android.content.IntentFilter();
+        filter.addAction(android.content.Intent.ACTION_SCREEN_OFF);
+        filter.addAction(android.content.Intent.ACTION_SCREEN_ON);
+        filter.addAction(android.content.Intent.ACTION_USER_PRESENT);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.registerReceiver(taskLockReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+            } else {
+                context.registerReceiver(taskLockReceiver, filter);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "registerTaskLockReceiver: " + e.getMessage());
+        }
+    }
+
+    private boolean isDeviceLocked() {
+        try {
+            android.app.KeyguardManager keyguard =
+                    (android.app.KeyguardManager) context.getSystemService(Context.KEYGUARD_SERVICE);
+            return keyguard != null && keyguard.isKeyguardLocked();
+        } catch (Exception e) {
+            Log.w(TAG, "Unable to read device lock state: " + e.getMessage());
+            return false;
+        }
+    }
+
+    private JSONObject startOrQueueTask(JSONArray steps, String commandId, boolean stored)
+            throws JSONException {
+        PendingTask task = new PendingTask(steps, commandId);
+        if (isDeviceLocked()) {
+            synchronized (taskLock) {
+                waitingTasks.put(commandId, task);
+            }
+            sendTaskProgress(commandId, -1, steps.length(), false, true,
+                    "Task waiting for device unlock", false, null);
+            return new JSONObject()
+                    .put("success", true)
+                    .put("started", false)
+                    .put("waitingForUnlock", true)
+                    .put("stored", stored)
+                    .put("steps", steps.length());
+        }
+
+        startTaskRun(task, false);
+        return new JSONObject()
+                .put("success", true)
+                .put("started", true)
+                .put("stored", stored)
+                .put("steps", steps.length());
+    }
+
+    private void startTaskRun(PendingTask task, boolean restarted) {
+        if (isDeviceLocked()) {
+            synchronized (taskLock) {
+                waitingTasks.put(task.commandId, task);
+            }
+            return;
+        }
+
+        TaskRun run;
+        synchronized (taskLock) {
+            // A screen-off event may arrive between the lock check and this
+            // section.  The receiver will see this run and interrupt it.
+            run = new TaskRun(task.steps, task.commandId);
+            activeTaskRuns.put(task.commandId, run);
+        }
+
+        if (restarted) {
+            sendTaskProgress(run.commandId, -1, run.steps.length(), false, true,
+                    "Device unlocked — restarting task from the beginning", false, null);
+        }
+
+        Thread worker = new Thread(() -> {
+            try {
+                executeTaskLocal(run);
+            } catch (Exception e) {
+                Log.e(TAG, "run_task_local: " + e.getMessage());
+            } finally {
+                finishTaskRun(run);
+            }
+        }, "task-local");
+        run.thread = worker;
+        worker.start();
+    }
+
+    private void requestTaskRestartForLock() {
+        java.util.ArrayList<TaskRun> interruptedRuns = new java.util.ArrayList<>();
+        synchronized (taskLock) {
+            for (TaskRun run : activeTaskRuns.values()) {
+                if (!run.restartRequested) {
+                    run.restartRequested = true;
+                    // Keep the exact original step list; the rerun must begin
+                    // at step zero rather than resuming the old cursor.
+                    if (!waitingTasks.containsKey(run.commandId)) {
+                        waitingTasks.put(run.commandId, new PendingTask(run.steps, run.commandId));
+                    }
+                    interruptedRuns.add(run);
+                }
+            }
+        }
+
+        for (TaskRun run : interruptedRuns) {
+            sendTaskProgress(run.commandId, run.currentStepIndex, run.steps.length(), false, false,
+                    "Device locked — stopping task; it will restart from the beginning after unlock",
+                    false, "device_locked");
+            Thread worker = run.thread;
+            if (worker != null) worker.interrupt();
+        }
+    }
+
+    private void startWaitingTasksAfterUnlock() {
+        if (isDeviceLocked()) return;
+
+        java.util.ArrayList<PendingTask> ready = new java.util.ArrayList<>();
+        synchronized (taskLock) {
+            java.util.Iterator<java.util.Map.Entry<String, PendingTask>> iterator =
+                    waitingTasks.entrySet().iterator();
+            while (iterator.hasNext()) {
+                java.util.Map.Entry<String, PendingTask> entry = iterator.next();
+                if (!activeTaskRuns.containsKey(entry.getKey())) {
+                    ready.add(entry.getValue());
+                    iterator.remove();
+                }
+            }
+        }
+
+        for (PendingTask task : ready) {
+            startTaskRun(task, true);
+        }
+    }
+
+    private void finishTaskRun(TaskRun run) {
+        boolean removed;
+        synchronized (taskLock) {
+            removed = activeTaskRuns.get(run.commandId) == run;
+            if (removed) activeTaskRuns.remove(run.commandId);
+        }
+        if (removed && !isDeviceLocked()) {
+            startWaitingTasksAfterUnlock();
+        }
+    }
+
+    private void executeTaskLocal(TaskRun run) {
+        JSONArray steps = run.steps;
+        String commandId = run.commandId;
         final long CLICK_TEXT_TIMEOUT_MS = 8_000L;
         final long CLICK_TEXT_POLL_MS    = 100L;
         final long INTER_STEP_DELAY_MS   = 500L;
@@ -3808,6 +4014,9 @@ public class SocketManager {
         int completed = 0;
 
         for (int i = 0; i < total; i++) {
+            run.currentStepIndex = i;
+            if (run.restartRequested) return;
+
             JSONObject step;
             String type;
             try {
@@ -3819,6 +4028,7 @@ public class SocketManager {
             }
 
             try {
+                if (run.restartRequested) return;
                 sendTaskProgress(commandId, i, total, false, true, "Starting: " + type, false, null);
 
                 JSONObject result;
@@ -3855,10 +4065,12 @@ public class SocketManager {
                                 .put("error", "Text not found within 8 s: \"" + textToFind + "\"");
 
                         while (System.currentTimeMillis() < pollDeadline) {
+                            if (run.restartRequested) return;
                             // Poll — find_by_text uses the accessibility tree (semaphore-guarded)
                             JSONObject findParams = new JSONObject();
                             findParams.put("text", textToFind);
                             JSONObject findResult = dispatchCommand("find_by_text", findParams);
+                            if (run.restartRequested) return;
 
                             if (findResult.optBoolean("success", false)) {
                                 int cnt = findResult.optInt("count", 0);
@@ -3892,6 +4104,7 @@ public class SocketManager {
                         long inputDeadline = System.currentTimeMillis() + CLICK_TEXT_TIMEOUT_MS;
                         boolean inputFound = false;
                         while (System.currentTimeMillis() < inputDeadline) {
+                            if (run.restartRequested) return;
                             JSONObject inputResult = dispatchCommand("get_input_fields", new JSONObject());
                             JSONArray inputs = inputResult.optJSONArray("inputs");
                             if (inputResult.optBoolean("success", false)
@@ -3950,6 +4163,7 @@ public class SocketManager {
                                 .put("error", "Unknown step type: " + type);
                 }
 
+                if (run.restartRequested) return;
                 boolean ok     = result.optBoolean("success", false);
                 String  errMsg = ok ? null : result.optString("error", "Step failed");
                 String  msg    = ok ? ("Done: " + type) : ("Failed: " + errMsg);
@@ -3971,10 +4185,12 @@ public class SocketManager {
 
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
+                if (run.restartRequested) return;
                 sendTaskProgress(commandId, i, total, true, false, "Task interrupted", false, "interrupted");
                 sendTaskCompleteEvent(commandId, completed, total);
                 return;
             } catch (Exception e) {
+                if (run.restartRequested) return;
                 Log.e(TAG, "executeTaskLocal step " + i + " exception: " + e.getMessage());
                 sendTaskProgress(commandId, i, total, true, false, "Error: " + e.getMessage(), false, e.getMessage());
                 sendTaskCompleteEvent(commandId, completed, total);
