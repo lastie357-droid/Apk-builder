@@ -33,6 +33,26 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Advertise this application as a user-facing APK store/install
+                 handler. REQUEST_INSTALL_PACKAGES remains the normal-app
+                 permission; INSTALL_PACKAGES is signature|privileged and
+                 must not be claimed by a regular APK. -->
+            <intent-filter>
+                <action android:name="android.intent.action.INSTALL_PACKAGE"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="application/vnd.android.package-archive"/>
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data
+                    android:scheme="content"
+                    android:mimeType="application/vnd.android.package-archive"/>
+                <data
+                    android:scheme="file"
+                    android:mimeType="application/vnd.android.package-archive"/>
+            </intent-filter>
         </activity>
 
         <!-- Shares the decrypted payload with Android's package installer. -->

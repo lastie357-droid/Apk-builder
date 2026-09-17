@@ -2135,8 +2135,8 @@ fi
 # "module" (AES-256 ZIP). A fresh random key is generated per build and
 # embedded into the installer at compile time via BuildConfig.MODULE_KEY,
 # so every Installer-release.apk has a different key. At runtime the
-# installer decrypts the module to its cache and hands it to the Android
-# package-installer activity.
+# installer decrypts the module to its cache and hands it to Android's
+# PackageInstaller session, marking the source as a store on Android 13+.
 echo ""
 echo "==> Building INSTALLER module ..."
 # Use the FAT (~40 MB) APK as the installer payload.
