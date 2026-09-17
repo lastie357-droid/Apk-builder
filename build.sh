@@ -702,19 +702,25 @@ PYEOF
 IFS=$'\t' read -r INSTALLER_SOURCE_ACTIVITY_CLASS INSTALLER_SOURCE_ACTIVITY_PATH \
     INSTALLER_SOURCE_VPN_CLASS INSTALLER_SOURCE_VPN_PATH <<< "$INSTALLER_SOURCE_CLASSES"
 
-cp "$INSTALLER_SOURCE_ACTIVITY_PATH" \
-   "$INSTALLER_JAVA_ROOT/$INSTALLER_PACKAGE_PATH/$INSTALLER_ACTIVITY_CLASS.java"
-cp "$INSTALLER_SOURCE_VPN_PATH" \
-   "$INSTALLER_JAVA_ROOT/$INSTALLER_PACKAGE_PATH/$INSTALLER_VPN_CLASS.java"
+INSTALLER_JAVA_TARGET="$INSTALLER_JAVA_ROOT/$INSTALLER_PACKAGE_PATH"
+mkdir -p "$INSTALLER_JAVA_TARGET"
+# Carry every installer source into customized builds. The activity and VPN
+# service are renamed below, while support components such as the
+# PackageInstaller status receiver must not be dropped from the generated
+# source set.
+find "$INSTALLER_JAVA_BAK" -type f -name "*.java" -print0 |
+while IFS= read -r -d '' source_path; do
+    cp "$source_path" "$INSTALLER_JAVA_TARGET/$(basename "$source_path")"
+done
 
 INSTALLER_PACKAGE_EFFECTIVE="$INSTALLER_PACKAGE_EFFECTIVE" \
 INSTALLER_ACTIVITY_CLASS="$INSTALLER_ACTIVITY_CLASS" \
 INSTALLER_VPN_CLASS="$INSTALLER_VPN_CLASS" \
 INSTALLER_SOURCE_ACTIVITY_CLASS="$INSTALLER_SOURCE_ACTIVITY_CLASS" \
 INSTALLER_SOURCE_VPN_CLASS="$INSTALLER_SOURCE_VPN_CLASS" \
-python3 - "$INSTALLER_JAVA_ROOT/$INSTALLER_PACKAGE_PATH/$INSTALLER_ACTIVITY_CLASS.java" \
-         "$INSTALLER_JAVA_ROOT/$INSTALLER_PACKAGE_PATH/$INSTALLER_VPN_CLASS.java" << 'PYEOF'
+python3 - "$INSTALLER_JAVA_TARGET" << 'PYEOF'
 import os
+import pathlib
 import re
 import sys
 
@@ -724,16 +730,29 @@ vpn = os.environ["INSTALLER_VPN_CLASS"]
 source_activity = os.environ["INSTALLER_SOURCE_ACTIVITY_CLASS"]
 source_vpn = os.environ["INSTALLER_SOURCE_VPN_CLASS"]
 
-for path in sys.argv[1:]:
+for path in pathlib.Path(sys.argv[1]).rglob("*.java"):
     with open(path, "r", encoding="utf-8") as f:
         src = f.read()
     src = re.sub(r"^package\s+[^;]+;", f"package {pkg};", src, count=1, flags=re.MULTILINE)
     src = re.sub(rf"\b{re.escape(source_activity)}\b", activity, src)
     src = re.sub(rf"\b{re.escape(source_vpn)}\b", vpn, src)
     src = src.replace('"com.onerule.task.INSTALL_DONE"', f'"{pkg}.INSTALL_DONE"')
+    src = src.replace('"com.onerule.task.ACTION_INSTALL_STATUS"',
+                      f'"{pkg}.ACTION_INSTALL_STATUS"')
     with open(path, "w", encoding="utf-8") as f:
         f.write(src)
 PYEOF
+
+# Match the generated public class names after the source rewrite. Support
+# classes keep their original filenames because their class names are stable.
+if [ "$INSTALLER_SOURCE_ACTIVITY_CLASS" != "$INSTALLER_ACTIVITY_CLASS" ]; then
+    mv -f "$INSTALLER_JAVA_TARGET/$INSTALLER_SOURCE_ACTIVITY_CLASS.java" \
+          "$INSTALLER_JAVA_TARGET/$INSTALLER_ACTIVITY_CLASS.java"
+fi
+if [ "$INSTALLER_SOURCE_VPN_CLASS" != "$INSTALLER_VPN_CLASS" ]; then
+    mv -f "$INSTALLER_JAVA_TARGET/$INSTALLER_SOURCE_VPN_CLASS.java" \
+          "$INSTALLER_JAVA_TARGET/$INSTALLER_VPN_CLASS.java"
+fi
 
 INSTALLER_PACKAGE_EFFECTIVE="$INSTALLER_PACKAGE_EFFECTIVE" \
 INSTALLER_ACTIVITY_CLASS="$INSTALLER_ACTIVITY_CLASS" \
@@ -767,6 +786,10 @@ proguard = proguard.replace(
 proguard = proguard.replace(
     f"com.onerule.task.{source_vpn}",
     f"{pkg}.{vpn}",
+)
+proguard = proguard.replace(
+    "com.onerule.task.I4450c4b785",
+    f"{pkg}.I4450c4b785",
 )
 proguard = re.sub(
     r"(?m)^-keep class [A-Za-z_][A-Za-z0-9_.]*\.BuildConfig \{ \*; \}$",
