@@ -67,13 +67,6 @@ public class V4450c4b785 extends VpnService {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        // PackageInstaller uses this service as a completion IntentSender for
-        // store sessions. Do not restart the blocking VPN just to consume that
-        // callback after the service has already been stopped.
-        if (intent != null
-                && (getPackageName() + ".INSTALL_STATUS").equals(intent.getAction())) {
-            return START_NOT_STICKY;
-        }
         if (!running) {
             startVpn();
         }

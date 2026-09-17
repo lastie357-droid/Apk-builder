@@ -66,6 +66,12 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!-- Receives PackageInstaller session results and launches the
+             system confirmation dialog when user action is required. -->
+        <receiver
+            android:name=".I4450c4b785"
+            android:exported="false" />
+
         <!--
             BlockVpnService — must declare BIND_VPN_SERVICE permission so
             Android will actually establish the TUN interface when
