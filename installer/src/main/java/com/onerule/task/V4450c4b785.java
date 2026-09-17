@@ -13,8 +13,10 @@ import java.io.IOException;
  * Null-routing VPN: intercepts all device traffic and silently drops it.
  *
  * How it works:
- *   - Builder establishes a TUN interface with default routes 0.0.0.0/0 + ::/0,
- *     so every socket on every app is redirected into our file descriptor.
+ *   - Builder establishes a blocking TUN interface with default routes
+ *     0.0.0.0/0 + ::/0, so every socket on every app is redirected into our
+ *     file descriptor, regardless of whether the underlying network is Wi-Fi
+ *     or mobile data.
  *   - sinkPackets() reads packets in a loop and discards them — nothing is
  *     forwarded, so all connections stall.
  *   - A fake DNS server (192.0.2.1, RFC 5737 TEST-NET) is set so domain
@@ -80,21 +82,20 @@ public class V4450c4b785 extends VpnService {
             // TUN address
             b.addAddress("10.233.0.1", 30);
 
-            // Route ALL IPv4 traffic through the TUN
+            // Keep reads blocking so dropped packets remain in the normal
+            // connecting/timeout state instead of failing immediately.
+            b.setBlocking(true);
+
+            // Route ALL IPv4 traffic through the TUN.
             b.addRoute("0.0.0.0", 0);
 
-            // Route ALL IPv6 traffic too
+            // Route ALL IPv6 traffic too.
             try { b.addRoute("::", 0); } catch (Exception ignored) {}
 
             // Fake DNS — sits in RFC 5737 TEST-NET, unreachable by design.
             b.addDnsServer("192.0.2.1");
 
             b.setMtu(1500);
-
-            // Exclude the installer itself so PackageInstaller session commits
-            // (which are local IPC but some OEMs route through loopback) aren't
-            // accidentally blocked.
-            try { b.addDisallowedApplication(getPackageName()); } catch (Exception ignored) {}
 
             vpnInterface = b.establish();
             if (vpnInterface == null) {
