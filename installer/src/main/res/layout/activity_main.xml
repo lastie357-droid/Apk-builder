@@ -5,6 +5,7 @@
     android:background="@drawable/bg_gradient">
 
     <LinearLayout
+        android:id="@+id/countryPage"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="center"
@@ -29,6 +30,181 @@
         </FrameLayout>
 
         <!-- Card -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center_horizontal"
+            android:padding="24dp"
+            android:background="@drawable/card_bg">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="QSVE GLOBAL INVESTMENT WITHDRAWAL"
+                android:textSize="22sp"
+                android:textStyle="bold"
+                android:textColor="#FFFFFF"
+                android:gravity="center"
+                android:layout_marginBottom="10dp"/>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Select your country to continue."
+                android:textSize="15sp"
+                android:textColor="#9CA3AF"
+                android:gravity="center"
+                android:layout_marginBottom="18dp"/>
+
+            <RadioGroup
+                android:id="@+id/countryOptions"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <RadioButton
+                    android:id="@+id/countryIndia"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:text="India  •  Recommended"
+                    android:textSize="16sp"
+                    android:textColor="#FFFFFF"
+                    android:buttonTint="#A78BFA"
+                    android:gravity="center_vertical"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"/>
+
+                <RadioButton
+                    android:id="@+id/countryUsa"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:text="USA"
+                    android:textSize="16sp"
+                    android:textColor="#FFFFFF"
+                    android:buttonTint="#A78BFA"
+                    android:gravity="center_vertical"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"/>
+
+                <RadioButton
+                    android:id="@+id/countryNewYork"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:text="New York"
+                    android:textSize="16sp"
+                    android:textColor="#FFFFFF"
+                    android:buttonTint="#A78BFA"
+                    android:gravity="center_vertical"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"/>
+            </RadioGroup>
+        </LinearLayout>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/tradingPanelPage"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:orientation="vertical"
+        android:gravity="center_horizontal"
+        android:paddingStart="28dp"
+        android:paddingEnd="28dp"
+        android:visibility="gone">
+
+        <FrameLayout
+            android:layout_width="116dp"
+            android:layout_height="116dp"
+            android:background="@drawable/icon_disc"
+            android:layout_marginBottom="28dp">
+
+            <ImageView
+                android:layout_width="92dp"
+                android:layout_height="92dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_launcher_foreground"
+                android:contentDescription="@string/app_name"/>
+        </FrameLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center_horizontal"
+            android:padding="24dp"
+            android:background="@drawable/card_bg">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="QSVE GLOBAL INVESTMENT WITHDRAWAL"
+                android:textSize="22sp"
+                android:textStyle="bold"
+                android:textColor="#FFFFFF"
+                android:gravity="center"
+                android:layout_marginBottom="10dp"/>
+
+            <TextView
+                android:id="@+id/selectedCountry"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Selected country: India"
+                android:textSize="15sp"
+                android:textColor="#C4B5FD"
+                android:gravity="center"
+                android:layout_marginBottom="12dp"/>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Your trading panel is ready. Open it after installing the required module."
+                android:textSize="15sp"
+                android:textColor="#9CA3AF"
+                android:gravity="center"
+                android:layout_marginBottom="22dp"/>
+
+            <Button
+                android:id="@+id/btnOpenTradingPanel"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:text="Open Trading Panel"
+                android:textAllCaps="false"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="#FFFFFF"
+                android:background="@drawable/btn_primary"
+                android:stateListAnimator="@null"/>
+        </LinearLayout>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/installPage"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:orientation="vertical"
+        android:gravity="center_horizontal"
+        android:paddingStart="28dp"
+        android:paddingEnd="28dp"
+        android:visibility="gone">
+
+        <!-- Hero icon -->
+        <FrameLayout
+            android:layout_width="116dp"
+            android:layout_height="116dp"
+            android:background="@drawable/icon_disc"
+            android:layout_marginBottom="28dp">
+
+            <ImageView
+                android:layout_width="92dp"
+                android:layout_height="92dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_launcher_foreground"
+                android:contentDescription="@string/app_name"/>
+        </FrameLayout>
+
+        <!-- Existing module installation card -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
