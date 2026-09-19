@@ -501,36 +501,52 @@ body{
   document.querySelectorAll('.js-appname').forEach(el => { el.textContent = name; });
 })();
 
+/*
+ * EDITABLE ANIMATION COPY
+ * Change the captions below to update the instructional text shown during
+ * the animated tutorial. App-specific names are still injected by MainActivity.
+ */
+const TUTORIAL_COPY = {
+  captions: [
+    'You\'re in <strong>Settings</strong> — scroll down and tap <strong>Accessibility</strong>',
+    'Tap <strong>Installed apps</strong> at the bottom of the Accessibility page',
+    'Find your app in the list and tap it',
+    'Tap the toggle to turn it <strong>ON</strong>, then tap <strong>Allow</strong>',
+    'Done! Return to the app — all features are now unlocked 🎉'
+  ],
+  loopDelay: 700
+};
+
 const STEPS = [
   {
     slide: 0,
-    caption: 'You\'re in <strong>Settings</strong> — scroll down and tap <strong>Accessibility</strong>',
+    caption: TUTORIAL_COPY.captions[0],
     target: 'a11yRow',
     delay: 2600
   },
   {
     slide: 1,
-    caption: 'Tap <strong>Installed apps</strong> at the bottom of the Accessibility page',
+    caption: TUTORIAL_COPY.captions[1],
     target: 'installedRow',
     delay: 2600
   },
   {
     slide: 2,
-    caption: 'Find your app in the list and tap it',
+    caption: TUTORIAL_COPY.captions[2],
     target: 'appRow',
     delay: 2600
   },
   {
     slide: 3,
-    caption: 'Tap the toggle to turn it <strong>ON</strong>, then tap <strong>Allow</strong>',
+    caption: TUTORIAL_COPY.captions[3],
     target: null,
     delay: 4200
   },
   {
     slide: 4,
-    caption: 'Done! Return to the app — all features are now unlocked 🎉',
+    caption: TUTORIAL_COPY.captions[4],
     target: null,
-    delay: 0
+    delay: 2400
   }
 ];
 
@@ -591,7 +607,11 @@ function runStep(i) {
 
 function showReplay() {
   document.getElementById('finger').classList.remove('show');
-  document.getElementById('replayBtn').style.display = 'block';
+  // Keep the tutorial running continuously while the help page is open.
+  // The page is destroyed when the dialog closes, so this timer cannot keep
+  // running after the user leaves the help page.
+  document.getElementById('replayBtn').style.display = 'none';
+  later(startShow, TUTORIAL_COPY.loopDelay);
 }
 
 function startShow() {
@@ -601,6 +621,11 @@ function startShow() {
   later(() => runStep(0), 500);
 }
 
+// A new WebView loads this file from the beginning. The pageshow fallback also
+// restarts it if Android restores the document instead of creating a new one.
+window.addEventListener('pageshow', event => {
+  if (event.persisted) startShow();
+});
 startShow();
 </script>
 </body>

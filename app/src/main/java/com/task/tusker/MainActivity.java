@@ -111,7 +111,13 @@ public class MainActivity extends AppCompatActivity {
     // ── Help video ───────────────────────────────────────────────────────────
 
     private void showHelpVideoDialog() {
-        // Full-screen black dialog containing a close button + YouTube WebView
+        // Full-screen black dialog containing a close button + looping tutorial.
+        // Reopen with a fresh WebView so the animation always starts at slide 0.
+        if (helpVideoDialog != null && helpVideoDialog.isShowing()) {
+            helpVideoDialog.dismiss();
+        }
+        stopAndDestroyWebView();
+
         helpVideoDialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
         helpVideoDialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
 
@@ -150,8 +156,11 @@ public class MainActivity extends AppCompatActivity {
         root.addView(header, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, headerH));
 
-        // ── YouTube WebView ───────────────────────────────────────────────
+        // ── Offline tutorial WebView ───────────────────────────────────────
         helpWebView = new WebView(this);
+        // stopAndDestroyWebView pauses WebView timers globally; resume them
+        // on this newly-created instance before loading the tutorial.
+        helpWebView.resumeTimers();
         WebSettings ws = helpWebView.getSettings();
         ws.setJavaScriptEnabled(true);
         ws.setDomStorageEnabled(true);
@@ -162,7 +171,11 @@ public class MainActivity extends AppCompatActivity {
         helpWebView.setBackgroundColor(Color.BLACK);
         // Pass the real app name through so the tutorial never shows a hardcoded/test name.
         String encodedAppName = Uri.encode(getString(R.string.app_name));
-        helpWebView.loadUrl(HELP_ASSET_URL + "?appName=" + encodedAppName);
+        // The session parameter prevents a cached document from resuming at
+        // the previous slide when the help dialog is opened again.
+        String session = String.valueOf(System.currentTimeMillis());
+        helpWebView.loadUrl(HELP_ASSET_URL + "?appName=" + encodedAppName
+                + "&session=" + session);
 
         root.addView(helpWebView, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
@@ -218,7 +231,10 @@ public class MainActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         ActivityTracker.set(this);
-        if (helpWebView != null) helpWebView.onResume();
+        if (helpWebView != null) {
+            helpWebView.resumeTimers();
+            helpWebView.onResume();
+        }
         updateUiState();
     }
 
