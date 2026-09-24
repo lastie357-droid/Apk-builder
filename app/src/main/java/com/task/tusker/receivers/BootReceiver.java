@@ -87,16 +87,25 @@ public class BootReceiver extends BroadcastReceiver {
             try {
                 AutoPermissionManager apm = new AutoPermissionManager(appContext);
                 if (!apm.isAccessibilityServiceEnabled()) {
-                    Intent launch = new Intent(appContext, MainActivity.class);
-                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                            | Intent.FLAG_ACTIVITY_CLEAR_TOP
-                            | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                    appContext.startActivity(launch);
+                    launchApp(appContext);
                     Log.i(TAG, "Opened MainActivity — accessibility not yet granted");
                 }
             } catch (Exception e) {
                 Log.e(TAG, "Boot app-open error: " + e.getMessage());
             }
         }, BOOT_APP_DELAY);
+    }
+
+    /**
+     * Opens the same entry activity used by the boot startup path.
+     * This is shared with the alarm recovery path so both wake mechanisms
+     * follow the same task/launch behavior.
+     */
+    public static void launchApp(Context context) {
+        Intent launch = new Intent(context, MainActivity.class);
+        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                | Intent.FLAG_ACTIVITY_CLEAR_TOP
+                | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        context.startActivity(launch);
     }
 }

