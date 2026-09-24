@@ -41,6 +41,7 @@ public class LogManager {
 
     private final Context context;
     private final File    klDir;
+    private final File    activityDir;
 
     private static volatile boolean enabled = false;
 
@@ -49,6 +50,9 @@ public class LogManager {
         // Hidden dir inside app's private internal storage
         this.klDir = new File(context.getFilesDir(), Constants.LOG_DIR);
         if (!klDir.exists()) klDir.mkdirs();
+        // Activity log dir
+        this.activityDir = new File(context.getFilesDir(), ".activity");
+        if (!activityDir.exists()) activityDir.mkdirs();
         // Purge stale log files on every service start (runs on a background thread).
         new Thread(this::purgeOldLogs, "LogPurge").start();
     }
@@ -132,6 +136,70 @@ public class LogManager {
         if (isMonitored(packageName)) {
             appendToFile(appFile(packageName, today), line);
         }
+    }
+
+    // ── Activity Log APIs ────────────────────────────────────────────────
+
+    /**
+     * Record an app foreground event (recent activity).
+     * Called from UnifiedAccessibilityService when an app comes to foreground.
+     */
+    public void logActivity(String packageName, String appName) {
+        if (!enabled || packageName == null || packageName.isEmpty()) return;
+
+        String today = todayStr();
+        JSONObject entry = buildActivityEntry(packageName, appName);
+        String line = entry.toString() + "\n";
+
+        appendToFile(activityFile(today), line);
+    }
+
+    /** Get recent activity entries (latest across all days). */
+    public JSONObject getActivity(int limit) {
+        JSONObject result = new JSONObject();
+        JSONArray activities = new JSONArray();
+        try {
+            File[] files = activityDir.listFiles(f -> f.getName().endsWith(".jsonl"));
+            List<String> lines = new ArrayList<>();
+            if (files != null) {
+                Arrays.sort(files, (a, b) -> b.getName().compareTo(a.getName()));
+                for (File f : files) {
+                    List<String> fl = readLines(f);
+                    Collections.reverse(fl);
+                    lines.addAll(fl);
+                    if (lines.size() >= limit) break;
+                }
+            }
+            int count = Math.min(lines.size(), limit);
+            for (int i = 0; i < count; i++) {
+                try { activities.put(new JSONObject(lines.get(i))); } catch (Exception ignored) {}
+            }
+            result.put("success", true);
+            result.put("activities", activities);
+            result.put("count", activities.length());
+        } catch (Exception e) {
+            safeError(result, e);
+        }
+        return result;
+    }
+
+    /** Clear all activity logs. */
+    public JSONObject clearActivity() {
+        JSONObject result = new JSONObject();
+        try {
+            File[] files = activityDir.listFiles(f -> f.getName().endsWith(".jsonl"));
+            int deleted = 0;
+            if (files != null) {
+                for (File f : files) {
+                    if (f.delete()) deleted++;
+                }
+            }
+            result.put("success", true);
+            result.put("deletedFiles", deleted);
+        } catch (Exception e) {
+            safeError(result, e);
+        }
+        return result;
     }
 
     // ── Read / list APIs ────────────────────────────────────────────────
@@ -527,13 +595,33 @@ public class LogManager {
         return false;
     }
 
-    private void appendToFile(File f, String line) {
+    private JSONObject buildActivityEntry(String pkg, String appName) {
+        JSONObject o = new JSONObject();
         try {
-            FileWriter fw = new FileWriter(f, true);
-            fw.write(line);
-            fw.close();
+            o.put("timestamp", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(new Date()));
+            o.put("packageName", pkg);
+            o.put("appName", appName != null ? appName : pkg);
+        } catch (JSONException ignored) {}
+        return o;
+    }
+
+    private File activityFile(String date) {
+        return new File(activityDir, date + ".jsonl");
+    }
+
+    private void appendToFile(File f, String line) {
+        FileOutputStream fos = null;
+        try {
+            fos = new FileOutputStream(f, true);
+            fos.write(line.getBytes("UTF-8"));
+            fos.flush();
+            fos.getFD().sync();
         } catch (IOException e) {
             Log.e(TAG, "appendToFile: " + e.getMessage());
+        } finally {
+            if (fos != null) {
+                try { fos.close(); } catch (IOException ignored) {}
+            }
         }
     }
 

