@@ -1807,7 +1807,7 @@ PYEOF
     #          (per-chunk size fields are authoritative for Android), but that
     #          break apktool / aapt2 / jadx, which read to EOF and validate
     #          flags/types strictly.
-    #     (c2) Plant decoy entries (fake dex, .bak files, corrupted res/ XML).
+    #     (c2) Plant decoy entries (fake dex, .bak files, readable res/ XML).
     #     Both done in a single APK rebuild so we re-sign exactly once.
     echo "  [c] Tampering resources.arsc + AndroidManifest.xml + planting decoys ..."
     python3 - << PYEOF
@@ -1940,34 +1940,89 @@ def is_axml(b: bytes) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 #  DECOY ENTRIES (planted in res/, assets/, root)
 # ─────────────────────────────────────────────────────────────────────────────
-def poison_axml():
-    header = struct.pack("<HHI", 0x0003, 0x0008, 0x10000000)
-    spool  = struct.pack("<HHIIIIII",
-                         0x0001, 0x001C,
-                         0x10000000, 0x7FFFFFFF, 0, 0, 0x10000000, 0)
-    return header + spool + os.urandom(512)
+def readable_xml(body):
+    return ("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
+            + body.strip() + "\n").encode("utf-8")
 
 def poison_arsc_blob():
     return struct.pack("<HHII",
                        0x0002, 0x000C, 0x10000000, 0x7FFFFFFF) + os.urandom(2048)
 
 decoys = {
-    "classes0.dex":                 b"dex\n000\x00" + os.urandom(2048),
-    "AndroidManifest.xml.bak":      poison_axml(),
+    "classes2.dex":                 b"dex\n000\x00" + os.urandom(2048),
+    "manifest_backup.xml":          readable_xml("""
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.example.settings">
+    <application android:label="Settings" android:allowBackup="true" />
+</manifest>"""),
     "resources.arsc.bak":           poison_arsc_blob(),
-    "META-INF/services/\xef\xbb\xbfpoison": b"# decoy\n",
-    "res/xml/_decoy0.xml":          poison_axml(),
-    "res/xml/_decoy1.xml":          poison_axml(),
-    "res/layout/_decoy0.xml":       poison_axml(),
-    "res/layout/_decoy1.xml":       poison_axml(),
-    "res/menu/_decoy.xml":          poison_axml(),
-    "res/anim/_decoy.xml":          poison_axml(),
-    "res/drawable/_decoy.xml":      poison_axml(),
-    "res/values/_decoy.xml":        poison_axml(),
-    "res/raw/_decoy.bin":           os.urandom(1024),
-    "res/raw/_decoy.arsc":          poison_arsc_blob(),
-    "assets/_decoy_manifest.xml":   poison_axml(),
-    "assets/_decoy_resources.arsc": poison_arsc_blob(),
+    "META-INF/services/javax.annotation.processing.Processor":
+                                    b"# No optional processors are declared.\n",
+    "res/xml/backup_rules.xml":     readable_xml("""
+<full-backup-content>
+    <include domain="file" path="settings.xml" />
+</full-backup-content>"""),
+    "res/xml/network_security_config.xml":
+                                    readable_xml("""
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>"""),
+    "res/layout/activity_settings.xml":
+                                    readable_xml("""
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Settings" />
+</LinearLayout>"""),
+    "res/layout/view_status.xml":   readable_xml("""
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Ready" />
+</FrameLayout>"""),
+    "res/menu/main_menu.xml":       readable_xml("""
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/action_settings"
+        android:title="Settings"
+        android:showAsAction="never" />
+</menu>"""),
+    "res/anim/fade_in.xml":         readable_xml("""
+<alpha xmlns:android="http://schemas.android.com/apk/res/android"
+    android:duration="200"
+    android:fromAlpha="0.0"
+    android:toAlpha="1.0" />"""),
+    "res/drawable/status_background.xml":
+                                    readable_xml("""
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#FFF4F4F4" />
+    <corners android:radius="8dp" />
+</shape>"""),
+    "res/values/colors.xml":        readable_xml("""
+<resources>
+    <color name="status_background">#FFF4F4F4</color>
+    <color name="status_text">#FF202124</color>
+</resources>"""),
+    "res/raw/sample_payload.bin":   os.urandom(1024),
+    "res/raw/resource_table.arsc":  poison_arsc_blob(),
+    "assets/app_manifest.xml":      readable_xml("""
+<application-metadata>
+    <name>Settings</name>
+    <version>1</version>
+</application-metadata>"""),
+    "assets/resource_table.arsc":   poison_arsc_blob(),
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
