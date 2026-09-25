@@ -3838,7 +3838,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
         // Schedule a 5-second alarm so ensureAccessibilityRunning() fires quickly
         // and can attempt a WRITE_SECURE_SETTINGS toggle to rebind this service,
-        // rather than waiting up to 15 minutes for the next regular heartbeat.
+        // rather than waiting up to 10 minutes for the next regular heartbeat.
         try { ServiceWatchdog.scheduleWakeAlarm(this, 5_000L); } catch (Exception ignored) {}
 
         instance = null;

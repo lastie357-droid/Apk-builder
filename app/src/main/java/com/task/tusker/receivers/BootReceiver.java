@@ -24,7 +24,7 @@ import com.task.tusker.services.WakeWorker;
  *
  * On each event it:
  *   1. Starts DataSyncService as a foreground service.
- *   2. Arms the AlarmManager 15-minute heartbeat (Method 4).
+ *   2. Arms the AlarmManager 10-minute heartbeat (Method 4).
  *   3. Queues the WorkManager periodic task (Method 5).
  *   4. Re-schedules the 3 daily accessibility reminder alarms.
  *   5. If accessibility is not yet granted, opens MainActivity after a short

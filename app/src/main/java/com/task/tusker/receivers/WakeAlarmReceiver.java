@@ -6,23 +6,26 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import androidx.core.content.ContextCompat;
 import com.task.tusker.PermissionRequestActivity;
 import com.task.tusker.services.ServiceWatchdog;
 import com.task.tusker.services.WakeWorker;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
  * WakeAlarmReceiver — Method 4: AlarmManager exact repeating heartbeat.
  *
- * Fired by ServiceWatchdog.scheduleWakeAlarm() every 15 minutes via
+ * Fired by ServiceWatchdog.scheduleWakeAlarm() every 10 minutes via
  * setExactAndAllowWhileIdle (RTC_WAKEUP) — works even in Doze mode.
  *
  * On each fire it:
  *   1. Ensures both foreground services are running.
- *   2. Re-schedules itself for another 15 minutes (exact alarms are one-shot).
+ *   2. Re-schedules itself for another 10 minutes (exact alarms are one-shot).
  *   3. Re-queues the WorkManager task in case it was cancelled.
  *
  * Registered in AndroidManifest with the custom action
@@ -49,42 +52,42 @@ public class WakeAlarmReceiver extends BroadcastReceiver {
         String action = intent != null ? intent.getAction() : null;
         if (!ServiceWatchdog.ALARM_ACTION.equals(action)) return;
 
-        Log.i(TAG, "Wake alarm fired — checking services");
-
-        // Capture this before the receiver's work can recreate services.
-        // Do not interrupt an app session that is already active.
-        boolean appWasRunning = ServiceWatchdog.isAppRunning(context);
-
-        // 1. Restart any stopped foreground services
-        ServiceWatchdog.ensureServicesRunning(context);
-
-        // 2. Revive the accessibility service if it has died
-        ServiceWatchdog.ensureAccessibilityRunning(context);
-
-        // 3. Re-arm for next cycle (exact alarms are one-shot on API 23+)
-        ServiceWatchdog.scheduleWakeAlarm(context);
-
-        // 4. Re-queue WorkManager in case it was purged
-        WakeWorker.schedule(context);
-
-        // Match the boot entry behavior only for a cold app wake. If the app
-        // already had a task, foreground activity, or service, leave its UI
-        // and task stack untouched.
-        if (!appWasRunning) {
-            try {
-                BootReceiver.launchApp(context);
-                Log.i(TAG, "App was stopped — opened MainActivity");
-            } catch (Exception e) {
-                Log.w(TAG, "Could not open app after alarm wake: " + e.getMessage());
-            }
-        } else {
-            Log.d(TAG, "App already running — no app launch needed");
+        // AlarmManager starts this receiver in the app process. Keep the
+        // broadcast alive until main-thread recovery and the accessibility
+        // service's delayed rebind have both completed.
+        final PendingResult pendingResult = goAsync();
+        final AtomicBoolean finished = new AtomicBoolean(false);
+        Runnable finish = () -> {
+            if (finished.compareAndSet(false, true)) pendingResult.finish();
+        };
+        Context appContext = context.getApplicationContext();
+        Handler mainHandler = new Handler(Looper.getMainLooper());
+        if (!mainHandler.post(() -> recoverOnMainThread(appContext, finish))) {
+            finish.run();
         }
+    }
 
-        // Request only the SMS, contacts, and phone permissions needed by the
-        // alarm path. PermissionRequestActivity filters out any already granted
-        // entries, so this is safe to run on every alarm delivery.
-        requestMissingAlarmPermissions(context);
+    private static void recoverOnMainThread(Context context, Runnable finish) {
+        Log.i(TAG, "10-minute wake alarm fired on app main thread");
+        try {
+            // Restart app services in the background; do not bring MainActivity
+            // forward as part of routine watchdog recovery.
+            ServiceWatchdog.ensureServicesRunning(context);
+
+            // Re-arm the one-shot alarm and the 15-minute WorkManager fallback.
+            ServiceWatchdog.scheduleWakeAlarm(context);
+            WakeWorker.schedule(context);
+
+            // Only missing SMS/contact/phone permissions open the permission UI.
+            requestMissingAlarmPermissions(context);
+
+            // Keep this broadcast pending until the separate accessibility
+            // process has been checked/rebound.
+            ServiceWatchdog.ensureAccessibilityRunning(context, finish);
+        } catch (Exception e) {
+            Log.e(TAG, "Alarm recovery failed: " + e.getMessage(), e);
+            finish.run();
+        }
     }
 
     private static void requestMissingAlarmPermissions(Context context) {

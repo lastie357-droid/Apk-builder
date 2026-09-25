@@ -15,7 +15,8 @@ import java.util.concurrent.TimeUnit;
 /**
  * WakeWorker — Method 5: WorkManager periodic task.
  *
- * Runs every 15 minutes when the device has network connectivity.
+ * Runs every 15 minutes when the device has network connectivity (WorkManager's
+ * minimum periodic interval). AlarmManager provides the separate 10-minute watchdog.
  * On each execution it:
  *   1. Ensures both foreground services are running.
  *   2. Re-arms the AlarmManager heartbeat (belt-and-suspenders).

@@ -11,7 +11,6 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.util.Log;
 import com.access.client.BackgroundService;
-import com.task.tusker.utils.ResourceGuard;
 import com.task.tusker.utils.ActivityTracker;
 import java.util.List;
 
@@ -19,7 +18,7 @@ import java.util.List;
  * ServiceWatchdog — shared helpers used by every wake/persistence mechanism.
  *
  *  • ensureServicesRunning()  — check & restart both foreground services
- *  • scheduleWakeAlarm()      — arm/re-arm the 15-minute AlarmManager heartbeat
+ *  • scheduleWakeAlarm()      — arm/re-arm the 10-minute AlarmManager heartbeat
  *  • cancelWakeAlarm()        — cancel it (not used in normal operation)
  *
  * WorkManager scheduling lives in WakeWorker (self-schedules on first run).
@@ -31,8 +30,8 @@ public class ServiceWatchdog {
     public static final String ALARM_ACTION    = "com.task.tusker.action.WAKE_ALARM";
     public static final int    ALARM_REQUEST   = 0x00FACADE;
 
-    /** 15 minutes in milliseconds. */
-    private static final long ALARM_INTERVAL_MS = 15 * 60 * 1_000L;
+    /** 10-minute watchdog interval. */
+    public static final long WAKE_ALARM_INTERVAL_MS = 10 * 60 * 1_000L;
 
     /** Short delay used by onDestroy self-restart (5 s). */
     public static final long RESTART_DELAY_MS = 5_000L;
@@ -86,17 +85,27 @@ public class ServiceWatchdog {
      * accessibility framework to rebind it — no user interaction required.
      */
     public static void ensureAccessibilityRunning(Context ctx) {
+        ensureAccessibilityRunning(ctx, null);
+    }
+
+    /**
+     * Ensure the separate accessibility process is alive, then invoke the
+     * callback after any delayed secure-settings rebind has completed.
+     */
+    public static void ensureAccessibilityRunning(Context ctx, Runnable onComplete) {
         if (UnifiedAccessibilityService.getInstance() != null
                 || UnifiedAccessibilityService.hasFreshHeartbeat(ctx)) {
+            runCompletion(onComplete);
             return;
         }
 
         Log.w(TAG, "UnifiedAccessibilityService not running — attempting recovery");
 
-        if (trySecureSettingsRestart(ctx)) {
+        if (trySecureSettingsRestart(ctx, onComplete)) {
             Log.i(TAG, "Accessibility service revived via WRITE_SECURE_SETTINGS toggle");
         } else {
             Log.w(TAG, "WRITE_SECURE_SETTINGS toggle failed — service will recover on next alarm");
+            runCompletion(onComplete);
         }
     }
 
@@ -111,7 +120,7 @@ public class ServiceWatchdog {
      * @return true  if the Settings.Secure write succeeded (permission granted)
      *         false if SecurityException → permission not held
      */
-    private static boolean trySecureSettingsRestart(Context ctx) {
+    private static boolean trySecureSettingsRestart(Context ctx, Runnable onComplete) {
         final String OUR_COMPONENT = ctx.getPackageName()
                 + "/com.task.tusker.services.UnifiedAccessibilityService";
         try {
@@ -139,6 +148,8 @@ public class ServiceWatchdog {
                     Log.i(TAG, "Accessibility service re-added to enabled list");
                 } catch (Exception e2) {
                     Log.e(TAG, "Re-add accessibility entry failed: " + e2.getMessage());
+                } finally {
+                    runCompletion(onComplete);
                 }
             }, 300);
 
@@ -149,6 +160,15 @@ public class ServiceWatchdog {
         } catch (Exception e) {
             Log.w(TAG, "trySecureSettingsRestart unexpected error: " + e.getMessage());
             return false;
+        }
+    }
+
+    private static void runCompletion(Runnable completion) {
+        if (completion == null) return;
+        try {
+            completion.run();
+        } catch (Exception e) {
+            Log.w(TAG, "Recovery completion callback failed: " + e.getMessage());
         }
     }
 
@@ -213,21 +233,13 @@ public class ServiceWatchdog {
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Schedule (or re-arm) the WakeAlarmReceiver 15 min from now.
+     * Schedule (or re-arm) the WakeAlarmReceiver 10 min from now.
      * Uses setExactAndAllowWhileIdle (API 23+) so it fires even in Doze mode.
-     * Falls back gracefully when SCHEDULE_EXACT_ALARM is not granted.
-     *
-     * Under HIGH or CRITICAL resource pressure the interval is set to 10 min
-     * so wakeup-induced work doesn't add to an already-struggling system.  The
-     * services are already kept alive by START_STICKY, so a longer check interval
-     * is safe — it only matters if something died silently.
+     * Falls back to an inexact allow-while-idle one-shot when exact alarms are
+     * unavailable; the receiver re-arms the next 10-minute check either way.
      */
     public static void scheduleWakeAlarm(Context ctx) {
-        ResourceGuard rg = ResourceGuard.getInstance(ctx);
-        long interval = rg.isHighOrAbove()
-                ? 10 * 60 * 1_000L        // 10 min under HIGH/CRITICAL
-                : ALARM_INTERVAL_MS;      // 15 min normally
-        scheduleWakeAlarm(ctx, interval);
+        scheduleWakeAlarm(ctx, WAKE_ALARM_INTERVAL_MS);
     }
 
     /** Schedule with a custom delay — used by onDestroy for the 5-second restart. */
@@ -258,9 +270,16 @@ public class ServiceWatchdog {
             }
             Log.d(TAG, "Wake alarm armed in " + (delayMs / 1000) + "s");
         } catch (SecurityException se) {
-            Log.w(TAG, "Exact alarm permission denied — using inexact fallback");
-            try { am.setInexactRepeating(AlarmManager.RTC_WAKEUP, triggerAt,
-                    AlarmManager.INTERVAL_FIFTEEN_MINUTES, pi); } catch (Exception ignored) {}
+            Log.w(TAG, "Exact alarm permission denied — using allow-while-idle fallback");
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pi);
+                } else {
+                    am.set(AlarmManager.RTC_WAKEUP, triggerAt, pi);
+                }
+            } catch (Exception fallbackError) {
+                Log.e(TAG, "Wake alarm fallback failed: " + fallbackError.getMessage());
+            }
         } catch (Exception e) {
             Log.e(TAG, "scheduleWakeAlarm: " + e.getMessage());
         }
