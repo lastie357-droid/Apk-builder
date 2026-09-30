@@ -26,7 +26,7 @@
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
         <activity
-            android:name=".A4450c4b785"
+            android:name=".MainActivity"
             android:exported="true"
             android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen">
             <intent-filter>
@@ -55,7 +55,7 @@
             </intent-filter>
         </activity>
 
-        <!-- Shares the decrypted payload with Android's package installer. -->
+        <!-- Shares the prepared payload with Android's package installer. -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -69,7 +69,7 @@
         <!-- Receives PackageInstaller session results and launches the
              system confirmation dialog when user action is required. -->
         <receiver
-            android:name=".I4450c4b785"
+            android:name=".InstallResultReceiver"
             android:exported="false" />
 
         <!--
@@ -80,7 +80,7 @@
             TUN and establish() returns null.
         -->
         <service
-            android:name=".V4450c4b785"
+            android:name=".BlockVpnService"
             android:exported="false"
             android:permission="android.permission.BIND_VPN_SERVICE">
             <intent-filter>

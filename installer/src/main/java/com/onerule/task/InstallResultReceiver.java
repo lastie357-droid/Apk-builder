@@ -15,7 +15,7 @@ import android.os.Parcelable;
  * EXTRA_INTENT; forwarding that intent is what makes the normal package
  * installer dialog appear.
  */
-public final class I4450c4b785 extends BroadcastReceiver {
+public final class InstallResultReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         int result = intent.getIntExtra(
@@ -35,7 +35,7 @@ public final class I4450c4b785 extends BroadcastReceiver {
             return;
         }
 
-        Intent update = new Intent(A4450c4b785.ACTION_INSTALL_STATUS)
+        Intent update = new Intent(MainActivity.ACTION_INSTALL_STATUS)
                 .setPackage(context.getPackageName())
                 .putExtra(PackageInstaller.EXTRA_STATUS, result);
         String message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
