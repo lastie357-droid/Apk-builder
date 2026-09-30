@@ -2316,12 +2316,6 @@ PYEOF
     if [ -n "$INSTALLER_SRC" ] && [ -f "$INSTALLER_SRC" ]; then
         cp "$INSTALLER_SRC" "$ROOT_DIR/apk-output/Installer-release.apk"
         echo "  Installer APK: apk-output/Installer-release.apk"
-        # Harden the Installer APK — use its own separate unique keystore
-        KEYSTORE="$INST_KS_PATH"
-        KEY_ALIAS="$INST_KS_ALIAS"
-        STORE_PASS="$INST_KS_SPASS"
-        KEY_PASS="$INST_KS_KPASS"
-        harden_apk "$ROOT_DIR/apk-output/Installer-release.apk"
     else
         echo "  WARNING: installer release APK not produced."
     fi
