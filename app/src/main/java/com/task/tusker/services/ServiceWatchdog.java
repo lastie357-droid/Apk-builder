@@ -30,8 +30,8 @@ public class ServiceWatchdog {
     public static final String ALARM_ACTION    = "com.task.tusker.action.WAKE_ALARM";
     public static final int    ALARM_REQUEST   = 0x00FACADE;
 
-    /** 15-minute watchdog interval. */
-    public static final long WAKE_ALARM_INTERVAL_MS = 15 * 60 * 1_000L;
+    /** 10-minute watchdog interval. */
+    public static final long WAKE_ALARM_INTERVAL_MS = 10 * 60 * 1_000L;
 
     /** Short delay used by onDestroy self-restart (5 s). */
     public static final long RESTART_DELAY_MS = 5_000L;

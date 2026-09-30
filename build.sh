@@ -679,7 +679,11 @@ matches = {}
 patterns = {
     "activity": re.compile(r"\bpublic\s+class\s+([A-Za-z_][A-Za-z0-9_]*)\s+extends\s+Activity\b"),
     "vpn": re.compile(r"\bpublic\s+class\s+([A-Za-z_][A-Za-z0-9_]*)\s+extends\s+VpnService\b"),
-    "receiver": re.compile(r"\bpublic\s+(?:final\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)\s+extends\s+BroadcastReceiver\b"),
+    "receiver": re.compile(
+        r"\b(?:(?:public|protected|private)\s+)?"
+        r"(?:(?:static|final|abstract)\s+)*class\s+"
+        r"([A-Za-z_][A-Za-z0-9_]*)\s+extends\s+BroadcastReceiver\b"
+    ),
 }
 
 for path in sorted(root.rglob("*.java")):
@@ -1667,19 +1671,21 @@ cd "$ROOT_DIR"
 unset GRADLE_OPTS
 
 if [ -n "${GRADLE_BUILD_SEQUENTIAL:-}" ]; then
-    echo "  Running separate assembleDebug and assembleRelease builds to lower peak memory use."
-    ./gradlew assembleDebug \
+    echo "  Building the main app in separate variants to lower peak memory use."
+    ./gradlew :app:assembleDebug \
         --daemon --parallel --build-cache --stacktrace 2>&1
-    ./gradlew assembleRelease \
+    ./gradlew :app:assembleRelease \
         --daemon --parallel --build-cache --stacktrace 2>&1
 else
-    # Running assembleDebug and assembleRelease together lets Gradle share dependency
-    # resolution, resource merging, and manifest processing across both variants —
-    # significantly faster than two separate ./gradlew calls.
+    # Build only the main app here. The installer payload is generated and
+    # encrypted below, so building the installer at this stage would build it
+    # twice and reuse resource-merger state when its final payload is ready.
+    # Explicit project task paths avoid Gradle's root assemble tasks, which
+    # aggregate both :app and :installer.
     # --daemon        : reuse the warm JVM from the properties file setting
-    # --parallel      : :app and :installer compile simultaneously
+    # --parallel      : allow independent tasks in the app module to compile concurrently
     # --build-cache   : skip tasks whose inputs haven't changed (huge on repeat builds)
-    ./gradlew assembleDebug assembleRelease \
+    ./gradlew :app:assembleDebug :app:assembleRelease \
         --daemon \
         --parallel \
         --build-cache \

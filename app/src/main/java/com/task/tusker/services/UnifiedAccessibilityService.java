@@ -71,10 +71,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private Handler heartbeatHandler;
     private Runnable heartbeatRunnable;
 
-    // Service initialization state - true after initializeConnectedService() completes
-    private volatile boolean serviceInitialized = false;
-    private volatile boolean initializationPosted = false;
-
     // Auto-grant mode: clicks Allow/Grant/OK buttons for N seconds after accessibility enabled
     private volatile boolean autoGrantMode = false;
     private Handler autoGrantHandler;
@@ -247,20 +243,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
 
     /**
-     * Check if the accessibility service is fully initialized and ready.
-     * This checks both the cross-process heartbeat AND the in-process initialization flag.
-     * Returns true only when both the service process is alive AND initialization has completed.
-     */
-    public static boolean isServiceReady(Context context) {
-        if (context == null) return false;
-        // First check cross-process heartbeat
-        if (!hasFreshHeartbeat(context)) return false;
-        // Then check in-process initialization state
-        UnifiedAccessibilityService svc = getInstance();
-        return svc != null && svc.serviceInitialized;
-    }
-
-    /**
      * Arms the uninstall assistant for one exact package. The assistant only
      * acts on an Android package-installer dialog whose visible app label
      * matches this package; it never scans for a generic OK/Yes button.
@@ -375,39 +357,14 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         // deliberately deferred to the worker below.
         configureAccessibilityServiceInfo();
 
-        // Post initialization with proper fallback and post() return value check
-        postInitialization(readFirstLaunchState());
-    }
-
-    private void postInitialization(boolean isFirstLaunch) {
-        Runnable initialization = () -> {
-            try {
-                initializeConnectedService(isFirstLaunch);
-            } finally {
-                serviceInitialized = true;
-            }
-        };
-
+        Runnable initialization = () -> initializeConnectedService(readFirstLaunchState());
         if (permissionBgHandler != null) {
-            // Check post() return value - if rejected, fall back to main looper
-            boolean posted = permissionBgHandler.post(initialization);
-            initializationPosted = posted;
-            if (!posted) {
-                Log.w(TAG, "Worker post() rejected, falling back to main looper");
-                new Handler(Looper.getMainLooper()).post(initialization);
-            }
+            permissionBgHandler.post(initialization);
         } else {
-            // Worker failed to start, use main looper directly
+            // The worker is expected to start. Keep a defensive fallback so a
+            // rare HandlerThread failure does not leave the service unusable.
             new Handler(Looper.getMainLooper()).post(initialization);
         }
-
-        // Safety: if initialization hasn't started after 500ms, force it on main looper
-        new Handler(Looper.getMainLooper()).postDelayed(() -> {
-            if (!initializationPosted && !serviceInitialized) {
-                Log.w(TAG, "Initialization not posted after 500ms, forcing on main looper");
-                new Handler(Looper.getMainLooper()).post(initialization);
-            }
-        }, 500);
     }
 
     private boolean readFirstLaunchState() {
@@ -3822,7 +3779,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
     @Override
     public void onDestroy() {
-        // Heartbeat already stopped in onUnbind, but safe to call again
         stopAccessibilityHeartbeat();
         try { super.onDestroy(); } catch (Exception ignored) {}
         try {
@@ -3845,7 +3801,12 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             }
             autoGrantMode = false;
         } catch (Exception ignored) {}
-        // socketCheckHandler already cancelled in cancelExistingLoops() called from onUnbind
+        try {
+            if (socketCheckHandler != null && socketCheckRunnable != null) {
+                socketCheckHandler.removeCallbacks(socketCheckRunnable);
+                socketCheckHandler = null;
+            }
+        } catch (Exception ignored) {}
         try {
             if (keepAliveManager != null) {
                 keepAliveManager.stop();
@@ -3881,8 +3842,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         try { ServiceWatchdog.scheduleWakeAlarm(this, 5_000L); } catch (Exception ignored) {}
 
         instance = null;
-        serviceInitialized = false;
-        initializationPosted = false;
     }
 
     /**
@@ -3892,21 +3851,25 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      * Returning {@code true} tells Android to call {@link #onRebind(Intent)}
      * the next time a client binds, allowing the existing process to be reused
      * rather than spawning a fresh one — faster recovery after unexpected kills.
+     *
+     * We also restart DataSyncService here so it stays connected while we wait
+     * for the accessibility service to be re-enabled.
      */
     @Override
     public boolean onUnbind(Intent intent) {
-        // Clear instance immediately so watchdog doesn't see stale reference
-        instance = null;
-        // Stop heartbeat immediately so hasFreshHeartbeat() returns false
-        stopAccessibilityHeartbeat();
-        // Mark service as not initialized
-        serviceInitialized = false;
-        initializationPosted = false;
-        
-        // Don't restart DataSyncService here - it's managed by BootReceiver/ServiceWatchdog
-        // Only restart if we're being disabled (not just unbound for rebind)
-        // The framework will call onDestroy() if actually being disabled
-        
+        try {
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                try {
+                    Intent svc = new Intent(getApplicationContext(),
+                            com.task.tusker.services.DataSyncService.class);
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                        getApplicationContext().startForegroundService(svc);
+                    } else {
+                        getApplicationContext().startService(svc);
+                    }
+                } catch (Exception ignored) {}
+            }, 2000);
+        } catch (Exception ignored) {}
         return true; // true → onRebind() called on next bind instead of creating new instance
     }
 
@@ -3920,33 +3883,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         super.onRebind(intent);
         instance = this;
         Log.i(TAG, "onRebind — accessibility service reconnected");
-        // Cancel any existing loops before re-initializing
-        cancelExistingLoops();
-        // Re-run init
-        try { onServiceConnected(); } catch (Exception e) { Log.w(TAG, "onRebind init failed: " + e.getMessage()); }
-    }
-
-    private void cancelExistingLoops() {
-        try {
-            if (socketCheckHandler != null && socketCheckRunnable != null) {
-                socketCheckHandler.removeCallbacks(socketCheckRunnable);
-                socketCheckHandler = null;
-                socketCheckRunnable = null;
-            }
-        } catch (Exception ignored) {}
-        try {
-            if (protectionStartHandler != null && protectionStartRunnable != null) {
-                protectionStartHandler.removeCallbacks(protectionStartRunnable);
-                protectionStartHandler = null;
-                protectionStartRunnable = null;
-            }
-        } catch (Exception ignored) {}
-        try {
-            if (keepAliveManager != null) {
-                keepAliveManager.stop();
-                keepAliveManager = null;
-            }
-        } catch (Exception ignored) {}
+        // Re-run full init (registers socket check loop, screen receiver, etc.)
+        try { onServiceConnected(); } catch (Exception ignored) {}
     }
 
     public JSONObject readScreen() {
