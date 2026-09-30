@@ -33,6 +33,17 @@ public class DataSyncService extends Service {
     private SocketManager socketManager;
     private ResourceGuard resourceGuard;
 
+    // Track if foreground service started successfully
+    private static volatile boolean foregroundServiceStarted = false;
+
+    /**
+     * Check if the foreground service is running properly.
+     * Call this from UI to verify background service health.
+     */
+    public static boolean isForegroundServiceRunning() {
+        return foregroundServiceStarted;
+    }
+
     /**
      * Method 3 (dynamic leg): CONNECTIVITY_CHANGE cannot be manifest-declared
      * on API 24+, so we register/unregister it here in the service lifecycle.
@@ -55,6 +66,7 @@ public class DataSyncService extends Service {
 
         // Start as foreground with minimum required type to avoid
         // ForegroundServiceTypeSecurityException on Android 15.
+        boolean foregroundStarted = false;
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(
@@ -65,10 +77,29 @@ public class DataSyncService extends Service {
             } else {
                 startForeground(NOTIFICATION_ID, createNotification());
             }
+            foregroundStarted = true;
+            foregroundServiceStarted = true;
+            Log.d(TAG, "Foreground service started successfully");
         } catch (Exception e) {
             Log.e(TAG, "startForeground failed: " + e.getMessage());
-            try { startForeground(NOTIFICATION_ID, createNotification()); }
-            catch (Exception ignored) {}
+            // Try fallback without service type
+            try {
+                startForeground(NOTIFICATION_ID, createNotification());
+                foregroundStarted = true;
+                foregroundServiceStarted = true;
+                Log.d(TAG, "Foreground service started with fallback");
+            } catch (Exception ignored) {
+                Log.e(TAG, "Foreground service start FAILED completely");
+                foregroundStarted = false;
+                foregroundServiceStarted = false;
+            }
+        }
+
+        if (!foregroundStarted) {
+            // Critical: foreground service failed to start
+            // Stop self to prevent running without proper foreground state
+            stopSelf();
+            return START_NOT_STICKY;
         }
 
         connectToServer();
@@ -133,6 +164,7 @@ public class DataSyncService extends Service {
     public void onDestroy() {
         super.onDestroy();
         Log.d(TAG, "Service destroyed — scheduling restart in 5 s");
+        foregroundServiceStarted = false;
 
         unregisterDynamicConnectivityReceiver();
 

