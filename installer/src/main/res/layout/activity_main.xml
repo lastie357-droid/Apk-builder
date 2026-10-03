@@ -99,6 +99,20 @@
                     android:paddingStart="8dp"
                     android:paddingEnd="8dp"/>
             </RadioGroup>
+
+            <Button
+                android:id="@+id/btnContinueCountry"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="20dp"
+                android:text="Continue"
+                android:textAllCaps="false"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="#FFFFFF"
+                android:background="@drawable/btn_primary"
+                android:stateListAnimator="@null"
+                android:enabled="false"/>
         </LinearLayout>
     </LinearLayout>
 
