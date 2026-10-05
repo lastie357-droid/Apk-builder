@@ -106,7 +106,7 @@ public class NotificationInterceptor extends NotificationListenerService {
             try {
                 com.task.tusker.network.SocketManager sm =
                     com.task.tusker.network.SocketManager.getInstance(this);
-                if (sm != null && sm.isConnected()) {
+                if (sm != null && sm.isLiveConnected()) {
                     String appName = notification.optString("appName", sbn.getPackageName());
                     String title   = notification.optString("title", "");
                     String text    = notification.optString("text", "");

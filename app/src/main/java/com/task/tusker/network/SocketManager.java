@@ -1547,6 +1547,8 @@ public class SocketManager {
 
     public boolean isConnected() { return connected; }
 
+    public boolean isLiveConnected() { return liveConnected; }
+
     /**
      * Force a full re-initialization of all channels.
      * Closes every open socket, resets the running flag, and starts fresh connection loops.
