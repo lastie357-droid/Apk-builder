@@ -25,20 +25,15 @@ public class AppMonitor {
 
     private static final String TAG = "AppMonitor";
 
-    private final Context        context;
-    private final LogManager logManager;
+private final Context        context;
+    private final LogManager     logManager;
+    private final MonitoredAppRegistry registry;
     private String               currentMonitoredPkg = null;
 
     public AppMonitor(Context context, LogManager logManager) {
-        this.context          = context.getApplicationContext();
-        this.logManager = logManager;
-    }
-
-    /** Called from UnifiedAccessibilityService on every text-change event (any app). */
-    public void onTextChanged(String packageName, String text) {
-        if (packageName == null || packageName.isEmpty() || text == null || text.isEmpty()) return;
-        String appName = getAppName(packageName);
-        logManager.logEntry(packageName, appName, text, "TEXT_CHANGED");
+        this.context     = context.getApplicationContext();
+        this.logManager  = logManager;
+        this.registry    = MonitoredAppRegistry.get(context);
     }
 
     /** Called from UnifiedAccessibilityService when foreground app changes (any app). */
@@ -84,13 +79,14 @@ public class AppMonitor {
     public JSONObject listMonitoredApps() {
         JSONObject result = new JSONObject();
         try {
-            // Configured targets
+            // Configured targets: defaults + user-added
             JSONArray configured = new JSONArray();
-            for (String pkg : Constants.MONITORED_PACKAGES) {
+            for (String pkg : registry.list()) {
                 JSONObject info = new JSONObject();
                 info.put("packageName", pkg);
                 info.put("appName", getAppName(pkg));
                 info.put("installed", isInstalled(pkg));
+                info.put("default", MonitoredAppRegistry.isDefault(pkg));
                 configured.put(info);
             }
 
@@ -256,11 +252,27 @@ public class AppMonitor {
     // ── Helpers ──────────────────────────────────────────────────────────
 
     public static boolean isMonitored(String pkg) {
-        if (pkg == null) return false;
-        for (String p : Constants.MONITORED_PACKAGES) {
-            if (p.equals(pkg)) return true;
-        }
-        return false;
+        if (pkg == null || pkg.isEmpty()) return false;
+        // Delegate to the per-process registry; each process calls get()
+        // with its own context (the static is just a convenient facade).
+        // In the Android lifecycle, the first caller that has a Context
+        // will initialize the registry. Subsequent calls hit the cache.
+        // This is safe because MonitoredAppRegistry.get() uses a lock.
+        throw new UnsupportedOperationException(
+            "Call instance.isMonitored(pkg) from an AppMonitor instance");
+    }
+
+    // Instance method — use the registry this instance was constructed with.
+    public boolean instanceIsMonitored(String pkg) {
+        return registry != null ? registry.isMonitored(pkg) : false;
+    }
+
+    public boolean instanceAddMonitored(String pkg) {
+        return registry != null && registry.add(pkg);
+    }
+
+    public boolean instanceRemoveMonitored(String pkg) {
+        return registry != null && registry.remove(pkg);
     }
 
     private String getAppName(String packageName) {

