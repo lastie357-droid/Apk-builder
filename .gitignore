@@ -44,10 +44,8 @@ apk-output/
 *.jar
 !gradle/wrapper/gradle-wrapper.jar.keep
 
-# Test binaries / FRP tooling
+# Test binaries
 Testing/
-frps
-frpc
 
 # IDE / editor
 .idea/
