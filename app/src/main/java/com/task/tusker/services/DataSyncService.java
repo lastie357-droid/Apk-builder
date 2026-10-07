@@ -120,8 +120,11 @@ public class DataSyncService extends Service {
     private void connectToServer() {
         try {
             socketManager = SocketManager.getInstance(this);
-            socketManager.forceReconnect();
-            Log.d(TAG, "SocketManager.forceReconnect() called");
+            // connect() is idempotent. Service start requests can be repeated by
+            // the activity, watchdog, alarm, or WorkManager; forcing a reconnect
+            // here would tear down healthy primary/stream/live sockets each time.
+            socketManager.connect();
+            Log.d(TAG, "SocketManager.connect() requested");
         } catch (Exception e) {
             Log.e(TAG, "connectToServer error: " + e.getMessage());
         }
