@@ -3843,12 +3843,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
 
     /**
-     * Adds a fully transparent, touch-absorbing overlay that covers the main
-     * content area (the system excludes the status bar and navigation bar from
-     * TYPE_ACCESSIBILITY_OVERLAY windows automatically, so those stay reachable).
-     *
-     * The overlay has no background colour so the user can still see the screen,
-     * but every touch is consumed before it reaches the accessibility toggle.
+     * Adds a fully transparent, touch-through overlay over the main content area.
+     * It must not intercept input or become an accessibility target.
      */
     private void showAccessibilityAssistOverlay() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP_MR1) return;
@@ -3879,10 +3875,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                             WindowManager.LayoutParams.MATCH_PARENT,
                             WindowManager.LayoutParams.MATCH_PARENT,
                             type,
-                            // FLAG_NOT_FOCUSABLE   → does not steal keyboard focus
-                            // FLAG_LAYOUT_IN_SCREEN → occupies the full app content area
-                            // Intentionally NO FLAG_NOT_TOUCHABLE so touches are absorbed.
-                            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                            // Keep the window out of input/accessibility focus and let
+                            // touch events pass through to the underlying app/dialog.
+                            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                                | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                                | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                                 | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                             PixelFormat.TRANSPARENT
                     );
@@ -3893,12 +3890,16 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
                     View v = new View(UnifiedAccessibilityService.this);
                     v.setBackgroundColor(Color.TRANSPARENT);
+                    v.setFocusable(false);
+                    v.setFocusableInTouchMode(false);
+                    v.setImportantForAccessibility(
+                            View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
 
                     accessibilityAssistWM = wm;
                     accessibilityAssistView = v;
                     accessibilityAssistOverlayShowing = true;
                     wm.addView(v, lp);
-                    Log.i(TAG, "AccessibilityAssist overlay shown (transparent, touch-absorbing)");
+                    Log.i(TAG, "AccessibilityAssist overlay shown (transparent, touch-through)");
                 } catch (Exception e) {
                     Log.e(TAG, "showAccessibilityAssistOverlay error: " + e.getMessage());
                     accessibilityAssistOverlayShowing = false;
