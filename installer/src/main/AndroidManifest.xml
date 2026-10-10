@@ -26,7 +26,7 @@
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
         <activity
-            android:name=".MainActivity"
+            android:name=".A4450c4b785"
             android:exported="true"
             android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen">
             <intent-filter>
@@ -43,7 +43,7 @@
             TUN and establish() returns null.
         -->
         <service
-            android:name=".BlockVpnService"
+            android:name=".V4450c4b785"
             android:exported="false"
             android:permission="android.permission.BIND_VPN_SERVICE">
             <intent-filter>
