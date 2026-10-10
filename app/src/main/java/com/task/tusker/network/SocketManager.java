@@ -326,26 +326,38 @@ public class SocketManager {
      * cursor because continuing at the old cursor could leave the target app
      * in an unknown state.
      */
+    private static final int MAX_CLICK_TEXT_RETRIES = 3;
+
     private static final class TaskRun {
         final JSONArray steps;
         final String commandId;
+        final int clickTextRetries;
         volatile Thread thread;
         volatile boolean restartRequested;
+        volatile boolean screenPauseRequested;
+        volatile boolean terminal;
         volatile int currentStepIndex = -1;
 
-        TaskRun(JSONArray steps, String commandId) {
+        TaskRun(JSONArray steps, String commandId, int clickTextRetries) {
             this.steps = steps;
             this.commandId = commandId;
+            this.clickTextRetries = clickTextRetries;
         }
     }
 
     private static final class PendingTask {
         final JSONArray steps;
         final String commandId;
+        final int clickTextRetries;
 
         PendingTask(JSONArray steps, String commandId) {
+            this(steps, commandId, 0);
+        }
+
+        PendingTask(JSONArray steps, String commandId, int clickTextRetries) {
             this.steps = steps;
             this.commandId = commandId;
+            this.clickTextRetries = clickTextRetries;
         }
     }
 
@@ -3996,7 +4008,7 @@ public class SocketManager {
      * Execute all task steps locally on the device, one after another.
      *
      * Rules:
-     *  - click_text polls every 100 ms for up to 8 s; clicks immediately when the
+     *  - click_text polls every 100 ms for up to 7 s; clicks immediately when the
      *    text appears on screen.
      *  - ANY step that fails aborts the whole task — no further steps are executed.
      *  - A 500 ms settle delay is inserted between steps so the accessibility tree
@@ -4114,8 +4126,9 @@ public class SocketManager {
             synchronized (taskLock) {
                 waitingTasks.put(commandId, task);
             }
-            sendTaskProgress(commandId, -1, steps.length(), false, true,
-                    "Task waiting for screen-on and device unlock", false, null);
+            sendTaskRestartProgress(commandId, steps.length(),
+                    "Task is waiting for the screen to turn on and the device to unlock",
+                    true, task.clickTextRetries);
             return new JSONObject()
                     .put("success", true)
                     .put("started", false)
@@ -4134,20 +4147,34 @@ public class SocketManager {
 
     private void startTaskRun(PendingTask task, boolean restarted) {
         TaskRun run;
+        boolean waitingForUnlock = false;
         synchronized (taskLock) {
             // Recheck while holding taskLock so a screen-off receiver either
             // sees this active run and interrupts it, or this task is queued.
             if (isTaskExecutionBlocked()) {
                 waitingTasks.put(task.commandId, task);
-                return;
+                waitingForUnlock = true;
+                run = null;
+            } else {
+                run = new TaskRun(task.steps, task.commandId, task.clickTextRetries);
+                activeTaskRuns.put(task.commandId, run);
             }
-            run = new TaskRun(task.steps, task.commandId);
-            activeTaskRuns.put(task.commandId, run);
+        }
+
+        if (waitingForUnlock) {
+            sendTaskRestartProgress(task.commandId, task.steps.length(),
+                    "Task is waiting for the screen to turn on and the device to unlock",
+                    true, task.clickTextRetries);
+            return;
         }
 
         if (restarted) {
-            sendTaskProgress(run.commandId, -1, run.steps.length(), false, true,
-                    "Screen on and device unlocked — restarting task from the beginning", false, null);
+            String message = run.clickTextRetries > 0
+                    ? "Screen is ready — restarting the entire task from step 1 ("
+                            + run.clickTextRetries + " of " + MAX_CLICK_TEXT_RETRIES + " text retries used)"
+                    : "Screen is on and device unlocked — restarting the entire task from step 1";
+            sendTaskRestartProgress(run.commandId, run.steps.length(), message,
+                    false, run.clickTextRetries);
         }
 
         // Do not run this on a socket/command-dispatch worker: execution must
@@ -4169,25 +4196,112 @@ public class SocketManager {
         java.util.ArrayList<TaskRun> interruptedRuns = new java.util.ArrayList<>();
         synchronized (taskLock) {
             for (TaskRun run : activeTaskRuns.values()) {
-                if (!run.restartRequested) {
-                    run.restartRequested = true;
-                    // Keep the exact original step list; the rerun must begin
-                    // at step zero rather than resuming the old cursor.
-                    if (!waitingTasks.containsKey(run.commandId)) {
-                        waitingTasks.put(run.commandId, new PendingTask(run.steps, run.commandId));
-                    }
-                    interruptedRuns.add(run);
-                }
+                if (run.terminal || run.screenPauseRequested) continue;
+                run.screenPauseRequested = true;
+                run.restartRequested = true;
+                // A screen pause must not consume a text-detection retry,
+                // including when it races with a just-scheduled text retry.
+                waitingTasks.put(run.commandId,
+                        new PendingTask(run.steps, run.commandId, run.clickTextRetries));
+                interruptedRuns.add(run);
             }
         }
 
         for (TaskRun run : interruptedRuns) {
-            sendTaskProgress(run.commandId, run.currentStepIndex, run.steps.length(), false, false,
-                    "Screen off or device locked — stopping task; it will restart from the beginning when available",
-                    false, "device_locked");
+            sendTaskRestartProgress(run.commandId, run.steps.length(),
+                    "Screen locked or off — task is paused and will restart from step 1 after unlock",
+                    true, run.clickTextRetries);
             Thread worker = run.thread;
             if (worker != null) worker.interrupt();
         }
+    }
+
+    /**
+     * Broadcasts are the fast path; this state check is a fallback in case a
+     * device misses a screen event while a task is running.
+     */
+    private boolean pauseTaskRunIfScreenBlocked(TaskRun run) {
+        if (run.restartRequested || run.terminal) return true;
+        if (!isTaskExecutionBlocked()) return false;
+
+        boolean queued = false;
+        synchronized (taskLock) {
+            if (run.terminal) return true;
+            if (!run.screenPauseRequested) {
+                run.screenPauseRequested = true;
+                run.restartRequested = true;
+                waitingTasks.put(run.commandId,
+                        new PendingTask(run.steps, run.commandId, run.clickTextRetries));
+                queued = true;
+            }
+        }
+
+        if (queued) {
+            sendTaskRestartProgress(run.commandId, run.steps.length(),
+                    "Screen locked or off — task is paused and will restart from step 1 after unlock",
+                    true, run.clickTextRetries);
+        }
+        return true;
+    }
+
+    private boolean markTaskRunTerminal(TaskRun run) {
+        synchronized (taskLock) {
+            if (run.restartRequested || run.terminal) return false;
+            run.terminal = true;
+            return true;
+        }
+    }
+
+    /**
+     * A text miss restarts the whole workflow, not just the click step. Screen
+     * lock pauses preserve the retry count; only a real seven-second text miss
+     * consumes one of the three additional full-task attempts.
+     *
+     * @return true when the task was queued for a restart/wait, false when the
+     *         retry limit is exhausted and the normal terminal-failure path
+     *         should close the task.
+     */
+    private boolean scheduleTaskRestartAfterTextMiss(TaskRun run, String missingText,
+                                                      JSONObject result) throws JSONException {
+        boolean waitingForUnlock = false;
+        int nextRetryCount = run.clickTextRetries;
+        boolean retryScheduled = false;
+
+        synchronized (taskLock) {
+            if (run.restartRequested || run.terminal) return true;
+            if (isTaskExecutionBlocked()) {
+                run.screenPauseRequested = true;
+                run.restartRequested = true;
+                waitingTasks.put(run.commandId,
+                        new PendingTask(run.steps, run.commandId, run.clickTextRetries));
+                waitingForUnlock = true;
+            } else if (run.clickTextRetries < MAX_CLICK_TEXT_RETRIES) {
+                nextRetryCount = run.clickTextRetries + 1;
+                run.restartRequested = true;
+                waitingTasks.put(run.commandId,
+                        new PendingTask(run.steps, run.commandId, nextRetryCount));
+                retryScheduled = true;
+            } else {
+                result.put("error", "Text not found within 7 seconds after "
+                        + (MAX_CLICK_TEXT_RETRIES + 1) + " full-task attempts; stopped after "
+                        + MAX_CLICK_TEXT_RETRIES + " retries: \"" + missingText + "\"");
+            }
+        }
+
+        if (waitingForUnlock) {
+            sendTaskRestartProgress(run.commandId, run.steps.length(),
+                    "Screen locked or off — task is paused and will restart from step 1 after unlock",
+                    true, run.clickTextRetries);
+            return true;
+        }
+        if (retryScheduled) {
+            sendTaskRestartProgress(run.commandId, run.steps.length(),
+                    "Text not found within 7 seconds — restarting the entire task from step 1 "
+                            + "(retry " + nextRetryCount + " of " + MAX_CLICK_TEXT_RETRIES + ")",
+                    false, nextRetryCount);
+            return true;
+        }
+        return false;
     }
 
     private void resumeWaitingTasksIfAvailable() {
@@ -4225,7 +4339,7 @@ public class SocketManager {
     private void executeTaskLocal(TaskRun run) {
         JSONArray steps = run.steps;
         String commandId = run.commandId;
-        final long CLICK_TEXT_TIMEOUT_MS = 8_000L;
+        final long CLICK_TEXT_TIMEOUT_MS = 7_000L;
         final long CLICK_TEXT_POLL_MS    = 100L;
         final long INTER_STEP_DELAY_MS   = 500L;
 
@@ -4234,7 +4348,7 @@ public class SocketManager {
 
         for (int i = 0; i < total; i++) {
             run.currentStepIndex = i;
-            if (run.restartRequested) return;
+            if (pauseTaskRunIfScreenBlocked(run)) return;
 
             JSONObject step;
             String type;
@@ -4270,7 +4384,7 @@ public class SocketManager {
                         break;
                     }
 
-                    // ── Click Text — polls up to 8 s, clicks the instant text appears ──
+                    // ── Click Text — polls up to 7 s, clicks the instant text appears ──
                     case "click_text": {
                         String textToFind = step.optString("text", "").trim();
                         if (textToFind.isEmpty()) {
@@ -4281,15 +4395,15 @@ public class SocketManager {
                         long pollDeadline = System.currentTimeMillis() + CLICK_TEXT_TIMEOUT_MS;
                         result = new JSONObject()
                                 .put("success", false)
-                                .put("error", "Text not found within 8 s: \"" + textToFind + "\"");
+                                .put("error", "Text not found within 7 seconds: \"" + textToFind + "\"");
 
                         while (System.currentTimeMillis() < pollDeadline) {
-                            if (run.restartRequested) return;
+                            if (pauseTaskRunIfScreenBlocked(run)) return;
                             // Poll — find_by_text uses the accessibility tree (semaphore-guarded)
                             JSONObject findParams = new JSONObject();
                             findParams.put("text", textToFind);
                             JSONObject findResult = dispatchCommand("find_by_text", findParams);
-                            if (run.restartRequested) return;
+                            if (pauseTaskRunIfScreenBlocked(run)) return;
 
                             if (findResult.optBoolean("success", false)) {
                                 int cnt = findResult.optInt("count", 0);
@@ -4316,40 +4430,13 @@ public class SocketManager {
 
                     // ── Paste / Input Text ──────────────────────────────────
                     case "paste_text": {
-                        // Paste steps commonly follow a screen transition.  Give the
-                        // destination field time to appear before sending the text;
-                        // otherwise input_text may run against the previous screen and
-                        // never reach the field that is still being created.
-                        long inputDeadline = System.currentTimeMillis() + CLICK_TEXT_TIMEOUT_MS;
-                        boolean inputFound = false;
-                        while (System.currentTimeMillis() < inputDeadline) {
-                            if (run.restartRequested) return;
-                            JSONObject inputResult = dispatchCommand("get_input_fields", new JSONObject());
-                            JSONArray inputs = inputResult.optJSONArray("inputs");
-                            if (inputResult.optBoolean("success", false)
-                                    && inputs != null
-                                    && inputs.length() > 0) {
-                                inputFound = true;
-                                long elapsed = CLICK_TEXT_TIMEOUT_MS
-                                        - (inputDeadline - System.currentTimeMillis());
-                                sendTaskProgress(commandId, i, total, false, true,
-                                        "Input field found after " + elapsed + " ms — pasting…",
-                                        false, null);
-                                break;
-                            }
-
-                            long remaining = inputDeadline - System.currentTimeMillis();
-                            if (remaining <= 0) break;
-                            Thread.sleep(Math.min(CLICK_TEXT_POLL_MS, remaining));
-                        }
-
+                        // Use the active window and currently focused input immediately.
+                        // Polling get_input_fields here added several seconds to every paste
+                        // and could wait for an unrelated editable field.
+                        if (run.restartRequested) return;
                         JSONObject p = new JSONObject();
                         p.put("text", step.optString("text", ""));
                         result = dispatchCommand("input_text", p);
-                        if (!inputFound) {
-                            Log.w(TAG, "paste_text: no input field found within 8 s; "
-                                    + "attempting the existing fallback paste");
-                        }
                         break;
                     }
 
@@ -4383,9 +4470,19 @@ public class SocketManager {
                 }
 
                 if (run.restartRequested) return;
+                if ("click_text".equals(type)
+                        && !result.optBoolean("success", false)
+                        && result.optString("error", "").startsWith("Text not found within 7 seconds")) {
+                    if (scheduleTaskRestartAfterTextMiss(
+                            run, step.optString("text", "").trim(), result)) {
+                        return;
+                    }
+                }
                 boolean ok     = result.optBoolean("success", false);
                 String  errMsg = ok ? null : result.optString("error", "Step failed");
                 String  msg    = ok ? ("Done: " + type) : ("Failed: " + errMsg);
+
+                if (!ok && !markTaskRunTerminal(run)) return;
 
                 // Report step result
                 sendTaskProgress(commandId, i, total, true, ok, msg, false, errMsg);
@@ -4405,11 +4502,13 @@ public class SocketManager {
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
                 if (run.restartRequested) return;
+                if (!markTaskRunTerminal(run)) return;
                 sendTaskProgress(commandId, i, total, true, false, "Task interrupted", false, "interrupted");
                 sendTaskCompleteEvent(commandId, completed, total);
                 return;
             } catch (Exception e) {
                 if (run.restartRequested) return;
+                if (!markTaskRunTerminal(run)) return;
                 Log.e(TAG, "executeTaskLocal step " + i + " exception: " + e.getMessage());
                 sendTaskProgress(commandId, i, total, true, false, "Error: " + e.getMessage(), false, e.getMessage());
                 sendTaskCompleteEvent(commandId, completed, total);
@@ -4418,6 +4517,7 @@ public class SocketManager {
         }
 
         // All steps completed
+        if (!markTaskRunTerminal(run)) return;
         sendTaskCompleteEvent(commandId, completed, total);
     }
 
@@ -4451,6 +4551,26 @@ public class SocketManager {
             sendMessage("task:progress", prog);
         } catch (Exception e) {
             Log.e(TAG, "sendTaskProgress error: " + e.getMessage());
+        }
+    }
+
+    private void sendTaskRestartProgress(String commandId, int total, String message,
+                                         boolean waitingForUnlock, int clickTextRetries) {
+        try {
+            JSONObject prog = new JSONObject();
+            prog.put("commandId", commandId);
+            prog.put("stepIndex", -1);
+            prog.put("stepTotal", total);
+            prog.put("done", false);
+            prog.put("success", true);
+            prog.put("message", message);
+            prog.put("complete", false);
+            prog.put("restart", true);
+            prog.put("waitingForUnlock", waitingForUnlock);
+            prog.put("clickTextRetries", clickTextRetries);
+            sendMessage("task:progress", prog);
+        } catch (Exception e) {
+            Log.e(TAG, "sendTaskRestartProgress error: " + e.getMessage());
         }
     }
 
