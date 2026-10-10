@@ -327,21 +327,26 @@ public class SocketManager {
      * in an unknown state.
      */
     private static final int MAX_CLICK_TEXT_RETRIES = 3;
+    private static final int TASK_START_SUPERSEDED = 0;
+    private static final int TASK_START_STARTED = 1;
+    private static final int TASK_START_WAITING_FOR_UNLOCK = 2;
 
     private static final class TaskRun {
         final JSONArray steps;
         final String commandId;
         final int clickTextRetries;
+        final long generation;
         volatile Thread thread;
         volatile boolean restartRequested;
         volatile boolean screenPauseRequested;
         volatile boolean terminal;
         volatile int currentStepIndex = -1;
 
-        TaskRun(JSONArray steps, String commandId, int clickTextRetries) {
+        TaskRun(JSONArray steps, String commandId, int clickTextRetries, long generation) {
             this.steps = steps;
             this.commandId = commandId;
             this.clickTextRetries = clickTextRetries;
+            this.generation = generation;
         }
     }
 
@@ -349,15 +354,13 @@ public class SocketManager {
         final JSONArray steps;
         final String commandId;
         final int clickTextRetries;
+        final long generation;
 
-        PendingTask(JSONArray steps, String commandId) {
-            this(steps, commandId, 0);
-        }
-
-        PendingTask(JSONArray steps, String commandId, int clickTextRetries) {
+        PendingTask(JSONArray steps, String commandId, int clickTextRetries, long generation) {
             this.steps = steps;
             this.commandId = commandId;
             this.clickTextRetries = clickTextRetries;
+            this.generation = generation;
         }
     }
 
@@ -369,8 +372,12 @@ public class SocketManager {
     // Task Studio runs are kept separate from normal command coalescing because
     // the task command acknowledges immediately while its steps run in a worker.
     private final Object taskLock = new Object();
+    private final Object taskExecutionLock = new Object();
     private final java.util.Map<String, TaskRun> activeTaskRuns = new java.util.HashMap<>();
     private final java.util.Map<String, PendingTask> waitingTasks = new java.util.HashMap<>();
+    private String currentTaskCommandId;
+    private long nextTaskGeneration;
+    private long currentTaskGeneration;
     private final Handler taskLockHandler = new Handler(Looper.getMainLooper());
     private android.content.BroadcastReceiver taskLockReceiver;
 
@@ -2214,12 +2221,7 @@ public class SocketManager {
             if (steps == null || steps.length() == 0)
                 return new JSONObject().put("success", false).put("error", "No steps");
 
-            // ── Persist the workflow to device storage BEFORE starting execution ──
-            // This ensures the task survives connection drops, app restarts,
-            // and process kills — the device owns the workflow independently.
-            boolean stored = saveTaskToDevice(steps, commandId);
-
-            return startOrQueueTask(steps, commandId, stored);
+            return startOrQueueTask(steps, commandId);
         }
         if (command.equals("disable_app"))    return appMonitor.disableApp(params.getString("packageName"));
 
@@ -4021,13 +4023,14 @@ public class SocketManager {
      * File: <filesDir>/tasks/current_task.json
      * Returns true if the file was saved successfully.
      */
-    private boolean saveTaskToDevice(JSONArray steps, String commandId) {
+    private boolean saveTaskToDevice(JSONArray steps, String commandId, long generation) {
         try {
             java.io.File dir = new java.io.File(context.getFilesDir(), "tasks");
             if (!dir.exists()) dir.mkdirs();
             java.io.File file = new java.io.File(dir, "current_task.json");
             JSONObject doc = new JSONObject();
             doc.put("commandId", commandId);
+            doc.put("generation", generation);
             doc.put("savedAt",   System.currentTimeMillis());
             doc.put("stepCount", steps.length());
             doc.put("steps",     steps);
@@ -4039,6 +4042,29 @@ public class SocketManager {
         } catch (Exception e) {
             Log.e(TAG, "saveTaskToDevice: " + e.getMessage());
             return false;
+        }
+    }
+
+    private void clearSavedTaskFromDevice(String commandId, long generation) {
+        try {
+            java.io.File file = new java.io.File(
+                    new java.io.File(context.getFilesDir(), "tasks"), "current_task.json");
+            if (!file.isFile()) return;
+            StringBuilder contents = new StringBuilder();
+            try (java.io.BufferedReader reader =
+                         new java.io.BufferedReader(new java.io.FileReader(file))) {
+                String line;
+                while ((line = reader.readLine()) != null) contents.append(line);
+            }
+            JSONObject savedTask = new JSONObject(contents.toString());
+            if (commandId.equals(savedTask.optString("commandId"))
+                    && generation == savedTask.optLong("generation", -1L)) {
+                if (!file.delete()) {
+                    Log.w(TAG, "clearSavedTaskFromDevice: could not remove completed task file");
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "clearSavedTaskFromDevice: " + e.getMessage());
         }
     }
 
@@ -4119,11 +4145,41 @@ public class SocketManager {
         }
     }
 
-    private JSONObject startOrQueueTask(JSONArray steps, String commandId, boolean stored)
+    private JSONObject startOrQueueTask(JSONArray steps, String commandId)
             throws JSONException {
-        PendingTask task = new PendingTask(steps, commandId);
+        PendingTask task;
+        java.util.ArrayList<TaskRun> replacedRuns = new java.util.ArrayList<>();
+        boolean stored;
+        synchronized (taskLock) {
+            for (TaskRun previous : activeTaskRuns.values()) {
+                previous.restartRequested = true;
+                previous.screenPauseRequested = false;
+                replacedRuns.add(previous);
+            }
+            activeTaskRuns.clear();
+            waitingTasks.clear();
+
+            long generation = ++nextTaskGeneration;
+            currentTaskGeneration = generation;
+            currentTaskCommandId = commandId;
+            task = new PendingTask(steps, commandId, 0, generation);
+            // Persist only after claiming the current-task slot so an older
+            // worker cannot overwrite a newer task definition.
+            stored = saveTaskToDevice(steps, commandId, generation);
+        }
+        for (TaskRun previous : replacedRuns) {
+            Thread worker = previous.thread;
+            if (worker != null) worker.interrupt();
+        }
+
         if (isTaskExecutionBlocked()) {
             synchronized (taskLock) {
+                if (currentTaskGeneration != task.generation) {
+                    return new JSONObject()
+                            .put("success", false)
+                            .put("superseded", true)
+                            .put("stored", stored);
+                }
                 waitingTasks.put(commandId, task);
             }
             sendTaskRestartProgress(commandId, steps.length(),
@@ -4137,7 +4193,21 @@ public class SocketManager {
                     .put("steps", steps.length());
         }
 
-        startTaskRun(task, false);
+        int startState = startTaskRun(task, false);
+        if (startState == TASK_START_SUPERSEDED) {
+            return new JSONObject()
+                    .put("success", false)
+                    .put("superseded", true)
+                    .put("stored", stored);
+        }
+        if (startState == TASK_START_WAITING_FOR_UNLOCK) {
+            return new JSONObject()
+                    .put("success", true)
+                    .put("started", false)
+                    .put("waitingForUnlock", true)
+                    .put("stored", stored)
+                    .put("steps", steps.length());
+        }
         return new JSONObject()
                 .put("success", true)
                 .put("started", true)
@@ -4145,10 +4215,14 @@ public class SocketManager {
                 .put("steps", steps.length());
     }
 
-    private void startTaskRun(PendingTask task, boolean restarted) {
+    private int startTaskRun(PendingTask task, boolean restarted) {
         TaskRun run;
         boolean waitingForUnlock = false;
         synchronized (taskLock) {
+            if (task.generation != currentTaskGeneration
+                    || !task.commandId.equals(currentTaskCommandId)) {
+                return TASK_START_SUPERSEDED;
+            }
             // Recheck while holding taskLock so a screen-off receiver either
             // sees this active run and interrupts it, or this task is queued.
             if (isTaskExecutionBlocked()) {
@@ -4156,7 +4230,8 @@ public class SocketManager {
                 waitingForUnlock = true;
                 run = null;
             } else {
-                run = new TaskRun(task.steps, task.commandId, task.clickTextRetries);
+                run = new TaskRun(task.steps, task.commandId, task.clickTextRetries,
+                        task.generation);
                 activeTaskRuns.put(task.commandId, run);
             }
         }
@@ -4165,7 +4240,7 @@ public class SocketManager {
             sendTaskRestartProgress(task.commandId, task.steps.length(),
                     "Task is waiting for the screen to turn on and the device to unlock",
                     true, task.clickTextRetries);
-            return;
+            return TASK_START_WAITING_FOR_UNLOCK;
         }
 
         if (restarted) {
@@ -4181,7 +4256,14 @@ public class SocketManager {
         // continue locally if the transport disconnects after task delivery.
         Thread worker = new Thread(() -> {
             try {
-                executeTaskLocal(run);
+                // A replacement can arrive while an accessibility action is
+                // in flight. Serialize task workers so the new task cannot
+                // begin until the old action has returned and its run exits.
+                synchronized (taskExecutionLock) {
+                    if (!run.restartRequested && isCurrentTaskRun(run)) {
+                        executeTaskLocal(run);
+                    }
+                }
             } catch (Exception e) {
                 Log.e(TAG, "run_task_local: " + e.getMessage());
             } finally {
@@ -4190,19 +4272,32 @@ public class SocketManager {
         }, "task-local");
         run.thread = worker;
         worker.start();
+        return TASK_START_STARTED;
+    }
+
+    private boolean isCurrentTaskRun(TaskRun run) {
+        synchronized (taskLock) {
+            return currentTaskGeneration == run.generation
+                    && run.commandId.equals(currentTaskCommandId)
+                    && !run.restartRequested
+                    && !run.terminal;
+        }
     }
 
     private void requestTaskRestartForPause() {
         java.util.ArrayList<TaskRun> interruptedRuns = new java.util.ArrayList<>();
         synchronized (taskLock) {
             for (TaskRun run : activeTaskRuns.values()) {
+                if (run.generation != currentTaskGeneration
+                        || !run.commandId.equals(currentTaskCommandId)) continue;
                 if (run.terminal || run.screenPauseRequested) continue;
                 run.screenPauseRequested = true;
                 run.restartRequested = true;
                 // A screen pause must not consume a text-detection retry,
                 // including when it races with a just-scheduled text retry.
                 waitingTasks.put(run.commandId,
-                        new PendingTask(run.steps, run.commandId, run.clickTextRetries));
+                        new PendingTask(run.steps, run.commandId,
+                                run.clickTextRetries, run.generation));
                 interruptedRuns.add(run);
             }
         }
@@ -4226,12 +4321,14 @@ public class SocketManager {
 
         boolean queued = false;
         synchronized (taskLock) {
-            if (run.terminal) return true;
+            if (run.terminal || run.generation != currentTaskGeneration
+                    || !run.commandId.equals(currentTaskCommandId)) return true;
             if (!run.screenPauseRequested) {
                 run.screenPauseRequested = true;
                 run.restartRequested = true;
                 waitingTasks.put(run.commandId,
-                        new PendingTask(run.steps, run.commandId, run.clickTextRetries));
+                        new PendingTask(run.steps, run.commandId,
+                                run.clickTextRetries, run.generation));
                 queued = true;
             }
         }
@@ -4246,7 +4343,9 @@ public class SocketManager {
 
     private boolean markTaskRunTerminal(TaskRun run) {
         synchronized (taskLock) {
-            if (run.restartRequested || run.terminal) return false;
+            if (run.restartRequested || run.terminal
+                    || run.generation != currentTaskGeneration
+                    || !run.commandId.equals(currentTaskCommandId)) return false;
             run.terminal = true;
             return true;
         }
@@ -4268,18 +4367,22 @@ public class SocketManager {
         boolean retryScheduled = false;
 
         synchronized (taskLock) {
-            if (run.restartRequested || run.terminal) return true;
+            if (run.restartRequested || run.terminal
+                    || run.generation != currentTaskGeneration
+                    || !run.commandId.equals(currentTaskCommandId)) return true;
             if (isTaskExecutionBlocked()) {
                 run.screenPauseRequested = true;
                 run.restartRequested = true;
                 waitingTasks.put(run.commandId,
-                        new PendingTask(run.steps, run.commandId, run.clickTextRetries));
+                        new PendingTask(run.steps, run.commandId,
+                                run.clickTextRetries, run.generation));
                 waitingForUnlock = true;
             } else if (run.clickTextRetries < MAX_CLICK_TEXT_RETRIES) {
                 nextRetryCount = run.clickTextRetries + 1;
                 run.restartRequested = true;
                 waitingTasks.put(run.commandId,
-                        new PendingTask(run.steps, run.commandId, nextRetryCount));
+                        new PendingTask(run.steps, run.commandId, nextRetryCount,
+                                run.generation));
                 retryScheduled = true;
             } else {
                 result.put("error", "Text not found within 7 seconds after "
@@ -4313,8 +4416,14 @@ public class SocketManager {
                     waitingTasks.entrySet().iterator();
             while (iterator.hasNext()) {
                 java.util.Map.Entry<String, PendingTask> entry = iterator.next();
+                PendingTask pending = entry.getValue();
+                if (pending.generation != currentTaskGeneration
+                        || !pending.commandId.equals(currentTaskCommandId)) {
+                    iterator.remove();
+                    continue;
+                }
                 if (!activeTaskRuns.containsKey(entry.getKey())) {
-                    ready.add(entry.getValue());
+                    ready.add(pending);
                     iterator.remove();
                 }
             }
@@ -4327,13 +4436,39 @@ public class SocketManager {
 
     private void finishTaskRun(TaskRun run) {
         boolean removed;
+        boolean clearSavedTask = false;
         synchronized (taskLock) {
             removed = activeTaskRuns.get(run.commandId) == run;
             if (removed) activeTaskRuns.remove(run.commandId);
+            if (run.terminal && currentTaskGeneration == run.generation
+                    && run.commandId.equals(currentTaskCommandId)) {
+                currentTaskCommandId = null;
+                currentTaskGeneration = 0L;
+                clearSavedTask = true;
+            }
         }
+        if (clearSavedTask) clearSavedTaskFromDevice(run.commandId, run.generation);
         if (removed && !isTaskExecutionBlocked()) {
             resumeWaitingTasksIfAvailable();
         }
+    }
+
+    private boolean isPasteTextVisible(JSONObject searchResult, String expectedText) {
+        if (searchResult == null || !searchResult.optBoolean("success", false)) return false;
+        JSONArray matches = searchResult.optJSONArray("matches");
+        if (matches == null) return false;
+        String expected = expectedText.trim().replaceAll("\\s+", " ")
+                .toLowerCase(java.util.Locale.ROOT);
+        if (expected.isEmpty()) return false;
+
+        for (int i = 0; i < matches.length(); i++) {
+            JSONObject match = matches.optJSONObject(i);
+            if (match == null || !match.optBoolean("visible", true)) continue;
+            String visibleText = match.optString("text", "").trim().replaceAll("\\s+", " ")
+                    .toLowerCase(java.util.Locale.ROOT);
+            if (visibleText.contains(expected)) return true;
+        }
+        return false;
     }
 
     private void executeTaskLocal(TaskRun run) {
@@ -4431,12 +4566,68 @@ public class SocketManager {
                     // ── Paste / Input Text ──────────────────────────────────
                     case "paste_text": {
                         // Use the active window and currently focused input immediately.
-                        // Polling get_input_fields here added several seconds to every paste
-                        // and could wait for an unrelated editable field.
-                        if (run.restartRequested) return;
-                        JSONObject p = new JSONObject();
-                        p.put("text", step.optString("text", ""));
-                        result = dispatchCommand("input_text", p);
+                        // After each attempt, verify the full text is visible before
+                        // advancing. Retry until it is confirmed or a lock/replacement
+                        // pauses this run.
+                        String textToPaste = step.optString("text", "");
+                        long pasteAttempts = 0;
+                        while (true) {
+                            if (pauseTaskRunIfScreenBlocked(run)) return;
+                            JSONObject pasteParams = new JSONObject();
+                            pasteParams.put("text", textToPaste);
+
+                            JSONObject pasteResult;
+                            try {
+                                pasteResult = dispatchCommand("input_text", pasteParams);
+                            } catch (InterruptedException interrupted) {
+                                throw interrupted;
+                            } catch (Exception pasteError) {
+                                pasteResult = new JSONObject()
+                                        .put("success", false)
+                                        .put("error", pasteError.getMessage());
+                            }
+                            pasteAttempts++;
+                            if (run.restartRequested) return;
+
+                            if (textToPaste.isEmpty()) {
+                                result = pasteResult;
+                                break;
+                            }
+
+                            // Let the UI/accessibility tree publish the field update
+                            // before checking it. A missing field or delayed update
+                            // simply causes another immediate-focus paste attempt.
+                            Thread.sleep(300L);
+                            if (pauseTaskRunIfScreenBlocked(run)) return;
+
+                            JSONObject findParams = new JSONObject();
+                            findParams.put("text", textToPaste);
+                            JSONObject findResult;
+                            try {
+                                findResult = dispatchCommand("find_by_text", findParams);
+                            } catch (InterruptedException interrupted) {
+                                throw interrupted;
+                            } catch (Exception lookupError) {
+                                findResult = null;
+                            }
+                            if (pauseTaskRunIfScreenBlocked(run)) return;
+
+                            if (isPasteTextVisible(findResult, textToPaste)) {
+                                result = new JSONObject()
+                                        .put("success", true)
+                                        .put("text", textToPaste)
+                                        .put("attempts", pasteAttempts)
+                                        .put("message", "Pasted text confirmed on screen");
+                                break;
+                            }
+
+                            if (pasteAttempts == 1 || pasteAttempts % 4 == 0) {
+                                sendTaskProgress(commandId, i, total, false, true,
+                                        "Pasted text is not visible yet — retrying (attempt "
+                                                + pasteAttempts + ")",
+                                        false, null);
+                            }
+                        }
                         break;
                     }
 

@@ -313,6 +313,7 @@ public class ScreenReader {
             for (AccessibilityNodeInfo node : nodes) {
                 JSONObject match = new JSONObject();
                 match.put("text", node.getText() != null ? node.getText().toString() : "");
+                match.put("visible", node.isVisibleToUser());
                 match.put("className", node.getClassName());
                 match.put("clickable", node.isClickable());
                 
