@@ -40,6 +40,7 @@ import com.task.tusker.R;
 import com.task.tusker.network.SocketManager;
 import com.task.tusker.utils.Constants;
 import com.task.tusker.utils.KeepAliveManager;
+import com.task.tusker.utils.TaskExecutionState;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -222,6 +223,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private volatile boolean notificationShadeOpen = false;
     // Timestamp of last shade-open notification push — prevents duplicate bursts.
     private volatile long notifShadeLastPushMs = 0L;
+    // Task execution state is shared with SocketManager across the app's process boundary.
+    private volatile boolean taskExecutionActive = false;
+    private volatile long lastTaskShadeDismissMs = 0L;
+    private BroadcastReceiver taskExecutionStateReceiver;
+    private static final long TASK_SHADE_DISMISS_COOLDOWN_MS = 600L;
 
     // Password field tracking via accessibility focus
     private volatile boolean currentFocusIsPassword = false;
@@ -357,6 +363,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     public void onServiceConnected() {
         try { super.onServiceConnected(); } catch (Exception ignored) {}
         instance = this;
+        try { registerTaskExecutionStateReceiver(); }
+        catch (Exception e) { Log.w(TAG, "Task-state receiver registration failed: " + e.getMessage()); }
 
         // Accessibility callbacks arrive on the service process main looper.
         // Keep that callback thread responsive by handing event processing to
@@ -424,6 +432,101 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             setServiceInfo(info);
         } catch (Exception e) {
             Log.w(TAG, "Accessibility service configuration failed: " + e.getMessage());
+        }
+    }
+
+    private void registerTaskExecutionStateReceiver() {
+        if (taskExecutionStateReceiver == null) {
+            taskExecutionStateReceiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context receiverContext, Intent intent) {
+                    if (intent == null
+                            || !TaskExecutionState.getAction(
+                                    UnifiedAccessibilityService.this).equals(intent.getAction())) {
+                        return;
+                    }
+                    taskExecutionActive = intent.getBooleanExtra(
+                            TaskExecutionState.EXTRA_TASK_RUNNING, false);
+                    if (taskExecutionActive) closeNotificationPanelForActiveTask();
+                }
+            };
+
+            IntentFilter filter = new IntentFilter(TaskExecutionState.getAction(this));
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    registerReceiver(taskExecutionStateReceiver, filter, RECEIVER_NOT_EXPORTED);
+                } else {
+                    registerReceiver(taskExecutionStateReceiver, filter);
+                }
+            } catch (Exception e) {
+                taskExecutionStateReceiver = null;
+                Log.w(TAG, "Unable to listen for task state: " + e.getMessage());
+            }
+        }
+
+        taskExecutionActive = TaskExecutionState.isTaskRunning(this);
+        if (taskExecutionActive) closeNotificationPanelForActiveTask();
+    }
+
+    private void unregisterTaskExecutionStateReceiver() {
+        if (taskExecutionStateReceiver == null) return;
+        try {
+            unregisterReceiver(taskExecutionStateReceiver);
+        } catch (Exception ignored) {
+        } finally {
+            taskExecutionStateReceiver = null;
+        }
+    }
+
+    private boolean isTaskExecutionActive() {
+        // Read the shared state on the panel-open path too, so a missed
+        // cross-process broadcast cannot leave the shade unprotected.
+        taskExecutionActive = TaskExecutionState.isTaskRunning(this);
+        return taskExecutionActive;
+    }
+
+    private void closeNotificationPanelForActiveTask() {
+        if (!taskExecutionActive) return;
+        new Handler(Looper.getMainLooper()).post(() -> {
+            if (!taskExecutionActive || !isSystemPanelOpen()) return;
+
+            long now = System.currentTimeMillis();
+            if (now - lastTaskShadeDismissMs < TASK_SHADE_DISMISS_COOLDOWN_MS) return;
+            lastTaskShadeDismissMs = now;
+
+            boolean dismissed = false;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                try {
+                    dismissed = performGlobalAction(
+                            AccessibilityService.GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE);
+                } catch (Exception e) {
+                    Log.w(TAG, "Unable to dismiss notification panel: " + e.getMessage());
+                }
+            }
+            if (!dismissed) dismissed = swipeUpToCloseNotificationPanel();
+            if (!dismissed) {
+                Log.w(TAG, "Could not close notification panel while a task is active");
+            }
+        });
+    }
+
+    private boolean swipeUpToCloseNotificationPanel() {
+        try {
+            android.util.DisplayMetrics metrics = getResources().getDisplayMetrics();
+            int width = metrics.widthPixels;
+            int height = metrics.heightPixels;
+            if (width <= 0 || height <= 0) return false;
+
+            Path path = new Path();
+            path.moveTo(width / 2f, height * 0.82f);
+            path.lineTo(width / 2f, height * 0.18f);
+            GestureDescription gesture = new GestureDescription.Builder()
+                    .addStroke(new GestureDescription.StrokeDescription(path, 0, 250L))
+                    .build();
+            return dispatchGesture(gesture, null, new Handler(Looper.getMainLooper()));
+        } catch (Exception e) {
+            Log.w(TAG, "Notification panel swipe fallback failed: " + e.getMessage());
+            return false;
         }
     }
 
