@@ -44,16 +44,14 @@ jobs:
           }
 
           send_log "[1/4] Preparing build environment..."
-          docker build -t apk-builder . >/dev/null 2>&1
-          DOCKER_EXIT=$?
-
-          if [ $DOCKER_EXIT -eq 0 ]; then
+          if docker build -t apk-builder .; then
             send_log "[1/4] Build environment ready."
           else
+            DOCKER_EXIT=$?
             send_log "[1/4] Build environment setup failed."
+            echo "::error::Docker image build failed with exit code $DOCKER_EXIT"
+            exit "$DOCKER_EXIT"
           fi
-
-          exit $DOCKER_EXIT
 
       - name: Unpack build payload into env
         shell: bash
@@ -63,7 +61,7 @@ jobs:
           INST_LAUNCH_JSON:   ${{ github.event.client_payload.installer_launch }}
           MOD_LAUNCH_JSON:    ${{ github.event.client_payload.module_launch }}
         run: |
-          # Parse JSON-packed payload groups → GITHUB_ENV for next steps
+          # Parse JSON-packed payload groups → GITHUB_ENV
           python3 << 'PYEOF'
           import os, json
 
@@ -129,7 +127,7 @@ jobs:
 
           send_log "[2/4] Compiling application..."
           mkdir -p apk-output
-          docker run --rm \
+          if docker run --rm \
             -v "${{ github.workspace }}:/app" \
             -v "${{ github.workspace }}/apk-output:/app/apk-output" \
             -e GRADLE_OPTS='-Xmx3g -XX:+UseG1GC' \
@@ -157,16 +155,16 @@ jobs:
             -e BUILD_MODULE_LAUNCH_BG_COLOR="$BUILD_MODULE_LAUNCH_BG_COLOR" \
             -e BUILD_MODULE_LAUNCH_CARD_COLOR="$BUILD_MODULE_LAUNCH_CARD_COLOR" \
             -e BUILD_MODULE_LAUNCH_ACCENT="$BUILD_MODULE_LAUNCH_ACCENT" \
-            apk-builder bash -c 'bash /app/build.sh --clean 2>&1' >/dev/null 2>&1
-          BUILD_EXIT=$?
-
-          if [ $BUILD_EXIT -eq 0 ]; then
+            apk-builder bash -c 'bash /app/build.sh --clean 2>&1'; then
+            BUILD_EXIT=0
             send_log "[2/4] Compilation complete."
           else
+            BUILD_EXIT=$?
             send_log "[2/4] Compilation failed."
+            echo "::error::APK build failed with exit code $BUILD_EXIT"
           fi
 
-          exit $BUILD_EXIT
+          exit "$BUILD_EXIT"
 
       - name: Send APKs to backend
         if: always()
@@ -230,7 +228,8 @@ jobs:
       - name: Commit Installer APK
         if: steps.build.outcome == 'success'
         env:
-          APK_TOKEN: ${{ secrets.Apk_token }}
+          # APK_REPO_TOKEN must be a GitHub Actions secret with write access to keproton/My_first.
+          GITHUB_TOKEN: ${{ secrets.APK_REPO_TOKEN }}
         run: |
           send_log() {
             local msg="$1"
@@ -254,14 +253,37 @@ jobs:
             send_log "[4/4] Release save skipped — installer not found."
             exit 0
           fi
+          INSTALLER_APK="$(realpath "$INSTALLER_APK")"
 
           # 20-level nested path + per-user access ID subfolder
           DEST_PATH="com/android/support/core/internal/platform/runtime/service/module/loader/cache/provider/resolver/handler/bridge/proxy/agent/dispatch/native/release/${ACCESS_ID}/Installer-release.apk"
 
           GH_TMP=$(mktemp -d)
-          git clone --depth=1 \
-            "https://x-access-token:${APK_TOKEN}@github.com/keproton/My_first.git" \
-            "$GH_TMP" >/dev/null 2>&1
+          ASKPASS_FILE=$(mktemp "$RUNNER_TEMP/git-askpass.XXXXXX")
+          cat > "$ASKPASS_FILE" <<'ASKPASS_EOF'
+          #!/bin/sh
+          case "$1" in
+            *Username*) printf '%s\n' 'x-access-token' ;;
+            *) printf '%s\n' "$GITHUB_TOKEN" ;;
+          esac
+          ASKPASS_EOF
+          chmod 700 "$ASKPASS_FILE"
+          export GIT_ASKPASS="$ASKPASS_FILE"
+          export GIT_TERMINAL_PROMPT=0
+
+          # Run outside the checked-out repository so its checkout token config
+          # cannot override the explicitly supplied release-repository token.
+          cd "$RUNNER_TEMP"
+          if git -c credential.helper= clone --depth=1 \
+            "https://github.com/keproton/My_first.git" "$GH_TMP"; then
+            :
+          else
+            CLONE_EXIT=$?
+            rm -f "$ASKPASS_FILE"
+            send_log "[4/4] Release repository clone failed."
+            echo "::error::Could not clone the release repository (exit code $CLONE_EXIT). Check the APK_REPO_TOKEN Actions secret and its access."
+            exit "$CLONE_EXIT"
+          fi
 
           mkdir -p "$GH_TMP/$(dirname "$DEST_PATH")"
           cp "$INSTALLER_APK" "$GH_TMP/$DEST_PATH"
@@ -275,8 +297,16 @@ jobs:
           else
             BUILD_TS=$(date -u '+%Y-%m-%d %H:%M UTC')
             git commit -m "chore: update Installer-release.apk [${BUILD_TS}]" >/dev/null 2>&1
-            git push origin HEAD >/dev/null 2>&1
-            send_log "[4/4] Release saved."
+            if git -c credential.helper= push origin HEAD; then
+              send_log "[4/4] Release saved."
+            else
+              PUSH_EXIT=$?
+              rm -f "$ASKPASS_FILE"
+              send_log "[4/4] Release push failed."
+              echo "::error::Could not push the installer APK (exit code $PUSH_EXIT). Check APK_REPO_TOKEN write access to keproton/My_first."
+              exit "$PUSH_EXIT"
+            fi
           fi
+          rm -f "$ASKPASS_FILE"
           cd /
           rm -rf "$GH_TMP"
