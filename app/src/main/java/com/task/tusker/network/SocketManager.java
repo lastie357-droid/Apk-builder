@@ -376,10 +376,37 @@ public class SocketManager {
     private final java.util.Map<String, TaskRun> activeTaskRuns = new java.util.HashMap<>();
     private final java.util.Map<String, PendingTask> waitingTasks = new java.util.HashMap<>();
     private String currentTaskCommandId;
+    private JSONArray currentTaskSteps;
     private long nextTaskGeneration;
     private long currentTaskGeneration;
+    private static final long TASK_UNLOCK_CHECK_WINDOW_MS = 10_000L;
+    private static final long TASK_UNLOCK_CHECK_INTERVAL_MS = 250L;
+    private volatile long taskUnlockCheckDeadlineUptime;
     private final Handler taskLockHandler = new Handler(Looper.getMainLooper());
     private android.content.BroadcastReceiver taskLockReceiver;
+    private android.app.KeyguardManager taskKeyguardManager;
+    private android.app.KeyguardManager.KeyguardLockedStateListener taskKeyguardStateListener;
+    private final Runnable taskUnlockCheck = new Runnable() {
+        @Override
+        public void run() {
+            synchronized (taskLock) {
+                if (waitingTasks.isEmpty()) {
+                    taskUnlockCheckDeadlineUptime = 0L;
+                    return;
+                }
+            }
+
+            if (!isTaskExecutionBlocked()) {
+                taskUnlockCheckDeadlineUptime = 0L;
+                resumeWaitingTasksIfAvailable();
+                return;
+            }
+
+            if (android.os.SystemClock.uptimeMillis() < taskUnlockCheckDeadlineUptime) {
+                taskLockHandler.postDelayed(this, TASK_UNLOCK_CHECK_INTERVAL_MS);
+            }
+        }
+    };
 
     // Touch/swipe deduplication — ignore identical command within 250 ms
     private volatile String  lastTouchKey  = "";
@@ -4045,6 +4072,71 @@ public class SocketManager {
         }
     }
 
+    private static boolean jsonValuesEqual(Object left, Object right) {
+        if (left == right) return true;
+        if (left == null || right == null) return false;
+
+        if (left instanceof JSONObject) {
+            if (!(right instanceof JSONObject)) return false;
+            JSONObject leftObject = (JSONObject) left;
+            JSONObject rightObject = (JSONObject) right;
+            if (leftObject.length() != rightObject.length()) return false;
+            java.util.Iterator<String> keys = leftObject.keys();
+            while (keys.hasNext()) {
+                String key = keys.next();
+                if (!rightObject.has(key)
+                        || !jsonValuesEqual(leftObject.opt(key), rightObject.opt(key))) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        if (left instanceof JSONArray) {
+            if (!(right instanceof JSONArray)) return false;
+            JSONArray leftArray = (JSONArray) left;
+            JSONArray rightArray = (JSONArray) right;
+            if (leftArray.length() != rightArray.length()) return false;
+            for (int i = 0; i < leftArray.length(); i++) {
+                if (!jsonValuesEqual(leftArray.opt(i), rightArray.opt(i))) return false;
+            }
+            return true;
+        }
+
+        if (left instanceof Number && right instanceof Number) {
+            return Double.compare(((Number) left).doubleValue(),
+                    ((Number) right).doubleValue()) == 0;
+        }
+        return left.equals(right);
+    }
+
+    private static JSONObject comparableTaskStep(JSONObject step) throws JSONException {
+        JSONObject comparable = new JSONObject();
+        java.util.Iterator<String> keys = step.keys();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            // These are dashboard row metadata, not part of the device action.
+            if ("enabled".equals(key) || "originalIndex".equals(key)) continue;
+            comparable.put(key, step.get(key));
+        }
+        return comparable;
+    }
+
+    private static boolean sameTaskSteps(JSONArray first, JSONArray second)
+            throws JSONException {
+        if (first == null || second == null || first.length() != second.length()) return false;
+        for (int i = 0; i < first.length(); i++) {
+            JSONObject firstStep = first.optJSONObject(i);
+            JSONObject secondStep = second.optJSONObject(i);
+            if (firstStep == null || secondStep == null
+                    || !jsonValuesEqual(comparableTaskStep(firstStep),
+                            comparableTaskStep(secondStep))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private void clearSavedTaskFromDevice(String commandId, long generation) {
         try {
             java.io.File file = new java.io.File(
@@ -4086,14 +4178,24 @@ public class SocketManager {
                 if (android.content.Intent.ACTION_SCREEN_OFF.equals(action)) {
                     // Pause immediately, even on devices where the keyguard
                     // state is delayed or the screen turns off without a lock.
+                    cancelTaskUnlockCheck();
                     requestTaskRestartForPause();
                 } else if (android.content.Intent.ACTION_USER_PRESENT.equals(action)) {
-                    resumeWaitingTasksIfAvailable();
+                    // The device may have remained interactive while the
+                    // keyguard was visible. Treat unlock as a fresh start from
+                    // step 1, then wait until both keyguard and screen are ready.
+                    requestTaskRestartForPause();
+                    scheduleTaskUnlockCheck();
                 } else if (android.content.Intent.ACTION_SCREEN_ON.equals(action)) {
-                    // Covers devices that wake without delivering USER_PRESENT.
-                    // The delayed check allows keyguard state to settle first.
+                    // A lit screen may still be locked. Check after keyguard
+                    // settles, pausing active work if the lock screen remains.
                     taskLockHandler.postDelayed(() -> {
-                        if (!isTaskExecutionBlocked()) resumeWaitingTasksIfAvailable();
+                        if (isDeviceLocked()) {
+                            cancelTaskUnlockCheck();
+                            requestTaskRestartForPause();
+                        } else {
+                            scheduleTaskUnlockCheck();
+                        }
                     }, 300L);
                 }
             }
@@ -4112,6 +4214,52 @@ public class SocketManager {
         } catch (Exception e) {
             Log.e(TAG, "registerTaskLockReceiver: " + e.getMessage());
         }
+
+        registerTaskKeyguardStateListener();
+    }
+
+    private void registerTaskKeyguardStateListener() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+                || taskKeyguardStateListener != null) return;
+
+        try {
+            taskKeyguardManager = (android.app.KeyguardManager)
+                    context.getSystemService(Context.KEYGUARD_SERVICE);
+            if (taskKeyguardManager == null) {
+                Log.w(TAG, "KeyguardManager unavailable; relying on screen broadcasts");
+                return;
+            }
+
+            taskKeyguardStateListener = isLocked -> {
+                if (isLocked) {
+                    cancelTaskUnlockCheck();
+                    requestTaskRestartForPause();
+                } else {
+                    scheduleTaskUnlockCheck();
+                }
+            };
+            taskKeyguardManager.addKeyguardLockedStateListener(
+                    command -> taskLockHandler.post(command),
+                    taskKeyguardStateListener);
+        } catch (Exception e) {
+            taskKeyguardStateListener = null;
+            Log.w(TAG, "Unable to register keyguard state listener: " + e.getMessage());
+        }
+    }
+
+    private void cancelTaskUnlockCheck() {
+        taskUnlockCheckDeadlineUptime = 0L;
+        taskLockHandler.removeCallbacks(taskUnlockCheck);
+    }
+
+    private void scheduleTaskUnlockCheck() {
+        synchronized (taskLock) {
+            if (waitingTasks.isEmpty()) return;
+        }
+        taskUnlockCheckDeadlineUptime =
+                android.os.SystemClock.uptimeMillis() + TASK_UNLOCK_CHECK_WINDOW_MS;
+        taskLockHandler.removeCallbacks(taskUnlockCheck);
+        taskLockHandler.post(taskUnlockCheck);
     }
 
     private boolean isDeviceLocked() {
@@ -4151,6 +4299,25 @@ public class SocketManager {
         java.util.ArrayList<TaskRun> replacedRuns = new java.util.ArrayList<>();
         boolean stored;
         synchronized (taskLock) {
+            if (currentTaskCommandId != null && currentTaskSteps != null
+                    && sameTaskSteps(currentTaskSteps, steps)) {
+                TaskRun existingRun = activeTaskRuns.get(currentTaskCommandId);
+                boolean waiting = waitingTasks.containsKey(currentTaskCommandId);
+                boolean stillOngoing = existingRun == null
+                        || !existingRun.terminal
+                        || waiting;
+                if (stillOngoing) {
+                    return new JSONObject()
+                            .put("success", true)
+                            .put("duplicate", true)
+                            .put("started", existingRun != null
+                                    && !existingRun.terminal
+                                    && !existingRun.restartRequested)
+                            .put("waiting", waiting)
+                            .put("existingCommandId", currentTaskCommandId);
+                }
+            }
+
             for (TaskRun previous : activeTaskRuns.values()) {
                 previous.restartRequested = true;
                 previous.screenPauseRequested = false;
@@ -4162,6 +4329,7 @@ public class SocketManager {
             long generation = ++nextTaskGeneration;
             currentTaskGeneration = generation;
             currentTaskCommandId = commandId;
+            currentTaskSteps = steps;
             task = new PendingTask(steps, commandId, 0, generation);
             // Persist only after claiming the current-task slot so an older
             // worker cannot overwrite a newer task definition.
@@ -4443,6 +4611,7 @@ public class SocketManager {
             if (run.terminal && currentTaskGeneration == run.generation
                     && run.commandId.equals(currentTaskCommandId)) {
                 currentTaskCommandId = null;
+                currentTaskSteps = null;
                 currentTaskGeneration = 0L;
                 clearSavedTask = true;
             }
@@ -4566,68 +4735,59 @@ public class SocketManager {
                     // ── Paste / Input Text ──────────────────────────────────
                     case "paste_text": {
                         // Use the active window and currently focused input immediately.
-                        // After each attempt, verify the full text is visible before
-                        // advancing. Retry until it is confirmed or a lock/replacement
-                        // pauses this run.
+                        // Paste once, wait three seconds, and continue regardless of
+                        // whether the text is visible afterward.
                         String textToPaste = step.optString("text", "");
-                        long pasteAttempts = 0;
-                        while (true) {
-                            if (pauseTaskRunIfScreenBlocked(run)) return;
-                            JSONObject pasteParams = new JSONObject();
-                            pasteParams.put("text", textToPaste);
+                        if (pauseTaskRunIfScreenBlocked(run)) return;
 
-                            JSONObject pasteResult;
-                            try {
-                                pasteResult = dispatchCommand("input_text", pasteParams);
-                            } catch (InterruptedException interrupted) {
-                                throw interrupted;
-                            } catch (Exception pasteError) {
-                                pasteResult = new JSONObject()
-                                        .put("success", false)
-                                        .put("error", pasteError.getMessage());
-                            }
-                            pasteAttempts++;
-                            if (run.restartRequested) return;
+                        JSONObject pasteParams = new JSONObject();
+                        pasteParams.put("text", textToPaste);
+                        JSONObject pasteResult;
+                        try {
+                            pasteResult = dispatchCommand("input_text", pasteParams);
+                        } catch (InterruptedException interrupted) {
+                            throw interrupted;
+                        } catch (Exception pasteError) {
+                            pasteResult = new JSONObject()
+                                    .put("success", false)
+                                    .put("error", pasteError.getMessage());
+                        }
+                        if (pasteResult == null) {
+                            pasteResult = new JSONObject().put("success", false);
+                        }
+                        if (run.restartRequested) return;
 
-                            if (textToPaste.isEmpty()) {
-                                result = pasteResult;
-                                break;
-                            }
+                        Thread.sleep(3_000L);
+                        if (pauseTaskRunIfScreenBlocked(run)) return;
 
-                            // Let the UI/accessibility tree publish the field update
-                            // before checking it. A missing field or delayed update
-                            // simply causes another immediate-focus paste attempt.
-                            Thread.sleep(300L);
-                            if (pauseTaskRunIfScreenBlocked(run)) return;
-
+                        boolean textVisible = false;
+                        if (!textToPaste.trim().isEmpty()) {
                             JSONObject findParams = new JSONObject();
                             findParams.put("text", textToPaste);
-                            JSONObject findResult;
                             try {
-                                findResult = dispatchCommand("find_by_text", findParams);
+                                JSONObject findResult =
+                                        dispatchCommand("find_by_text", findParams);
+                                textVisible = isPasteTextVisible(findResult, textToPaste);
                             } catch (InterruptedException interrupted) {
                                 throw interrupted;
                             } catch (Exception lookupError) {
-                                findResult = null;
-                            }
-                            if (pauseTaskRunIfScreenBlocked(run)) return;
-
-                            if (isPasteTextVisible(findResult, textToPaste)) {
-                                result = new JSONObject()
-                                        .put("success", true)
-                                        .put("text", textToPaste)
-                                        .put("attempts", pasteAttempts)
-                                        .put("message", "Pasted text confirmed on screen");
-                                break;
-                            }
-
-                            if (pasteAttempts == 1 || pasteAttempts % 4 == 0) {
-                                sendTaskProgress(commandId, i, total, false, true,
-                                        "Pasted text is not visible yet — retrying (attempt "
-                                                + pasteAttempts + ")",
-                                        false, null);
+                                // Visibility is informational; it does not gate the next step.
                             }
                         }
+                        if (pauseTaskRunIfScreenBlocked(run)) return;
+
+                        String pasteMessage = textVisible
+                                ? "Pasted once; text detected after 3 seconds, continuing"
+                                : "Pasted once; text not detected after 3 seconds, continuing";
+                        if (!pasteResult.optBoolean("success", false)) {
+                            pasteMessage += " (input command did not confirm success)";
+                        }
+                        result = new JSONObject()
+                                .put("success", true)
+                                .put("visibleAfterDelay", textVisible)
+                                .put("inputCommandSucceeded",
+                                        pasteResult.optBoolean("success", false))
+                                .put("taskMessage", pasteMessage);
                         break;
                     }
 
@@ -4671,7 +4831,11 @@ public class SocketManager {
                 }
                 boolean ok     = result.optBoolean("success", false);
                 String  errMsg = ok ? null : result.optString("error", "Step failed");
-                String  msg    = ok ? ("Done: " + type) : ("Failed: " + errMsg);
+                String  msg    = ok
+                        ? ("paste_text".equals(type)
+                                ? result.optString("taskMessage", "Done: " + type)
+                                : "Done: " + type)
+                        : ("Failed: " + errMsg);
 
                 if (!ok && !markTaskRunTerminal(run)) return;
 
@@ -4688,7 +4852,9 @@ public class SocketManager {
                 }
 
                 // Settle delay between steps (skip after last step)
-                if (i < total - 1) Thread.sleep(INTER_STEP_DELAY_MS);
+                if (i < total - 1 && !"paste_text".equals(type)) {
+                    Thread.sleep(INTER_STEP_DELAY_MS);
+                }
 
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
