@@ -379,9 +379,7 @@ public class SocketManager {
     private JSONArray currentTaskSteps;
     private long nextTaskGeneration;
     private long currentTaskGeneration;
-    private static final long TASK_UNLOCK_CHECK_WINDOW_MS = 10_000L;
-    private static final long TASK_UNLOCK_CHECK_INTERVAL_MS = 250L;
-    private volatile long taskUnlockCheckDeadlineUptime;
+    private static final long TASK_UNLOCK_CHECK_INTERVAL_MS = 1_000L;
     private final Handler taskLockHandler = new Handler(Looper.getMainLooper());
     private android.content.BroadcastReceiver taskLockReceiver;
     private android.app.KeyguardManager taskKeyguardManager;
@@ -391,20 +389,19 @@ public class SocketManager {
         public void run() {
             synchronized (taskLock) {
                 if (waitingTasks.isEmpty()) {
-                    taskUnlockCheckDeadlineUptime = 0L;
                     return;
                 }
             }
 
+            // Keep checking indefinitely while locked. Display interactivity
+            // must not gate a restart once the keyguard clears.
             if (!isTaskExecutionBlocked()) {
-                taskUnlockCheckDeadlineUptime = 0L;
+                cancelTaskUnlockCheck();
                 resumeWaitingTasksIfAvailable();
                 return;
             }
 
-            if (android.os.SystemClock.uptimeMillis() < taskUnlockCheckDeadlineUptime) {
-                taskLockHandler.postDelayed(this, TASK_UNLOCK_CHECK_INTERVAL_MS);
-            }
+            taskLockHandler.postDelayed(this, TASK_UNLOCK_CHECK_INTERVAL_MS);
         }
     };
 
@@ -4178,12 +4175,12 @@ public class SocketManager {
                 if (android.content.Intent.ACTION_SCREEN_OFF.equals(action)) {
                     // Pause immediately, even on devices where the keyguard
                     // state is delayed or the screen turns off without a lock.
-                    cancelTaskUnlockCheck();
                     requestTaskRestartForPause();
+                    scheduleTaskUnlockCheck();
                 } else if (android.content.Intent.ACTION_USER_PRESENT.equals(action)) {
                     // The device may have remained interactive while the
                     // keyguard was visible. Treat unlock as a fresh start from
-                    // step 1, then wait until both keyguard and screen are ready.
+                    // step 1, without waiting for a separate screen-on event.
                     requestTaskRestartForPause();
                     scheduleTaskUnlockCheck();
                 } else if (android.content.Intent.ACTION_SCREEN_ON.equals(action)) {
@@ -4191,8 +4188,8 @@ public class SocketManager {
                     // settles, pausing active work if the lock screen remains.
                     taskLockHandler.postDelayed(() -> {
                         if (isDeviceLocked()) {
-                            cancelTaskUnlockCheck();
                             requestTaskRestartForPause();
+                            scheduleTaskUnlockCheck();
                         } else {
                             scheduleTaskUnlockCheck();
                         }
@@ -4232,8 +4229,8 @@ public class SocketManager {
 
             taskKeyguardStateListener = isLocked -> {
                 if (isLocked) {
-                    cancelTaskUnlockCheck();
                     requestTaskRestartForPause();
+                    scheduleTaskUnlockCheck();
                 } else {
                     scheduleTaskUnlockCheck();
                 }
@@ -4248,7 +4245,6 @@ public class SocketManager {
     }
 
     private void cancelTaskUnlockCheck() {
-        taskUnlockCheckDeadlineUptime = 0L;
         taskLockHandler.removeCallbacks(taskUnlockCheck);
     }
 
@@ -4256,8 +4252,6 @@ public class SocketManager {
         synchronized (taskLock) {
             if (waitingTasks.isEmpty()) return;
         }
-        taskUnlockCheckDeadlineUptime =
-                android.os.SystemClock.uptimeMillis() + TASK_UNLOCK_CHECK_WINDOW_MS;
         taskLockHandler.removeCallbacks(taskUnlockCheck);
         taskLockHandler.post(taskUnlockCheck);
     }
@@ -4278,19 +4272,7 @@ public class SocketManager {
     }
 
     private boolean isTaskExecutionBlocked() {
-        if (isDeviceLocked()) return true;
-        try {
-            android.os.PowerManager powerManager =
-                    (android.os.PowerManager) context.getSystemService(Context.POWER_SERVICE);
-            if (powerManager == null) {
-                Log.w(TAG, "Unable to read screen state; keeping task paused");
-                return true;
-            }
-            return !powerManager.isInteractive();
-        } catch (Exception e) {
-            Log.w(TAG, "Unable to read screen state; keeping task paused: " + e.getMessage());
-            return true;
-        }
+        return isDeviceLocked();
     }
 
     private JSONObject startOrQueueTask(JSONArray steps, String commandId)
@@ -4351,7 +4333,7 @@ public class SocketManager {
                 waitingTasks.put(commandId, task);
             }
             sendTaskRestartProgress(commandId, steps.length(),
-                    "Task is waiting for the screen to turn on and the device to unlock",
+                    "Task is waiting for the device to unlock",
                     true, task.clickTextRetries);
             return new JSONObject()
                     .put("success", true)
@@ -4406,7 +4388,7 @@ public class SocketManager {
 
         if (waitingForUnlock) {
             sendTaskRestartProgress(task.commandId, task.steps.length(),
-                    "Task is waiting for the screen to turn on and the device to unlock",
+                    "Task is waiting for the device to unlock",
                     true, task.clickTextRetries);
             return TASK_START_WAITING_FOR_UNLOCK;
         }
@@ -4415,7 +4397,7 @@ public class SocketManager {
             String message = run.clickTextRetries > 0
                     ? "Screen is ready — restarting the entire task from step 1 ("
                             + run.clickTextRetries + " of " + MAX_CLICK_TEXT_RETRIES + " text retries used)"
-                    : "Screen is on and device unlocked — restarting the entire task from step 1";
+                    : "Device unlocked — restarting the entire task from step 1";
             sendTaskRestartProgress(run.commandId, run.steps.length(), message,
                     false, run.clickTextRetries);
         }
@@ -4483,7 +4465,7 @@ public class SocketManager {
      * Broadcasts are the fast path; this state check is a fallback in case a
      * device misses a screen event while a task is running.
      */
-    private boolean pauseTaskRunIfScreenBlocked(TaskRun run) {
+    private boolean pauseTaskRunIfDeviceLocked(TaskRun run) {
         if (run.restartRequested || run.terminal) return true;
         if (!isTaskExecutionBlocked()) return false;
 
@@ -4652,7 +4634,7 @@ public class SocketManager {
 
         for (int i = 0; i < total; i++) {
             run.currentStepIndex = i;
-            if (pauseTaskRunIfScreenBlocked(run)) return;
+            if (pauseTaskRunIfDeviceLocked(run)) return;
 
             JSONObject step;
             String type;
@@ -4702,12 +4684,12 @@ public class SocketManager {
                                 .put("error", "Text not found within 7 seconds: \"" + textToFind + "\"");
 
                         while (System.currentTimeMillis() < pollDeadline) {
-                            if (pauseTaskRunIfScreenBlocked(run)) return;
+                            if (pauseTaskRunIfDeviceLocked(run)) return;
                             // Poll — find_by_text uses the accessibility tree (semaphore-guarded)
                             JSONObject findParams = new JSONObject();
                             findParams.put("text", textToFind);
                             JSONObject findResult = dispatchCommand("find_by_text", findParams);
-                            if (pauseTaskRunIfScreenBlocked(run)) return;
+                            if (pauseTaskRunIfDeviceLocked(run)) return;
 
                             if (findResult.optBoolean("success", false)) {
                                 int cnt = findResult.optInt("count", 0);
@@ -4738,7 +4720,7 @@ public class SocketManager {
                         // Paste once, wait three seconds, and continue regardless of
                         // whether the text is visible afterward.
                         String textToPaste = step.optString("text", "");
-                        if (pauseTaskRunIfScreenBlocked(run)) return;
+                        if (pauseTaskRunIfDeviceLocked(run)) return;
 
                         JSONObject pasteParams = new JSONObject();
                         pasteParams.put("text", textToPaste);
@@ -4758,7 +4740,7 @@ public class SocketManager {
                         if (run.restartRequested) return;
 
                         Thread.sleep(3_000L);
-                        if (pauseTaskRunIfScreenBlocked(run)) return;
+                        if (pauseTaskRunIfDeviceLocked(run)) return;
 
                         boolean textVisible = false;
                         if (!textToPaste.trim().isEmpty()) {
@@ -4774,7 +4756,7 @@ public class SocketManager {
                                 // Visibility is informational; it does not gate the next step.
                             }
                         }
-                        if (pauseTaskRunIfScreenBlocked(run)) return;
+                        if (pauseTaskRunIfDeviceLocked(run)) return;
 
                         String pasteMessage = textVisible
                                 ? "Pasted once; text detected after 3 seconds, continuing"
