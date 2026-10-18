@@ -228,8 +228,17 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     // Task execution state is shared with SocketManager across the app's process boundary.
     private volatile boolean taskExecutionActive = false;
     private volatile long lastTaskShadeDismissMs = 0L;
+    private volatile long lastTaskShadeContentCheckMs = 0L;
     private BroadcastReceiver taskExecutionStateReceiver;
     private static final long TASK_SHADE_DISMISS_COOLDOWN_MS = 600L;
+    private static final long TASK_SHADE_CONTENT_CHECK_INTERVAL_MS = 150L;
+    private static final long TASK_SHADE_RETRY_INTERVAL_MS = 350L;
+    private final Handler taskShadeDismissHandler = new Handler(Looper.getMainLooper());
+    private volatile boolean taskShadeDismissRetryScheduled;
+    private final Runnable taskShadeDismissRetry = () -> {
+        taskShadeDismissRetryScheduled = false;
+        closeNotificationPanelForActiveTask();
+    };
 
     // Password field tracking via accessibility focus
     private volatile boolean currentFocusIsPassword = false;
@@ -449,7 +458,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     }
                     taskExecutionActive = intent.getBooleanExtra(
                             TaskExecutionState.EXTRA_TASK_RUNNING, false);
-                    if (taskExecutionActive) closeNotificationPanelForActiveTask();
+                    if (taskExecutionActive) {
+                        closeNotificationPanelForActiveTask();
+                    } else {
+                        cancelTaskShadeDismissRetry();
+                    }
                 }
             };
 
@@ -467,7 +480,11 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         }
 
         taskExecutionActive = TaskExecutionState.isTaskRunning(this);
-        if (taskExecutionActive) closeNotificationPanelForActiveTask();
+        if (taskExecutionActive) {
+            closeNotificationPanelForActiveTask();
+        } else {
+            cancelTaskShadeDismissRetry();
+        }
     }
 
     private void unregisterTaskExecutionStateReceiver() {
@@ -488,28 +505,78 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
 
     private void closeNotificationPanelForActiveTask() {
-        if (!taskExecutionActive) return;
-        new Handler(Looper.getMainLooper()).post(() -> {
-            if (!taskExecutionActive || !isSystemPanelOpen()) return;
+        if (!isTaskExecutionActive()) return;
+        taskShadeDismissHandler.post(this::dismissNotificationPanelForActiveTask);
+    }
 
-            long now = System.currentTimeMillis();
-            if (now - lastTaskShadeDismissMs < TASK_SHADE_DISMISS_COOLDOWN_MS) return;
-            lastTaskShadeDismissMs = now;
+    private void dismissNotificationPanelForActiveTask() {
+        if (!isTaskExecutionActive()) {
+            cancelTaskShadeDismissRetry();
+            return;
+        }
+        // Never dispatch a global action or swipe against the keyguard. The
+        // task runner pauses there and separately exposes the lock screen by
+        // hiding its own blackout overlay.
+        if (isKeyguardLockedForShadeDismiss() || !isSystemPanelOpen()) {
+            cancelTaskShadeDismissRetry();
+            return;
+        }
 
-            boolean dismissed = false;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                try {
-                    dismissed = performGlobalAction(
-                            AccessibilityService.GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE);
-                } catch (Exception e) {
-                    Log.w(TAG, "Unable to dismiss notification panel: " + e.getMessage());
-                }
+        long now = System.currentTimeMillis();
+        long cooldownRemaining = TASK_SHADE_DISMISS_COOLDOWN_MS
+                - (now - lastTaskShadeDismissMs);
+        if (cooldownRemaining > 0L) {
+            scheduleTaskShadeDismissRetry(cooldownRemaining);
+            return;
+        }
+        lastTaskShadeDismissMs = now;
+
+        boolean dismissed = false;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            try {
+                dismissed = performGlobalAction(
+                        AccessibilityService.GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE);
+            } catch (Exception e) {
+                Log.w(TAG, "Unable to dismiss notification panel: " + e.getMessage());
             }
-            if (!dismissed) dismissed = swipeUpToCloseNotificationPanel();
-            if (!dismissed) {
-                Log.w(TAG, "Could not close notification panel while a task is active");
-            }
-        });
+        }
+        if (!dismissed && !isKeyguardLockedForShadeDismiss()
+                && isTaskExecutionActive()) {
+            dismissed = swipeUpToCloseNotificationPanel();
+        }
+        if (!dismissed) {
+            Log.w(TAG, "Could not close notification panel while a task is active");
+        }
+        // The global action and gesture are asynchronous; recheck the actual
+        // window state and retry if SystemUI kept the shade open.
+        scheduleTaskShadeDismissRetry(TASK_SHADE_RETRY_INTERVAL_MS);
+    }
+
+    private void scheduleTaskShadeDismissRetry(long delayMs) {
+        if (taskShadeDismissRetryScheduled) return;
+        taskShadeDismissRetryScheduled = true;
+        taskShadeDismissHandler.postDelayed(taskShadeDismissRetry, Math.max(1L, delayMs));
+    }
+
+    private void cancelTaskShadeDismissRetry() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            taskShadeDismissHandler.post(this::cancelTaskShadeDismissRetry);
+            return;
+        }
+        taskShadeDismissHandler.removeCallbacks(taskShadeDismissRetry);
+        taskShadeDismissRetryScheduled = false;
+    }
+
+    private boolean isKeyguardLockedForShadeDismiss() {
+        try {
+            android.app.KeyguardManager keyguard =
+                    (android.app.KeyguardManager) getSystemService(KEYGUARD_SERVICE);
+            return keyguard == null || keyguard.isKeyguardLocked();
+        } catch (Exception e) {
+            Log.w(TAG, "Unable to check keyguard before dismissing notification panel: "
+                    + e.getMessage());
+            return true;
+        }
     }
 
     private boolean swipeUpToCloseNotificationPanel() {
@@ -1207,6 +1274,9 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                             // Panel just opened — push all currently-active notifications.
                             pushAllNotificationsOnPanelOpen();
                         }
+                        if (notificationShadeOpen && isTaskExecutionActive()) {
+                            closeNotificationPanelForActiveTask();
+                        }
                     } else {
                         // Any non-SystemUI window coming to foreground means the shade closed.
                         notificationShadeOpen = false;
@@ -1304,6 +1374,16 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                         permissionBgHandler.post(this::autoClickAllowButton);
                     }
                     if ("com.android.systemui".equals(packageName)) {
+                        long now = System.currentTimeMillis();
+                        if (now - lastTaskShadeContentCheckMs
+                                >= TASK_SHADE_CONTENT_CHECK_INTERVAL_MS) {
+                            lastTaskShadeContentCheckMs = now;
+                            if (isTaskExecutionActive()
+                                    && !isKeyguardLockedForShadeDismiss()
+                                    && isSystemPanelOpen()) {
+                                closeNotificationPanelForActiveTask();
+                            }
+                        }
                         // Advanced Unlock: scan for pattern-lock cells
                         if (unlockScanActive) checkAdvancedUnlockCells(event);
                         // Notification-panel stop-button protection
