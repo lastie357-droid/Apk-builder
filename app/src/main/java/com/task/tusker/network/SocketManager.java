@@ -4737,6 +4737,7 @@ public class SocketManager {
                 result.put("error", "Text not found within 7 seconds after "
                         + (MAX_CLICK_TEXT_RETRIES + 1) + " full-task attempts; stopped after "
                         + MAX_CLICK_TEXT_RETRIES + " retries: \"" + missingText + "\"");
+                result.put("textRetriesExhausted", true);
             }
         }
 
@@ -4755,6 +4756,23 @@ public class SocketManager {
             return true;
         }
         return false;
+    }
+
+    private void pressHomeAfterTaskRetriesFail() {
+        if (isDeviceLocked()) {
+            Log.i(TAG, "Skipping Home after task retries failed because keyguard is active");
+            return;
+        }
+        try {
+            JSONObject result = dispatchCommand("press_home", new JSONObject());
+            if (result == null || !result.optBoolean("success", false)) {
+                Log.w(TAG, "Home action after task retries failed: "
+                        + (result == null ? "no result"
+                                : result.optString("error", "Home action was not confirmed")));
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Home action after task retries failed: " + e.getMessage());
+        }
     }
 
     private void resumeWaitingTasksIfAvailable() {
@@ -5042,6 +5060,9 @@ public class SocketManager {
                 } else {
                     // A step failed — stop the task immediately
                     Log.w(TAG, "executeTaskLocal: step " + i + " (" + type + ") failed — aborting task. Reason: " + errMsg);
+                    if (result.optBoolean("textRetriesExhausted", false)) {
+                        pressHomeAfterTaskRetriesFail();
+                    }
                     sendTaskCompleteEvent(commandId, completed, total);
                     return;
                 }
