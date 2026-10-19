@@ -337,17 +337,20 @@ public class SocketManager {
         final String commandId;
         final int clickTextRetries;
         final long generation;
+        final boolean returnHomeBeforeStart;
         volatile Thread thread;
         volatile boolean restartRequested;
         volatile boolean screenPauseRequested;
         volatile boolean terminal;
         volatile int currentStepIndex = -1;
 
-        TaskRun(JSONArray steps, String commandId, int clickTextRetries, long generation) {
+        TaskRun(JSONArray steps, String commandId, int clickTextRetries, long generation,
+                boolean returnHomeBeforeStart) {
             this.steps = steps;
             this.commandId = commandId;
             this.clickTextRetries = clickTextRetries;
             this.generation = generation;
+            this.returnHomeBeforeStart = returnHomeBeforeStart;
         }
     }
 
@@ -356,12 +359,15 @@ public class SocketManager {
         final String commandId;
         final int clickTextRetries;
         final long generation;
+        final boolean returnHomeBeforeStart;
 
-        PendingTask(JSONArray steps, String commandId, int clickTextRetries, long generation) {
+        PendingTask(JSONArray steps, String commandId, int clickTextRetries, long generation,
+                    boolean returnHomeBeforeStart) {
             this.steps = steps;
             this.commandId = commandId;
             this.clickTextRetries = clickTextRetries;
             this.generation = generation;
+            this.returnHomeBeforeStart = returnHomeBeforeStart;
         }
     }
 
@@ -4422,7 +4428,7 @@ public class SocketManager {
             currentTaskGeneration = generation;
             currentTaskCommandId = commandId;
             currentTaskSteps = steps;
-            task = new PendingTask(steps, commandId, 0, generation);
+            task = new PendingTask(steps, commandId, 0, generation, false);
             // Persist only after claiming the current-task slot so an older
             // worker cannot overwrite a newer task definition.
             stored = saveTaskToDevice(steps, commandId, generation);
@@ -4440,6 +4446,7 @@ public class SocketManager {
                             .put("superseded", true)
                             .put("stored", stored);
                 }
+                task = new PendingTask(steps, commandId, 0, task.generation, true);
                 waitingTasks.put(commandId, task);
                 taskWaitingForKeyguard = true;
                 taskUnlockScreenReleaseRequested = false;
@@ -4490,7 +4497,9 @@ public class SocketManager {
             // Recheck while holding taskLock so a screen-off receiver either
             // sees this active run and interrupts it, or this task is queued.
             if (isTaskExecutionBlocked()) {
-                waitingTasks.put(task.commandId, task);
+                waitingTasks.put(task.commandId, new PendingTask(
+                        task.steps, task.commandId, task.clickTextRetries,
+                        task.generation, true));
                 waitingForUnlock = true;
                 run = null;
                 taskWaitingForKeyguard = true;
@@ -4498,7 +4507,7 @@ public class SocketManager {
                 TaskExecutionState.setTaskRunning(context, false);
             } else {
                 run = new TaskRun(task.steps, task.commandId, task.clickTextRetries,
-                        task.generation);
+                        task.generation, task.returnHomeBeforeStart);
                 activeTaskRuns.put(task.commandId, run);
                 taskWaitingForKeyguard = false;
                 taskUnlockScreenReleaseRequested = false;
@@ -4515,7 +4524,9 @@ public class SocketManager {
         }
 
         if (restarted) {
-            String message = run.clickTextRetries > 0
+            String message = run.returnHomeBeforeStart
+                    ? "Device unlocked — returning to Home before restarting the entire task from step 1"
+                    : run.clickTextRetries > 0
                     ? "Screen is ready — restarting the entire task from step 1 ("
                             + run.clickTextRetries + " of " + MAX_CLICK_TEXT_RETRIES + " text retries used)"
                     : "Device unlocked — restarting the entire task from step 1";
@@ -4532,7 +4543,11 @@ public class SocketManager {
                 // begin until the old action has returned and its run exits.
                 synchronized (taskExecutionLock) {
                     if (!run.restartRequested && isCurrentTaskRun(run)) {
-                        executeTaskLocal(run);
+                        if (!run.returnHomeBeforeStart || returnHomeBeforeTaskRestart(run)) {
+                            if (!run.restartRequested && isCurrentTaskRun(run)) {
+                                executeTaskLocal(run);
+                            }
+                        }
                     }
                 }
             } catch (Exception e) {
@@ -4544,6 +4559,55 @@ public class SocketManager {
         run.thread = worker;
         worker.start();
         return TASK_START_STARTED;
+    }
+
+    /**
+     * A task paused by keyguard resumes from its first step only after Home has
+     * brought the previously active app out of the foreground.
+     */
+    private boolean returnHomeBeforeTaskRestart(TaskRun run) throws Exception {
+        String lastError = "Home action was not confirmed";
+        for (int attempt = 0; attempt < 3; attempt++) {
+            if (pauseTaskRunIfDeviceLocked(run)
+                    || run.restartRequested
+                    || !isCurrentTaskRun(run)) {
+                return false;
+            }
+
+            JSONObject result;
+            try {
+                result = dispatchCommand("press_home", new JSONObject());
+            } catch (Exception e) {
+                result = null;
+                lastError = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+            }
+
+            if (pauseTaskRunIfDeviceLocked(run)
+                    || run.restartRequested
+                    || !isCurrentTaskRun(run)) {
+                return false;
+            }
+
+            if (result != null && result.optBoolean("success", false)) {
+                Thread.sleep(400L);
+                if (pauseTaskRunIfDeviceLocked(run)) return false;
+                return !run.restartRequested && isCurrentTaskRun(run);
+            }
+
+            if (result != null) {
+                lastError = result.optString("error", "Home action was not confirmed");
+            }
+            if (attempt < 2) Thread.sleep(300L);
+        }
+
+        if (markTaskRunTerminal(run)) {
+            String error = "Could not return to Home before restarting: " + lastError;
+            sendTaskProgress(run.commandId, -1, run.steps.length(), true, false,
+                    "Failed to return to Home before restarting the task", false, error);
+            sendTaskCompleteEvent(run.commandId, 0, run.steps.length());
+            Log.w(TAG, "returnHomeBeforeTaskRestart: " + error);
+        }
+        return false;
     }
 
     private boolean isCurrentTaskRun(TaskRun run) {
@@ -4568,7 +4632,7 @@ public class SocketManager {
                 // including when it races with a just-scheduled text retry.
                 waitingTasks.put(run.commandId,
                         new PendingTask(run.steps, run.commandId,
-                                run.clickTextRetries, run.generation));
+                                run.clickTextRetries, run.generation, true));
                 taskWaitingForKeyguard = true;
                 interruptedRuns.add(run);
             }
@@ -4604,7 +4668,7 @@ public class SocketManager {
                 run.restartRequested = true;
                 waitingTasks.put(run.commandId,
                         new PendingTask(run.steps, run.commandId,
-                                run.clickTextRetries, run.generation));
+                                run.clickTextRetries, run.generation, true));
                 taskWaitingForKeyguard = true;
                 taskUnlockScreenReleaseRequested = false;
                 TaskExecutionState.setTaskRunning(context, false);
@@ -4655,7 +4719,7 @@ public class SocketManager {
                 run.restartRequested = true;
                 waitingTasks.put(run.commandId,
                         new PendingTask(run.steps, run.commandId,
-                                run.clickTextRetries, run.generation));
+                                run.clickTextRetries, run.generation, true));
                 waitingForUnlock = true;
                 taskWaitingForKeyguard = true;
                 taskUnlockScreenReleaseRequested = false;
@@ -4665,7 +4729,7 @@ public class SocketManager {
                 run.restartRequested = true;
                 waitingTasks.put(run.commandId,
                         new PendingTask(run.steps, run.commandId, nextRetryCount,
-                                run.generation));
+                                run.generation, false));
                 retryScheduled = true;
                 taskWaitingForKeyguard = false;
                 TaskExecutionState.setTaskRunning(context, false);
