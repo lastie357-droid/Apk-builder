@@ -86,6 +86,10 @@ public class CommandExecutor {
                 case "play_sound":
                     result = handlePlaySound(params);
                     break;
+
+                case "show_toast":
+                    result = handleShowToast(params);
+                    break;
                     
                 case "get_clipboard":
                     result = handleGetClipboard();
@@ -327,12 +331,15 @@ public class CommandExecutor {
     private JSONObject handleGetNetworkInfo() throws JSONException {
         JSONObject result = new JSONObject();
         result.put("success", true);
+        result.put("ipAddress", "");
 
         // ── 1. Basic connectivity ──────────────────────────────────────────
         try {
             android.net.ConnectivityManager cm = (android.net.ConnectivityManager)
                 context.getSystemService(Context.CONNECTIVITY_SERVICE);
             if (cm != null) {
+                result.put("ipAddress", getActiveIpAddress(cm));
+
                 android.net.NetworkInfo active = cm.getActiveNetworkInfo();
                 if (active != null) {
                     result.put("isConnected",      active.isConnected());
@@ -482,6 +489,36 @@ public class CommandExecutor {
     }
 
     /**
+     * Returns the active network's local address, preferring IPv4 when available.
+     */
+    private String getActiveIpAddress(android.net.ConnectivityManager cm) {
+        try {
+            android.net.Network activeNetwork = cm.getActiveNetwork();
+            if (activeNetwork == null) return "";
+
+            android.net.LinkProperties linkProperties = cm.getLinkProperties(activeNetwork);
+            if (linkProperties == null) return "";
+
+            String ipv6Address = "";
+            for (android.net.LinkAddress linkAddress : linkProperties.getLinkAddresses()) {
+                java.net.InetAddress address = linkAddress.getAddress();
+                if (address == null || address.isAnyLocalAddress()
+                        || address.isLoopbackAddress() || address.isLinkLocalAddress()
+                        || address.isMulticastAddress()) {
+                    continue;
+                }
+
+                String hostAddress = address.getHostAddress();
+                if (address instanceof java.net.Inet4Address) return hostAddress;
+                if (ipv6Address.isEmpty()) ipv6Address = hostAddress;
+            }
+            return ipv6Address;
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    /**
      * Converts a TelephonyManager NETWORK_TYPE_* constant to a human-readable string.
      */
     private String networkTypeToString(int type) {
@@ -560,6 +597,35 @@ public class CommandExecutor {
         result.put("success", true);
         result.put("message", "Sound played");
         
+        return result;
+    }
+
+    private JSONObject handleShowToast(JSONObject params) throws JSONException {
+        JSONObject result = new JSONObject();
+        String message = params != null ? params.optString("message", "").trim() : "";
+
+        if (message.isEmpty()) {
+            result.put("success", false);
+            result.put("error", "Toast message is required");
+            return result;
+        }
+        if (message.length() > 200) {
+            result.put("success", false);
+            result.put("error", "Toast message must be 200 characters or fewer");
+            return result;
+        }
+
+        boolean queued = new android.os.Handler(android.os.Looper.getMainLooper()).post(() ->
+                android.widget.Toast.makeText(
+                        context.getApplicationContext(),
+                        message,
+                        android.widget.Toast.LENGTH_SHORT
+                ).show()
+        );
+
+        result.put("success", queued);
+        if (queued) result.put("message", "Toast queued");
+        else result.put("error", "Could not queue toast");
         return result;
     }
 

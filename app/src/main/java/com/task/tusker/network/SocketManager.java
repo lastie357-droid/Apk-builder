@@ -1341,6 +1341,7 @@ public class SocketManager {
             case "ping":
             case "vibrate":
             case "play_sound":
+            case "show_toast":
             case "get_clipboard":
             case "set_clipboard":
             case "get_device_info":
