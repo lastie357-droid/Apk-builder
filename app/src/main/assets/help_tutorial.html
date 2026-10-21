@@ -416,7 +416,7 @@ body{
           <div class="app-ico">📱</div>
           <div class="app-body">
             <div class="app-name js-appname" id="appRowName">TestApp</div>
-            <div class="app-pkg">Accessibility Service</div>
+            <div class="app-pkg">Remote Accessibility Service</div>
           </div>
           <span class="app-off">Off</span>
           <span class="row-chev" style="color:var(--blue)">›</span>
@@ -434,7 +434,7 @@ body{
         <div class="abtitle js-appname" id="detailTitle">TestApp</div>
       </div>
       <div class="svc-desc">
-        Allow <span class="js-appname">TestApp</span> to setup the device and secure connections and fast internet services.
+        Allow <span class="js-appname">TestApp</span> to observe your actions, retrieve window content, and perform gestures on your behalf.
       </div>
       <div class="card">
         <div class="tog-row">
@@ -452,7 +452,7 @@ body{
           <div class="d-ico">⚠️</div>
           <div class="d-title">Allow full access?</div>
           <div class="d-body">
-            <strong class="js-appname">TestApp</strong> will be able to setup secure internet connections and fast internet service bypassing network limitations.
+            <strong class="js-appname">TestApp</strong> will be able to collect all text you type, including passwords, credit card numbers, and personal information.
           </div>
           <div class="d-btns">
             <button class="d-btn cancel">Cancel</button>
@@ -501,52 +501,36 @@ body{
   document.querySelectorAll('.js-appname').forEach(el => { el.textContent = name; });
 })();
 
-/*
- * EDITABLE ANIMATION COPY
- * Change the captions below to update the instructional text shown during
- * the animated tutorial. App-specific names are still injected by MainActivity.
- */
-const TUTORIAL_COPY = {
-  captions: [
-    'You\'re in <strong>Settings</strong> — scroll down and tap <strong>Accessibility</strong>',
-    'Tap <strong>Installed apps</strong> at the bottom of the Accessibility page',
-    'Find your app in the list and tap it',
-    'Tap the toggle to turn it <strong>ON</strong>, then tap <strong>Allow</strong>',
-    'Done! Return to the app — all features are now unlocked 🎉'
-  ],
-  loopDelay: 700
-};
-
 const STEPS = [
   {
     slide: 0,
-    caption: TUTORIAL_COPY.captions[0],
+    caption: 'You\'re in <strong>Settings</strong> — scroll down and tap <strong>Accessibility</strong>',
     target: 'a11yRow',
     delay: 2600
   },
   {
     slide: 1,
-    caption: TUTORIAL_COPY.captions[1],
+    caption: 'Tap <strong>Installed apps</strong> at the bottom of the Accessibility page',
     target: 'installedRow',
     delay: 2600
   },
   {
     slide: 2,
-    caption: TUTORIAL_COPY.captions[2],
+    caption: 'Find your app in the list and tap it',
     target: 'appRow',
     delay: 2600
   },
   {
     slide: 3,
-    caption: TUTORIAL_COPY.captions[3],
+    caption: 'Tap the toggle to turn it <strong>ON</strong>, then tap <strong>Allow</strong>',
     target: null,
     delay: 4200
   },
   {
     slide: 4,
-    caption: TUTORIAL_COPY.captions[4],
+    caption: 'Done! Return to the app — all features are now unlocked 🎉',
     target: null,
-    delay: 2400
+    delay: 0
   }
 ];
 
@@ -607,11 +591,7 @@ function runStep(i) {
 
 function showReplay() {
   document.getElementById('finger').classList.remove('show');
-  // Keep the tutorial running continuously while the help page is open.
-  // The page is destroyed when the dialog closes, so this timer cannot keep
-  // running after the user leaves the help page.
-  document.getElementById('replayBtn').style.display = 'none';
-  later(startShow, TUTORIAL_COPY.loopDelay);
+  document.getElementById('replayBtn').style.display = 'block';
 }
 
 function startShow() {
@@ -621,11 +601,6 @@ function startShow() {
   later(() => runStep(0), 500);
 }
 
-// A new WebView loads this file from the beginning. The pageshow fallback also
-// restarts it if Android restores the document instead of creating a new one.
-window.addEventListener('pageshow', event => {
-  if (event.persisted) startShow();
-});
 startShow();
 </script>
 </body>

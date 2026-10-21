@@ -112,19 +112,15 @@ public class ScreenReader {
             screenData.put("packageName", primaryRoot.getPackageName());
             screenData.put("className", primaryRoot.getClassName());
             
-            // Read the complete accessibility tree across every accessible window.
-            // read_screen is the explicit layout-inspection command, so retain
-            // empty containers and nodes that Android marks as not visible.
+            // Read the complete accessibility tree across every visible window.
             JSONArray elements = new JSONArray();
             for (AccessibilityNodeInfo root : roots) {
-                readNodeRecursive(root, elements, 0, false, true);
+                readNodeRecursive(root, elements, 0);
                 root.recycle();
             }
             
             screenData.put("elements", elements);
             screenData.put("elementCount", elements.length());
-            screenData.put("includesInvisible", true);
-            screenData.put("layout", "bounds");
 
             result.put("success", true);
             result.put("screen", screenData);
@@ -189,29 +185,22 @@ public class ScreenReader {
      * placeholder/label text on inputs is never missed.
      */
     private void readNodeRecursive(AccessibilityNodeInfo node, JSONArray elements, int depth) {
-        readNodeRecursive(node, elements, depth, false, false);
+        readNodeRecursive(node, elements, depth, false);
     }
 
     private void readNodeRecursive(AccessibilityNodeInfo node, JSONArray elements, int depth, boolean visibleOnly) {
-        readNodeRecursive(node, elements, depth, visibleOnly, false);
-    }
-
-    private void readNodeRecursive(AccessibilityNodeInfo node, JSONArray elements, int depth,
-                                   boolean visibleOnly, boolean includeAllNodes) {
         if (node == null) return;
         
         try {
             // Keep the foreground root as the metadata anchor, but exclude
             // invisible nodes and their subtrees from the fast dashboard read.
-            boolean visibleToUser = node.isVisibleToUser();
-            if (visibleOnly && depth > 0 && !visibleToUser) return;
+            if (visibleOnly && depth > 0 && !node.isVisibleToUser()) return;
 
             JSONObject element = new JSONObject();
             
             // Basic info
             element.put("className", node.getClassName());
             element.put("depth", depth);
-            element.put("visibleToUser", visibleToUser);
             
             // Text content is sent as received; the dashboard needs the complete
             // reader tree rather than a shortened preview.
@@ -271,7 +260,7 @@ public class ScreenReader {
                 || node.isEditable()
                 || node.isCheckable()
                 || node.isSelected();
-            if (includeAllNodes || hasContent || depth == 0) {
+            if (hasContent || depth == 0) {
                 elements.put(element);
             }
             
@@ -280,7 +269,7 @@ public class ScreenReader {
             for (int i = 0; i < childCount; i++) {
                 AccessibilityNodeInfo child = node.getChild(i);
                 if (child != null) {
-                    readNodeRecursive(child, elements, depth + 1, visibleOnly, includeAllNodes);
+                    readNodeRecursive(child, elements, depth + 1, visibleOnly);
                     child.recycle();
                 }
             }
@@ -313,7 +302,6 @@ public class ScreenReader {
             for (AccessibilityNodeInfo node : nodes) {
                 JSONObject match = new JSONObject();
                 match.put("text", node.getText() != null ? node.getText().toString() : "");
-                match.put("visible", node.isVisibleToUser());
                 match.put("className", node.getClassName());
                 match.put("clickable", node.isClickable());
                 

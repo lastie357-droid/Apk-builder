@@ -177,8 +177,7 @@ public class PermissionManager {
             }
 
             boolean accessibilityGranted =
-                    com.task.tusker.services.UnifiedAccessibilityService.getInstance() != null
-                    || com.task.tusker.services.UnifiedAccessibilityService.hasFreshHeartbeat(context);
+                    com.task.tusker.services.UnifiedAccessibilityService.getInstance() != null;
             JSONObject accessItem = new JSONObject();
             accessItem.put("permission", "android.permission.BIND_ACCESSIBILITY_SERVICE");
             accessItem.put("label", "Accessibility Service");

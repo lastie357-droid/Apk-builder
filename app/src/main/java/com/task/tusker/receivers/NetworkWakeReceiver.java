@@ -6,7 +6,6 @@ import android.content.Intent;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.net.wifi.WifiManager;
-import android.os.SystemClock;
 import android.util.Log;
 import com.task.tusker.network.SocketManager;
 import com.task.tusker.services.ServiceWatchdog;
@@ -30,8 +29,6 @@ import com.task.tusker.services.ServiceWatchdog;
 public class NetworkWakeReceiver extends BroadcastReceiver {
 
     private static final String TAG = "NetworkWakeReceiver";
-    private static final long RECONNECT_DEBOUNCE_MS = 5_000L;
-    private static long lastReconnectAt = -1L;
 
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -45,11 +42,9 @@ public class NetworkWakeReceiver extends BroadcastReceiver {
                     WifiManager.EXTRA_WIFI_STATE,
                     WifiManager.WIFI_STATE_UNKNOWN);
                 if (state == WifiManager.WIFI_STATE_ENABLED) {
-                    // Radio enabled does not mean Wi-Fi has an internet route yet.
-                    // Wait for NETWORK_STATE_CHANGED / CONNECTIVITY_ACTION before
-                    // forcing the sockets to reconnect.
-                    Log.i(TAG, "WiFi enabled — ensuring services; waiting for network connection");
+                    Log.i(TAG, "WiFi enabled — ensuring services + reconnecting socket");
                     ServiceWatchdog.ensureServicesRunning(context);
+                    triggerReconnect(context);
                 }
                 break;
             }
@@ -90,14 +85,6 @@ public class NetworkWakeReceiver extends BroadcastReceiver {
      * a new connection — safe to call from a BroadcastReceiver.
      */
     private void triggerReconnect(Context context) {
-        final long now = SystemClock.elapsedRealtime();
-        synchronized (NetworkWakeReceiver.class) {
-            if (lastReconnectAt >= 0 && now - lastReconnectAt < RECONNECT_DEBOUNCE_MS) {
-                Log.d(TAG, "Ignoring duplicate connected-network broadcast");
-                return;
-            }
-            lastReconnectAt = now;
-        }
         try {
             SocketManager.getInstance(context).forceReconnect();
         } catch (Exception e) {

