@@ -217,6 +217,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         lastInstallAssistClickAt = 0L;
         Log.i(TAG, "Install assist armed for 10s");
     }
+
+    public void armUninstallAssist(String packageName) {
         armUninstallAssistForTarget(packageName, false);
     }
 
@@ -3076,6 +3078,8 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         } catch (Exception ignored) {}
         return null;
     }
+
+    private boolean runArmedUninstallAssist(AccessibilityNodeInfo rootNode) {
         if (!isArmedUninstallDialog(rootNode)) return false;
 
         long now = System.currentTimeMillis();
