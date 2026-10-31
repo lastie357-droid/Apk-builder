@@ -32,7 +32,7 @@ public class KeepAliveManager {
     private static final String PING_URL      = "https://www.google.com";
     private static final int    PING_INTERVAL = 60_000;   // re-ping every 60 s
     private static final int    PING_TIMEOUT  = 5_000;    // connection timeout
-    private static final int    WAKE_DELAY_MS = 300_000;  // 5 min delay before waking
+    private static final int    WAKE_DELAY_MS = 20 * 60 * 1000; // 20 min delay before waking
     private static final int    WAKE_HOLD_MS  = 15_000;   // keep CPU+screen awake 15 s after wake
 
     private final Context         context;
@@ -156,7 +156,7 @@ public class KeepAliveManager {
                     removeOverlay();         // FLAG_KEEP_SCREEN_ON no longer needed
                     cancelWakeDelay();       // reset any running countdown
                     if (lastPingOk) {
-                        scheduleWake();      // arm the 1m30s wake timer
+                        scheduleWake();      // arm the delayed wake timer
                     }
 
                 } else if (Intent.ACTION_SCREEN_ON.equals(action)
@@ -183,7 +183,7 @@ public class KeepAliveManager {
         }
     }
 
-    // ── 1m30s delayed wake ─────────────────────────────────────────────────
+    // ── Delayed wake ───────────────────────────────────────────────────────
 
     private void scheduleWake() {
         wakeDelayRunnable = () -> {

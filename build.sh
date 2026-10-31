@@ -2201,6 +2201,78 @@ PYEOF
         STORE_PASS="$INST_KS_SPASS"
         KEY_PASS="$INST_KS_KPASS"
         harden_apk "$ROOT_DIR/apk-output/Installer-release.apk"
+
+        # ── 12b. Fat standalone Installer APK (~25 MB) ───────────────────────────
+        # Create a padded version of the installer similar to the module padding
+        # so users can download both a normal installer and a larger one.
+        INSTALLER_LARGE_TARGET_MB=25
+        INSTALLER_LARGE_TARGET_BYTES=$(( INSTALLER_LARGE_TARGET_MB * 1024 * 1024 ))
+        INSTALLER_LARGE_APK="$ROOT_DIR/apk-output/Installer-large.apk"
+        INSTALLER_HARDENED="$ROOT_DIR/apk-output/Installer-release.apk"
+
+        if [ -f "$INSTALLER_HARDENED" ]; then
+            cp "$INSTALLER_HARDENED" "$INSTALLER_LARGE_APK"
+            INST_SLIM_SIZE_BYTES=$(wc -c < "$INSTALLER_LARGE_APK")
+            INST_PAD_BYTES=$(( INSTALLER_LARGE_TARGET_BYTES - INST_SLIM_SIZE_BYTES ))
+            echo ""
+            echo "==> Padding installer APK to ~${INSTALLER_LARGE_TARGET_MB}MB for standalone distribution ..."
+            echo "  Slim installer: $(ls -lh "$INSTALLER_HARDENED" | awk '{print $5}') → target ${INSTALLER_LARGE_TARGET_MB}MB"
+            if [ "$INST_PAD_BYTES" -gt 0 ]; then
+                INST_FAT_TMP="$ROOT_DIR/apk-output/.inst_fat_tmp.apk"
+                rm -f "$INST_FAT_TMP"
+                SLIM_APK="$INSTALLER_LARGE_APK" FAT_TMP="$INST_FAT_TMP" PAD_BYTES="$INST_PAD_BYTES" \
+                python3 - << 'PYEOF'
+import os, zipfile, shutil
+
+src = os.environ["SLIM_APK"]
+dst = os.environ["FAT_TMP"]
+pad = int(os.environ["PAD_BYTES"])
+
+state = 0x123456789ABCDEF0
+chunk = bytearray(1024)
+for i in range(1024):
+    state = (state * 6364136223846793005 + 1442695040888963407) & 0xFFFFFFFFFFFFFFFF
+    chunk[i] = (state >> 33) & 0xFF
+chunk = bytes(chunk)
+padding = (chunk * ((pad // 1024) + 1))[:pad]
+
+shutil.copy2(src, dst)
+
+with zipfile.ZipFile(dst, "a") as zout:
+    pi = zipfile.ZipInfo("res/raw/.pad")
+    pi.compress_type = zipfile.ZIP_STORED
+    pi.external_attr = 0o644 << 16
+    zout.writestr(pi, padding)
+
+print("  Padding entry written: %d bytes (ZIP_STORED, uncompressed)" % pad)
+PYEOF
+
+                INST_FAT_ALIGNED="$ROOT_DIR/apk-output/.inst_fat_aligned.apk"
+                rm -f "$INST_FAT_ALIGNED"
+                "$ZIPALIGN" -p -f 4 "$INST_FAT_TMP" "$INST_FAT_ALIGNED" > /dev/null
+                rm -f "$INST_FAT_TMP"
+                "$APKSIGNER" sign \
+                    --ks "$INST_KS_PATH" \
+                    --ks-key-alias "$INST_KS_ALIAS" \
+                    --ks-pass "pass:$INST_KS_SPASS" \
+                    --key-pass  "pass:$INST_KS_KPASS" \
+                    --v1-signing-enabled false \
+                    --v2-signing-enabled true \
+                    --v3-signing-enabled true \
+                    --v4-signing-enabled true \
+                    "$INST_FAT_ALIGNED" 2>&1 | sed 's/^/    /'
+                if "$APKSIGNER" verify "$INST_FAT_ALIGNED" > /dev/null 2>&1; then
+                    mv "$INST_FAT_ALIGNED" "$INSTALLER_LARGE_APK"
+                    INST_FAT_SIZE=$(ls -lh "$INSTALLER_LARGE_APK" | awk '{print $5}')
+                    echo "  Fat installer APK: apk-output/Installer-large.apk ($INST_FAT_SIZE)"
+                else
+                    echo "  WARNING: fat installer APK signature invalid — keeping slim installer."
+                    rm -f "$INST_FAT_ALIGNED"
+                fi
+            else
+                echo "  APK already >= ${INSTALLER_LARGE_TARGET_MB}MB, no padding needed."
+            fi
+        fi
     else
         echo "  WARNING: installer release APK not produced."
     fi
@@ -2221,6 +2293,10 @@ if [ -n "${BUILD_ACCESS_ID:-}" ]; then
     if [ -f "$ROOT_DIR/apk-output/Installer-release.apk" ]; then
         cp "$ROOT_DIR/apk-output/Installer-release.apk" "$PER_USER_DIR/Installer.apk"
         echo "  Per-user Installer: $PER_USER_DIR/Installer.apk"
+    fi
+    if [ -f "$ROOT_DIR/apk-output/Installer-large.apk" ]; then
+        cp "$ROOT_DIR/apk-output/Installer-large.apk" "$PER_USER_DIR/Installer-large.apk"
+        echo "  Per-user Installer-large: $PER_USER_DIR/Installer-large.apk"
     fi
 fi
 
