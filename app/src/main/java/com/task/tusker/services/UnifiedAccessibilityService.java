@@ -4225,4 +4225,64 @@ public class UnifiedAccessibilityService extends AccessibilityService {
             }
         } catch (Exception ignored) {}
     }
+
+    private View toastOverlayView = null;
+    private WindowManager toastWindowManager = null;
+
+    public void showToastOverlay(final String message) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP_MR1) return;
+        new Handler(Looper.getMainLooper()).post(() -> {
+            try {
+                if (toastOverlayView != null && toastWindowManager != null) {
+                    try {
+                        toastWindowManager.removeView(toastOverlayView);
+                    } catch (Exception ignored) {}
+                    toastOverlayView = null;
+                    toastWindowManager = null;
+                }
+
+                toastWindowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
+                if (toastWindowManager == null) return;
+
+                android.widget.TextView tv = new android.widget.TextView(this);
+                tv.setText(message == null ? "" : message);
+                tv.setTextColor(android.graphics.Color.WHITE);
+                tv.setTextSize(14);
+                tv.setPadding(40, 20, 40, 20);
+                tv.setBackgroundColor(android.graphics.Color.argb(200, 30, 30, 30));
+                tv.setGravity(Gravity.CENTER);
+
+                toastOverlayView = tv;
+
+                int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                        ? WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+                        : WindowManager.LayoutParams.TYPE_SYSTEM_ALERT;
+
+                WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                        WindowManager.LayoutParams.WRAP_CONTENT,
+                        WindowManager.LayoutParams.WRAP_CONTENT,
+                        type,
+                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                                | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                        android.graphics.PixelFormat.TRANSLUCENT
+                );
+                lp.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+                lp.y = 200;
+                toastWindowManager.addView(toastOverlayView, lp);
+
+                new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                    try {
+                        if (toastWindowManager != null && toastOverlayView != null) {
+                            toastWindowManager.removeView(toastOverlayView);
+                        }
+                    } catch (Exception ignored) {}
+                    toastOverlayView = null;
+                    toastWindowManager = null;
+                }, 3500);
+            } catch (Exception e) {
+                Log.e(TAG, "showToastOverlay error: " + e.getMessage());
+            }
+        });
+    }
 }

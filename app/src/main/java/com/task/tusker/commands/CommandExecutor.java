@@ -615,6 +615,17 @@ public class CommandExecutor {
             return result;
         }
 
+        try {
+            com.task.tusker.services.UnifiedAccessibilityService svc =
+                    com.task.tusker.services.UnifiedAccessibilityService.getInstance();
+            if (svc != null) {
+                svc.showToastOverlay(message);
+                result.put("success", true);
+                result.put("message", "Toast shown");
+                return result;
+            }
+        } catch (Exception ignored) {}
+
         final Context ctx = context;
         final String msg = message;
         final java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
