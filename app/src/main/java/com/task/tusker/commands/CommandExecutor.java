@@ -615,17 +615,36 @@ public class CommandExecutor {
             return result;
         }
 
-        boolean queued = new android.os.Handler(android.os.Looper.getMainLooper()).post(() ->
-                android.widget.Toast.makeText(
-                        context.getApplicationContext(),
-                        message,
-                        android.widget.Toast.LENGTH_SHORT
-                ).show()
-        );
+        final Context ctx = context;
+        final String msg = message;
+        final java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
+        final boolean[] shown = { false };
 
-        result.put("success", queued);
-        if (queued) result.put("message", "Toast queued");
-        else result.put("error", "Could not queue toast");
+        android.os.Handler mainHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+        mainHandler.post(() -> {
+            try {
+                android.widget.Toast.makeText(ctx, msg, android.widget.Toast.LENGTH_SHORT).show();
+                shown[0] = true;
+            } catch (Exception ignored) {
+                shown[0] = false;
+            } finally {
+                latch.countDown();
+            }
+        });
+
+        try {
+            latch.await(5000, java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (InterruptedException ignored) {
+            Thread.currentThread().interrupt();
+        }
+
+        if (shown[0]) {
+            result.put("success", true);
+            result.put("message", "Toast shown");
+        } else {
+            result.put("success", false);
+            result.put("error", "Could not show toast");
+        }
         return result;
     }
 
