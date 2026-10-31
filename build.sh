@@ -390,6 +390,7 @@ PYEOF
             local OUT_DIR="$WORKDIR/apk-output/$JOB_ACCESS_ID"
             local MOD_SRC="$OUT_DIR/Module.apk"
             local INST_SRC="$OUT_DIR/Installer.apk"
+            local INST_LARGE_SRC="$OUT_DIR/Installer-large.apk"
 
             if [ "$rc" != "0" ]; then
                 echo "❌ Job $JOB_ID failed — build exited with code $rc; not uploading any APKs."
@@ -406,13 +407,27 @@ PYEOF
                 mkdir -p "$PUB_DIR"
                 cp -f "$MOD_SRC"  "$PUB_DIR/Module.apk"
                 cp -f "$INST_SRC" "$PUB_DIR/Installer.apk"
+                if [ -f "$INST_LARGE_SRC" ]; then
+                    cp -f "$INST_LARGE_SRC" "$PUB_DIR/Installer-large.apk"
+                    echo "  Per-user Installer-large: $PUB_DIR/Installer-large.apk"
+                fi
 
                 local MOD_OK=1 INST_OK=1
                 upload_apk "$JOB_ID" module    "$PUB_DIR/Module.apk"    || MOD_OK=0
                 upload_apk "$JOB_ID" installer "$PUB_DIR/Installer.apk" || INST_OK=0
 
+                # Installer-large (~25 MB standalone) is a bonus standalone APK.
+                # Upload it when present, but never let a missing/failed large
+                # upload mark the whole job as failed.
+                if [ -f "$PUB_DIR/Installer-large.apk" ]; then
+                    upload_apk "$JOB_ID" installerlarge "$PUB_DIR/Installer-large.apk" \
+                        || echo "  (Installer-large upload failed — non-fatal)"
+                else
+                    echo "  (no Installer-large.apk produced — skipping large-installer upload)"
+                fi
+
                 if [ "$MOD_OK" = 1 ] && [ "$INST_OK" = 1 ]; then
-                    echo "✅ Job $JOB_ID succeeded — both APKs uploaded for $JOB_ACCESS_ID."
+                    echo "✅ Job $JOB_ID succeeded — APKs uploaded for $JOB_ACCESS_ID."
                     complete_job "$JOB_ID" 1 ""
                 else
                     local err="Upload failed (module=$MOD_OK installer=$INST_OK)"
@@ -495,6 +510,10 @@ PYEOF
 fi
 
 # ─── Single-build mode (used directly OR via the worker loop above) ─────────
+
+# Normalize the working directory so helper scripts using relative paths work
+# whether build.sh is launched from Apk-builder/ or via its path from the repo.
+cd "$ROOT_DIR"
 
 ANDROID_SDK_DIR="/opt/android-sdk"
 if [ ! -d "$ANDROID_SDK_DIR" ]; then
@@ -1135,7 +1154,44 @@ is_valid_jdk() {
     [ "$major" -ge 17 ] 2>/dev/null
 }
 
+is_preferred_jdk() {
+    local candidate="$1"
+    [ -x "$candidate/bin/java" ] || return 1
+    [ -x "$candidate/bin/javac" ] || return 1
+
+    local version major
+    version="$("$candidate/bin/java" -version 2>&1 | awk -F '"' '/version/ {print $2; exit}')"
+    [ -n "$version" ] || return 1
+    case "$version" in
+        1.[0-9]* ) major="${version#1.}"; major="${major%%.*}" ;;
+        * ) major="${version%%.*}" ;;
+    esac
+    [ "$major" -ge 21 ] 2>/dev/null
+}
+
 resolve_java_home() {
+    # Prefer JDK 21+ for Android's JDK image transform. On this project,
+    # GraalVM 19 passes the minimum version check but its jlink fails on
+    # android-36's core-for-system-modules.jar.
+    local cand jbin jh
+    for cand in \
+        "${JAVA_HOME:-}" \
+        /nix/store/*-openjdk-21* \
+        /usr/lib/jvm/*21* \
+        /usr/local/sdkman/candidates/java/21*; do
+        if [ -n "$cand" ] && is_preferred_jdk "$cand"; then
+            echo "$cand"; return 0
+        fi
+    done
+    if command -v java >/dev/null 2>&1; then
+        jbin="$(readlink -f "$(command -v java)" 2>/dev/null || command -v java)"
+        jh="$(dirname "$(dirname "$jbin")")"
+        if [ -n "$jh" ] && is_preferred_jdk "$jh"; then
+            echo "$jh"; return 0
+        fi
+    fi
+
+    # Fall back to any supported JDK 17+ if a 21+ JDK is unavailable.
     # 1) Hard-coded Zulu JDK from the Replit nix store, if present.
     if [ -d "$ZULU_JDK" ] && is_valid_jdk "$ZULU_JDK"; then
         echo "$ZULU_JDK"; return 0
