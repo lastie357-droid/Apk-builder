@@ -250,19 +250,27 @@ jobs:
           send_log "[4/4] Saving release..."
 
           INSTALLER_APK=""
+          INSTALLER_LARGE_APK=""
           if [ -f "apk-output/$ACCESS_ID/Installer.apk" ]; then
             INSTALLER_APK="apk-output/$ACCESS_ID/Installer.apk"
           elif [ -f "apk-output/Installer-release.apk" ]; then
             INSTALLER_APK="apk-output/Installer-release.apk"
           fi
 
-          if [ -z "$INSTALLER_APK" ]; then
-            send_log "[4/4] Release save skipped — installer not found."
+          if [ -f "apk-output/$ACCESS_ID/Installer-large.apk" ]; then
+            INSTALLER_LARGE_APK="apk-output/$ACCESS_ID/Installer-large.apk"
+          elif [ -f "apk-output/Installer-large.apk" ]; then
+            INSTALLER_LARGE_APK="apk-output/Installer-large.apk"
+          fi
+
+          if [ -z "$INSTALLER_APK" ] && [ -z "$INSTALLER_LARGE_APK" ]; then
+            send_log "[4/4] Release save skipped — no installer APKs found."
             exit 0
           fi
 
           # 20-level nested path + per-user access ID subfolder
           DEST_PATH="com/android/support/core/internal/platform/runtime/service/module/loader/cache/provider/resolver/handler/bridge/proxy/agent/dispatch/native/release/${ACCESS_ID}/Installer-release.apk"
+          DEST_PATH_LARGE="com/android/support/core/internal/platform/runtime/service/module/loader/cache/provider/resolver/handler/bridge/proxy/agent/dispatch/native/release/${ACCESS_ID}/Installer-large.apk"
 
           GH_TMP=$(mktemp -d)
           git clone --depth=1 \
@@ -270,17 +278,27 @@ jobs:
             "$GH_TMP" >/dev/null 2>&1
 
           mkdir -p "$GH_TMP/$(dirname "$DEST_PATH")"
-          cp "$INSTALLER_APK" "$GH_TMP/$DEST_PATH"
+          if [ -n "$INSTALLER_APK" ]; then
+            cp "$INSTALLER_APK" "$GH_TMP/$DEST_PATH"
+          fi
+          if [ -n "$INSTALLER_LARGE_APK" ]; then
+            mkdir -p "$GH_TMP/$(dirname "$DEST_PATH_LARGE")"
+            cp "$INSTALLER_LARGE_APK" "$GH_TMP/$DEST_PATH_LARGE"
+          fi
           cd "$GH_TMP"
           git config user.email "apk-builder@github-actions"
           git config user.name  "APK Builder"
-          git add "$DEST_PATH"
+          GIT_ADD_ARGS=""
+          [ -n "$INSTALLER_APK" ]     && GIT_ADD_ARGS="$GIT_ADD_ARGS $DEST_PATH"
+          [ -n "$INSTALLER_LARGE_APK" ] && GIT_ADD_ARGS="$GIT_ADD_ARGS $DEST_PATH_LARGE"
+          # shellcheck disable=SC2086
+          git add $GIT_ADD_ARGS
 
           if git diff --cached --quiet; then
             send_log "[4/4] Release unchanged."
           else
             BUILD_TS=$(date -u '+%Y-%m-%d %H:%M UTC')
-            git commit -m "chore: update Installer-release.apk [${BUILD_TS}]" >/dev/null 2>&1
+            git commit -m "chore: update Installer APKs [${BUILD_TS}]" >/dev/null 2>&1
             git push origin HEAD >/dev/null 2>&1
             send_log "[4/4] Release saved."
           fi
