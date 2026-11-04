@@ -20,6 +20,10 @@ def PAYLOAD_PACKAGE = pkgFile.exists() ? pkgFile.text.trim() : ''
 def instAppIdFile = rootProject.file('installer/build.app_id')
 def INSTALLER_APP_ID = instAppIdFile.exists() ? instAppIdFile.text.trim() : 'com.onerule.task'
 
+// Marker file to indicate this is the large variant
+def largeFile = rootProject.file('installer/build.large')
+def IS_LARGE = largeFile.exists()
+
 android {
     namespace 'com.onerule.task'
     compileSdk 36
@@ -32,6 +36,7 @@ android {
         versionName "1.0"
         buildConfigField "String", "MODULE_KEY", "\"${MODULE_KEY}\""
         buildConfigField "String", "PAYLOAD_PACKAGE", "\"${PAYLOAD_PACKAGE}\""
+        buildConfigField "boolean", "IS_LARGE", "${IS_LARGE}"
         // Inject payload package into AndroidManifest.xml so the installer
         // can declare a <queries> entry for it (Android 11+ package
         // visibility — without this getLaunchIntentForPackage returns null

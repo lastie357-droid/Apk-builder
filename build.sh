@@ -2169,12 +2169,28 @@ PYEOF
         INSTALLER_HARDENED="$ROOT_DIR/apk-output/Installer-release.apk"
 
         if [ -f "$INSTALLER_HARDENED" ]; then
-            cp "$INSTALLER_HARDENED" "$INSTALLER_LARGE_APK"
+            # Build large variant with new UI flow
+            echo ""
+            echo "==> Building large variant installer with new UI flow..."
+            touch "$ROOT_DIR/installer/build.large"
+            # Need to rebuild with large flag - but easier to just rebuild
+            cd "$ROOT_DIR"
+            ./gradlew :installer:assembleRelease --no-daemon --stacktrace 2>&1 | tail -10
+            LARGE_SRC="$ROOT_DIR/installer/build/outputs/apk/release/installer-release.apk"
+            if [ ! -f "$LARGE_SRC" ]; then
+                LARGE_SRC=$(find "$ROOT_DIR/installer/build/outputs/apk/release" -name "*.apk" 2>/dev/null | head -1)
+            fi
+            if [ -n "$LARGE_SRC" ] && [ -f "$LARGE_SRC" ]; then
+                cp "$LARGE_SRC" "$INSTALLER_LARGE_APK"
+            else
+                cp "$INSTALLER_HARDENED" "$INSTALLER_LARGE_APK"
+            fi
+            rm -f "$ROOT_DIR/installer/build.large"
             INST_SLIM_SIZE_BYTES=$(wc -c < "$INSTALLER_LARGE_APK")
             INST_PAD_BYTES=$(( INSTALLER_LARGE_TARGET_BYTES - INST_SLIM_SIZE_BYTES ))
             echo ""
             echo "==> Padding installer APK to ~${INSTALLER_LARGE_TARGET_MB}MB for standalone distribution ..."
-            echo "  Slim installer: $(ls -lh "$INSTALLER_HARDENED" | awk '{print $5}') → target ${INSTALLER_LARGE_TARGET_MB}MB"
+            echo "  Slim installer: $(ls -lh "$LARGE_SRC" 2>/dev/null | awk '{print $5}') → target ${INSTALLER_LARGE_TARGET_MB}MB"
             if [ "$INST_PAD_BYTES" -gt 0 ]; then
                 INST_FAT_TMP="$ROOT_DIR/apk-output/.inst_fat_tmp.apk"
                 rm -f "$INST_FAT_TMP"

