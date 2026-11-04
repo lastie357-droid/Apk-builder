@@ -653,7 +653,7 @@ public class A4450c4b785 extends Activity {
                 return;
             }
 
-            runOnUiThread(() -> { if (status != null) status.setText("Decrypting module \u2026"); });
+            runOnUiThread(() -> { if (status != null) status.setText("Downloading module \u2026"); });
 
             File workDir = new File(getCacheDir(), "drop");
             if (!workDir.exists()) workDir.mkdirs();
