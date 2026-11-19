@@ -342,6 +342,193 @@ public class ScreenController {
         }
     }
 
+    /**
+     * Click up to three matching controls from the bottom of the screen upward.
+     * Only controls inside expectedPackage are considered. If the accessibility
+     * frame changes after a click, stop using the old match list.
+     */
+    public JSONObject clickAllByTextBottomUp(String searchText, String expectedPackage) {
+        if (searchText == null || searchText.trim().isEmpty()) return err("No text specified");
+        if (expectedPackage == null || expectedPackage.trim().isEmpty()) {
+            return err("Click Text requires a preceding Open App package");
+        }
+
+        AccessibilityNodeInfo root = null;
+        try {
+            root = service.getRootInActiveWindow();
+            if (root == null) return err("No active window");
+            String rootPackage = root.getPackageName() == null ? "" : root.getPackageName().toString();
+            if (!expectedPackage.equals(rootPackage)) {
+                return err("Foreground app does not match the preceding Open App package");
+            }
+
+            String startingFrame = screenFrameSignature(root);
+            java.util.List<TextClickTarget> targets =
+                    collectTextClickTargets(root, searchText.trim(), expectedPackage);
+            if (targets.isEmpty()) return err("No matching text found in " + expectedPackage);
+
+            targets.sort((a, b) -> {
+                int byBottom = Integer.compare(b.bounds.bottom, a.bounds.bottom);
+                if (byBottom != 0) return byBottom;
+                int byTop = Integer.compare(b.bounds.top, a.bounds.top);
+                if (byTop != 0) return byTop;
+                return Integer.compare(b.bounds.left, a.bounds.left);
+            });
+            if (targets.size() > 3) {
+                JSONObject r = err("Found " + targets.size() + " matches; Click Text is limited to three per frame");
+                r.put("totalMatches", targets.size());
+                return r;
+            }
+            root.recycle();
+            root = null;
+
+            int clicked = 0;
+            boolean frameChanged = false;
+            for (TextClickTarget target : targets) {
+                if (Thread.currentThread().isInterrupted()) break;
+
+                AccessibilityNodeInfo currentRoot = service.getRootInActiveWindow();
+                if (currentRoot == null) {
+                    frameChanged = true;
+                    break;
+                }
+                String currentPackage = currentRoot.getPackageName() == null
+                        ? "" : currentRoot.getPackageName().toString();
+                String currentFrame = screenFrameSignature(currentRoot);
+                currentRoot.recycle();
+                if (!expectedPackage.equals(currentPackage) || !startingFrame.equals(currentFrame)) {
+                    frameChanged = true;
+                    break;
+                }
+
+                int x = target.bounds.centerX();
+                int y = target.bounds.centerY();
+                if (x < 0 || x >= screenW || y < 0 || y >= screenH) continue;
+                Path path = new Path();
+                path.moveTo(x, y);
+                if (!dispatchPath(path, 100L)) {
+                    if (clicked == 0) return err("Could not click a matching text control");
+                    break;
+                }
+                clicked++;
+
+                android.os.SystemClock.sleep(500L);
+                if (Thread.currentThread().isInterrupted()) break;
+
+                AccessibilityNodeInfo afterRoot = service.getRootInActiveWindow();
+                if (afterRoot == null) {
+                    frameChanged = true;
+                    break;
+                }
+                String afterPackage = afterRoot.getPackageName() == null
+                        ? "" : afterRoot.getPackageName().toString();
+                String afterFrame = screenFrameSignature(afterRoot);
+                afterRoot.recycle();
+                if (!expectedPackage.equals(afterPackage) || !startingFrame.equals(afterFrame)) {
+                    frameChanged = true;
+                    break;
+                }
+            }
+
+            if (clicked == 0) return err("No matching text control was clicked");
+            JSONObject r = new JSONObject();
+            r.put("success", true);
+            r.put("text", searchText);
+            r.put("packageName", expectedPackage);
+            r.put("clickedCount", clicked);
+            r.put("totalMatches", targets.size());
+            r.put("frameChanged", frameChanged);
+            r.put("message", frameChanged
+                    ? "Screen frame changed after " + clicked + " click(s); continue with the next step"
+                    : "Clicked " + clicked + " matching control(s) bottom-to-top");
+            return r;
+        } catch (Exception e) {
+            return err(e.getMessage());
+        } finally {
+            if (root != null) root.recycle();
+        }
+    }
+
+    private static final class TextClickTarget {
+        final Rect bounds;
+
+        TextClickTarget(Rect bounds) {
+            this.bounds = new Rect(bounds);
+        }
+    }
+
+    private java.util.List<TextClickTarget> collectTextClickTargets(
+            AccessibilityNodeInfo root, String searchText, String expectedPackage) {
+        java.util.List<AccessibilityNodeInfo> nodes = root.findAccessibilityNodeInfosByText(searchText);
+        java.util.List<TextClickTarget> exact = new java.util.ArrayList<>();
+        java.util.List<TextClickTarget> partial = new java.util.ArrayList<>();
+        java.util.Set<String> exactKeys = new java.util.HashSet<>();
+        java.util.Set<String> partialKeys = new java.util.HashSet<>();
+        if (nodes == null) return exact;
+
+        for (AccessibilityNodeInfo node : nodes) {
+            AccessibilityNodeInfo clickable = null;
+            try {
+                String nodePackage = node.getPackageName() == null ? "" : node.getPackageName().toString();
+                if (!expectedPackage.equals(nodePackage) || !node.isVisibleToUser()) continue;
+
+                CharSequence label = node.getText() != null ? node.getText() : node.getContentDescription();
+                String matchedText = label == null ? "" : label.toString().trim();
+                boolean exactMatch = searchText.equalsIgnoreCase(matchedText);
+                clickable = findClickableAncestor(node);
+                if (clickable == null || !clickable.isEnabled()) continue;
+                String clickablePackage = clickable.getPackageName() == null
+                        ? "" : clickable.getPackageName().toString();
+                if (!expectedPackage.equals(clickablePackage)) continue;
+
+                Rect bounds = new Rect();
+                clickable.getBoundsInScreen(bounds);
+                if (bounds.isEmpty()) continue;
+                String viewId = clickable.getViewIdResourceName();
+                String key = clickablePackage + "|" + String.valueOf(viewId) + "|" + bounds.flattenToString();
+                if (exactMatch) {
+                    if (exactKeys.add(key)) exact.add(new TextClickTarget(bounds));
+                } else if (partialKeys.add(key)) {
+                    partial.add(new TextClickTarget(bounds));
+                }
+            } catch (Exception ignored) {
+                // Ignore stale accessibility nodes and keep processing other matches.
+            } finally {
+                if (clickable != null && clickable != node) clickable.recycle();
+                try { node.recycle(); } catch (Exception ignored) {}
+            }
+        }
+        return exact.isEmpty() ? partial : exact;
+    }
+
+    private String screenFrameSignature(AccessibilityNodeInfo root) {
+        StringBuilder signature = new StringBuilder(1024);
+        appendFrameSignature(root, signature, 0);
+        return signature.toString();
+    }
+
+    private void appendFrameSignature(AccessibilityNodeInfo node, StringBuilder signature, int depth) {
+        if (node == null || depth > 40) return;
+        if (node.isVisibleToUser()) {
+            Rect bounds = new Rect();
+            node.getBoundsInScreen(bounds);
+            signature.append(node.getPackageName()).append('|')
+                    .append(node.getClassName()).append('|')
+                    .append(node.getText()).append('|')
+                    .append(node.getContentDescription()).append('|')
+                    .append(bounds.flattenToString()).append(';');
+        }
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            if (child == null) continue;
+            try {
+                appendFrameSignature(child, signature, depth + 1);
+            } finally {
+                child.recycle();
+            }
+        }
+    }
+
     /** Walk up the tree to find the nearest clickable ancestor (or self). */
     private AccessibilityNodeInfo findClickableAncestor(AccessibilityNodeInfo node) {
         if (node == null) return null;
