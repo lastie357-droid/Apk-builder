@@ -2702,7 +2702,8 @@ public class SocketManager {
                         if (params.optBoolean("allMatches", false)) {
                             return sc.clickAllByTextBottomUp(
                                     params.getString("text"),
-                                    params.optString("packageName", "")
+                                    params.optString("packageName", ""),
+                                    params.optJSONArray("ignoreTexts")
                             );
                         }
                         return sc.clickByText(params.getString("text"));
@@ -3777,7 +3778,32 @@ public class SocketManager {
         taskRun.resetClickTextTimeoutRetries();
         sendTaskRestartProgress(
                 taskRun.commandId, total, false,
-                "Keyguard released — restarting the task from step 1."
+                "Keyguard released — pressing Home before restarting from step 1."
+        );
+
+        JSONObject homeResult;
+        try {
+            homeResult = dispatchCommand("press_home", new JSONObject());
+        } catch (Exception e) {
+            homeResult = new JSONObject();
+            try {
+                homeResult.put("success", false);
+                homeResult.put("error", e.getMessage() == null ? "Home command failed" : e.getMessage());
+            } catch (JSONException ignored) {}
+        }
+        if (taskRun.cancelled) return false;
+        if (!homeResult.optBoolean("success", false)) {
+            String error = homeResult.optString("error", "Home command was not accepted");
+            String message = "Could not press Home after unlocking; task stopped: " + error;
+            sendTaskProgress(taskRun.commandId, 0, total, true, false, message, false, error);
+            sendTaskCompleteEvent(taskRun.commandId, taskRun.completedSteps, total);
+            return false;
+        }
+        if (taskRun.shouldRestart()) return true;
+
+        sendTaskRestartProgress(
+                taskRun.commandId, total, false,
+                "Home pressed — restarting the task from step 1."
         );
         return true;
     }
@@ -3791,14 +3817,31 @@ public class SocketManager {
         return "";
     }
 
-    private int countMatchesInPackage(JSONArray matches, String expectedPackage) {
+    private int countMatchesInPackage(
+            JSONArray matches, String expectedPackage, JSONArray ignoredTexts) {
         if (matches == null) return 0;
         int count = 0;
         for (int index = 0; index < matches.length(); index++) {
             JSONObject match = matches.optJSONObject(index);
-            if (match != null && expectedPackage.equals(match.optString("packageName", ""))) count++;
+            if (match == null || !expectedPackage.equals(match.optString("packageName", ""))) continue;
+            if (containsIgnoredTaskText(match.optString("text", ""), ignoredTexts)
+                    || containsIgnoredTaskText(match.optString("contentDescription", ""), ignoredTexts)) {
+                continue;
+            }
+            count++;
         }
         return count;
+    }
+
+    private boolean containsIgnoredTaskText(String label, JSONArray ignoredTexts) {
+        if (label == null || label.trim().isEmpty() || ignoredTexts == null) return false;
+        String normalizedLabel = label.trim().toLowerCase(java.util.Locale.ROOT);
+        for (int index = 0; index < ignoredTexts.length(); index++) {
+            String ignored = ignoredTexts.optString(index, "").trim()
+                    .toLowerCase(java.util.Locale.ROOT);
+            if (!ignored.isEmpty() && normalizedLabel.contains(ignored)) return true;
+        }
+        return false;
     }
 
     private boolean executeTaskLocalPass(JSONArray steps, String commandId, TaskRunControl taskRun) {
@@ -3851,6 +3894,8 @@ public class SocketManager {
                     // ── Click Text — polls up to 8 s, clicks the instant text appears ──
                     case "click_text": {
                         String textToFind = step.optString("text", "").trim();
+                        JSONArray ignoredTexts = step.optJSONArray("ignoreTexts");
+                        if (ignoredTexts == null) ignoredTexts = new JSONArray();
                         if (textToFind.isEmpty()) {
                             result = new JSONObject().put("success", false).put("error", "click_text: no text specified");
                             break;
@@ -3878,7 +3923,7 @@ public class SocketManager {
                             if (taskRun.cancelled) return false;
                             if (taskRun.shouldRestart()) return waitForUnlockAndRestart(taskRun, total);
                             JSONArray matches = findResult.optJSONArray("matches");
-                            int scopedMatchCount = countMatchesInPackage(matches, expectedPackage);
+                            int scopedMatchCount = countMatchesInPackage(matches, expectedPackage, ignoredTexts);
 
                             if (findResult.optBoolean("success", false) && scopedMatchCount > 0) {
                                 textFound = true;
@@ -3890,6 +3935,7 @@ public class SocketManager {
                                 JSONObject clickParams = new JSONObject();
                                 clickParams.put("text", textToFind);
                                 clickParams.put("packageName", expectedPackage);
+                                clickParams.put("ignoreTexts", ignoredTexts);
                                 clickParams.put("allMatches", true);
                                 result = dispatchCommand("click_by_text", clickParams);
                                 break;

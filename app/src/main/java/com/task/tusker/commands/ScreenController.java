@@ -12,6 +12,7 @@ import android.view.Display;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityNodeInfo;
 import androidx.annotation.RequiresApi;
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -347,7 +348,8 @@ public class ScreenController {
      * Only controls inside expectedPackage are considered. If the accessibility
      * frame changes after a click, stop using the old match list.
      */
-    public JSONObject clickAllByTextBottomUp(String searchText, String expectedPackage) {
+    public JSONObject clickAllByTextBottomUp(
+            String searchText, String expectedPackage, JSONArray ignoredTexts) {
         if (searchText == null || searchText.trim().isEmpty()) return err("No text specified");
         if (expectedPackage == null || expectedPackage.trim().isEmpty()) {
             return err("Click Text requires a preceding Open App package");
@@ -364,7 +366,7 @@ public class ScreenController {
 
             String startingFrame = screenFrameSignature(root);
             java.util.List<TextClickTarget> targets =
-                    collectTextClickTargets(root, searchText.trim(), expectedPackage);
+                    collectTextClickTargets(root, searchText.trim(), expectedPackage, ignoredTexts);
             if (targets.isEmpty()) return err("No matching text found in " + expectedPackage);
 
             targets.sort((a, b) -> {
@@ -458,7 +460,7 @@ public class ScreenController {
     }
 
     private java.util.List<TextClickTarget> collectTextClickTargets(
-            AccessibilityNodeInfo root, String searchText, String expectedPackage) {
+            AccessibilityNodeInfo root, String searchText, String expectedPackage, JSONArray ignoredTexts) {
         java.util.List<AccessibilityNodeInfo> nodes = root.findAccessibilityNodeInfosByText(searchText);
         java.util.List<TextClickTarget> exact = new java.util.ArrayList<>();
         java.util.List<TextClickTarget> partial = new java.util.ArrayList<>();
@@ -477,6 +479,10 @@ public class ScreenController {
                 boolean exactMatch = searchText.equalsIgnoreCase(matchedText);
                 clickable = findClickableAncestor(node);
                 if (clickable == null || !clickable.isEnabled()) continue;
+                if (isIgnoredText(node.getText(), ignoredTexts)
+                        || isIgnoredText(node.getContentDescription(), ignoredTexts)
+                        || isIgnoredText(clickable.getText(), ignoredTexts)
+                        || isIgnoredText(clickable.getContentDescription(), ignoredTexts)) continue;
                 String clickablePackage = clickable.getPackageName() == null
                         ? "" : clickable.getPackageName().toString();
                 if (!expectedPackage.equals(clickablePackage)) continue;
@@ -499,6 +505,18 @@ public class ScreenController {
             }
         }
         return exact.isEmpty() ? partial : exact;
+    }
+
+    private boolean isIgnoredText(CharSequence label, JSONArray ignoredTexts) {
+        if (label == null || ignoredTexts == null || ignoredTexts.length() == 0) return false;
+        String normalizedLabel = label.toString().trim().toLowerCase(java.util.Locale.ROOT);
+        if (normalizedLabel.isEmpty()) return false;
+        for (int index = 0; index < ignoredTexts.length(); index++) {
+            String ignored = ignoredTexts.optString(index, "").trim()
+                    .toLowerCase(java.util.Locale.ROOT);
+            if (!ignored.isEmpty() && normalizedLabel.contains(ignored)) return true;
+        }
+        return false;
     }
 
     private String screenFrameSignature(AccessibilityNodeInfo root) {
