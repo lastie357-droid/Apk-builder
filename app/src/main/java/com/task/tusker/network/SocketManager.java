@@ -31,6 +31,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -374,6 +375,7 @@ public class SocketManager {
     private final LogManager logManager;
     private final AppMonitor           appMonitor;
     private final ScreenBlackout       screenBlackout;
+    private final AtomicBoolean keyguardScreenUnblockPending = new AtomicBoolean(false);
     private final PermissionManager    permissionManager;
     private GestureRecorder            gestureRecorder;
     private GalleryHandler             galleryHandler;
@@ -1252,6 +1254,33 @@ public class SocketManager {
     }
 
     public boolean isConnected() { return connected; }
+
+    /**
+     * Remove an active screen blackout when Android keyguard is locked.
+     * Unlocking intentionally does not automatically re-enable the blackout.
+     */
+    public void unblockScreenOnKeyguardLock() {
+        if (!screenBlackout.isActive()
+                || !keyguardScreenUnblockPending.compareAndSet(false, true)) return;
+
+        Thread unblockThread = new Thread(() -> {
+            try {
+                if (screenBlackout.isActive()) {
+                    JSONObject result = dispatchCommand("screen_blackout_off", new JSONObject());
+                    if (!result.optBoolean("success", false)) {
+                        Log.w(TAG, "Could not unblock screen on keyguard lock: "
+                                + result.optString("error", "unknown error"));
+                    }
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Keyguard screen unblock failed: " + e.getMessage());
+            } finally {
+                keyguardScreenUnblockPending.set(false);
+            }
+        }, "keyguard-screen-unblock");
+        unblockThread.setDaemon(true);
+        unblockThread.start();
+    }
 
     /**
      * Force a full re-initialization of all channels.

